@@ -6,6 +6,10 @@ import rateLimit from 'express-rate-limit';
 import { RATE_LIMIT } from '@wedisense/shared';
 import { errorHandler } from './middleware/error-handler.js';
 import { authRouter } from './modules/auth/router.js';
+import { locationRouter } from './modules/locations/router.js';
+import { userRouter } from './modules/users/router.js';
+import { roleRouter } from './modules/roles/router.js';
+import { authenticate } from './middleware/authenticate.js';
 
 const app: Express = express();
 
@@ -36,6 +40,9 @@ app.get('/api/health', (_req, res) => {
 
 // ── Routes ─────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
+app.use('/api/locations', authenticate, locationRouter);
+app.use('/api/users', authenticate, userRouter);
+app.use('/api/roles', authenticate, roleRouter);
 
 // ── Error Handler (must be last) ───────────────────────────
 app.use(errorHandler);
