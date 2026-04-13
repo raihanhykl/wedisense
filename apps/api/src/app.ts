@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { RATE_LIMIT } from '@wedisense/shared';
 import { errorHandler } from './middleware/error-handler.js';
+import { authRouter } from './modules/auth/router.js';
 
 const app: Express = express();
 
@@ -32,6 +33,9 @@ app.use(cookieParser());
 app.get('/api/health', (_req, res) => {
   res.json({ success: true, data: { status: 'ok', timestamp: new Date().toISOString() } });
 });
+
+// ── Routes ─────────────────────────────────────────────────
+app.use('/api/auth', authRouter);
 
 // ── Error Handler (must be last) ───────────────────────────
 app.use(errorHandler);
