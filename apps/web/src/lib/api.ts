@@ -71,34 +71,41 @@ api.interceptors.response.use(
   },
 );
 
+// ── API envelope type ─────────────────────────────────────────────────
+interface ApiEnvelope<T> {
+  success: boolean;
+  data: T;
+  meta?: { page: number; limit: number; total: number; totalPages: number };
+}
+
 // ── Typed helpers ──────────────────────────────────────────────────────
 export async function apiGet<T>(
   url: string,
   params?: Record<string, unknown>,
 ): Promise<T> {
-  const res = await api.get<T>(url, { params });
-  return res.data;
+  const res = await api.get<ApiEnvelope<T>>(url, { params });
+  return res.data.data;
 }
 
 export async function apiPost<T>(
   url: string,
   data?: unknown,
 ): Promise<T> {
-  const res = await api.post<T>(url, data);
-  return res.data;
+  const res = await api.post<ApiEnvelope<T>>(url, data);
+  return res.data.data;
 }
 
 export async function apiPut<T>(
   url: string,
   data?: unknown,
 ): Promise<T> {
-  const res = await api.put<T>(url, data);
-  return res.data;
+  const res = await api.put<ApiEnvelope<T>>(url, data);
+  return res.data.data;
 }
 
 export async function apiDelete<T>(url: string): Promise<T> {
-  const res = await api.delete<T>(url);
-  return res.data;
+  const res = await api.delete<ApiEnvelope<T>>(url);
+  return res.data.data;
 }
 
 export default api;

@@ -1,11 +1,20 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export interface AuthUserRole {
+  id: string;
+  name: string;
+  locationId: string | null;
+}
+
 export interface AuthUser {
   id: string;
   name: string;
   email: string;
-  roles: string[];
+  employeeId: string;
+  preferredLanguage: string;
+  status: string;
+  roles: AuthUserRole[];
   permissions: string[];
   accessibleLocationIds: string[];
 }
