@@ -42,9 +42,15 @@ export interface UserListItem {
   name: string;
   email: string;
   employeeId: string;
-  phone: string;
+  phone: string | null;
   status: string;
-  roles: { id: string; name: string; locationId: string | null }[];
+  userRoles: {
+    id: string;
+    roleId: string;
+    locationId: string | null;
+    role: { id: string; name: string };
+    location: { id: string; name: string } | null;
+  }[];
 }
 
 export interface UserFormData {

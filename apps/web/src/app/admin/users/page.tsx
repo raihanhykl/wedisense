@@ -144,7 +144,7 @@ function UsersContent() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {user.roles.map((r) => r.name).join(", ") || "None"}
+                    {user.userRoles?.map((ur) => ur.role.name).join(", ") || "None"}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button

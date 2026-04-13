@@ -98,9 +98,9 @@ export default function UserFormDialog({
           status: editingUser.status,
         });
         setRoleAssignments(
-          editingUser.roles.map((r) => ({
-            roleId: r.id,
-            locationId: r.locationId,
+          (editingUser.userRoles ?? []).map((ur) => ({
+            roleId: ur.roleId,
+            locationId: ur.locationId,
           })),
         );
       } else {
