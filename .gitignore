@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Claude Code personal files (not committed)
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/session-state.md
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Build output
+dist/
+.next/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+
+# Prisma
+apps/api/prisma/*.db
