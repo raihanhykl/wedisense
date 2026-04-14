@@ -17,6 +17,7 @@ const navItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Assets", href: "/admin/assets" },
   { label: "Movements", href: "/admin/movements" },
+  { label: "Maintenance", href: "/admin/maintenance" },
   { label: "Locations", href: "/admin/locations" },
   { label: "Users", href: "/admin/users", permission: "users:manage" },
   { label: "Roles", href: "/admin/roles", permission: "roles:manage" },

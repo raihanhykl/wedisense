@@ -147,3 +147,32 @@ export interface MovementListItem {
   performedBy: { id: string; name: string };
   approvedBy: { id: string; name: string } | null;
 }
+
+// ── Maintenance types ──────────────────────────────────────────────
+export interface MaintenanceScheduleItem {
+  id: string;
+  title: string;
+  description: string | null;
+  frequencyType: string;
+  nextDueDate: string;
+  lastDoneDate: string | null;
+  isActive: boolean;
+  asset: { id: string; name: string; assetNumber: string };
+  assignedTo: { id: string; name: string } | null;
+}
+
+export interface MaintenanceLogItem {
+  id: string;
+  description: string;
+  findings: string | null;
+  actionTaken: string | null;
+  cost: string | null;
+  vendorName: string | null;
+  conditionBefore: string;
+  conditionAfter: string;
+  performedAt: string;
+  createdAt: string;
+  asset: { id: string; name: string; assetNumber: string };
+  schedule: { id: string; title: string } | null;
+  performedBy: { id: string; name: string };
+}
