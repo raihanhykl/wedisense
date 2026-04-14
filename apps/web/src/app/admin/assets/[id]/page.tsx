@@ -58,9 +58,13 @@ function formatDate(value: string | null | undefined): string {
 // ── Movement type ───────────────────────────────────────────────────
 interface AssetMovement {
   id: string;
-  type: string;
+  movementType: string;
+  referenceNumber: string;
+  status: string;
   fromLocation: { id: string; name: string } | null;
   toLocation: { id: string; name: string } | null;
+  fromUser: { id: string; name: string } | null;
+  toUser: { id: string; name: string } | null;
   performedBy: { id: string; name: string } | null;
   notes: string | null;
   createdAt: string;
@@ -291,7 +295,7 @@ export default function AssetDetailPage() {
               >
                 <div className="absolute -left-1.5 top-1 h-3 w-3 rounded-full bg-primary" />
                 <p className="text-sm font-medium">
-                  {movement.type.replace(/_/g, " ")}
+                  {(movement.movementType ?? "").replace(/_/g, " ")}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {movement.fromLocation?.name ?? "N/A"} &rarr;{" "}
