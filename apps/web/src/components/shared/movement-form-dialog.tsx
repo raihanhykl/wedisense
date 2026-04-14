@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiGet, apiPost } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { getApiErrorMessage } from "@/lib/error";
 
 // ── Movement types ──────────────────────────────────────────────────
 const MOVEMENT_TYPES = [
@@ -270,12 +271,7 @@ export default function MovementFormDialog({
       reset({ movementType: "ASSIGNMENT", notes: "" });
       setSelectedType("ASSIGNMENT");
     } catch (err: unknown) {
-      const axios = await import("axios");
-      if (axios.default.isAxiosError(err) && err.response?.data?.error?.message) {
-        setSubmitError(err.response.data.error.message as string);
-      } else {
-        setSubmitError("Failed to create movement. Please try again.");
-      }
+      setSubmitError(getApiErrorMessage(err, "Failed to create movement. Please try again."));
     } finally {
       setSubmitting(false);
     }

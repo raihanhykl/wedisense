@@ -5,6 +5,7 @@ import { useForm, Controller, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiPost, apiPut } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
 import type { LabelTemplateItem } from "@/types/admin";
 
@@ -151,12 +152,12 @@ export default function LabelTemplateDialog({
       }
       onSaved();
       onClose();
-    } catch {
-      setSubmitError(
+    } catch (err: unknown) {
+      setSubmitError(getApiErrorMessage(err,
         isEdit
           ? "Failed to update template. Please try again."
           : "Failed to create template. Please try again.",
-      );
+      ));
     } finally {
       setSubmitting(false);
     }

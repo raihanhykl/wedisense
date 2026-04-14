@@ -5,6 +5,7 @@ import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiGet, apiPost } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
 import type { MaintenanceScheduleItem } from "@/types/admin";
 
@@ -221,8 +222,8 @@ export default function MaintenanceLogDialog({
       await apiPost("/api/maintenance/logs", payload);
       onSaved();
       onClose();
-    } catch {
-      setSubmitError("Failed to create log. Please try again.");
+    } catch (err: unknown) {
+      setSubmitError(getApiErrorMessage(err, "Failed to create log. Please try again."));
     } finally {
       setSubmitting(false);
     }

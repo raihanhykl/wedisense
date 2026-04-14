@@ -5,6 +5,7 @@ import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiGet, apiPost, apiPut } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
 import type { MaintenanceScheduleItem } from "@/types/admin";
 
@@ -218,12 +219,12 @@ export default function MaintenanceScheduleDialog({
       }
       onSaved();
       onClose();
-    } catch {
-      setSubmitError(
+    } catch (err: unknown) {
+      setSubmitError(getApiErrorMessage(err,
         isEdit
           ? "Failed to update schedule. Please try again."
           : "Failed to create schedule. Please try again.",
-      );
+      ));
     } finally {
       setSubmitting(false);
     }

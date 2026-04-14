@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiGet, apiPost } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/error";
 import type { LabelTemplateItem, PrintJobItem } from "@/types/admin";
 
 // ── Zod schema ─────────────────────────────────────────────────────
@@ -77,8 +78,8 @@ export default function PrintDialog({
       if (job.pdfUrl) {
         window.open(job.pdfUrl, "_blank");
       }
-    } catch {
-      setSubmitError("Failed to create print job. Please try again.");
+    } catch (err: unknown) {
+      setSubmitError(getApiErrorMessage(err, "Failed to create print job. Please try again."));
     } finally {
       setSubmitting(false);
     }
