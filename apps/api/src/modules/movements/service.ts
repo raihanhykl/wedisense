@@ -121,7 +121,7 @@ export async function createMovement(input: CreateMovementInput, performedByUser
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-async function requireAsset(tx: PrismaTransactionClient, assetId: string | undefined) {
+async function requireAsset(tx: PrismaTransactionClient, assetId: string | undefined, movementType?: string) {
   if (!assetId) {
     throw new AppError(400, 'ASSET_REQUIRED', 'assetId is required');
   }
@@ -129,7 +129,75 @@ async function requireAsset(tx: PrismaTransactionClient, assetId: string | undef
   if (!asset) {
     throw new AppError(404, 'ASSET_NOT_FOUND', 'Asset not found');
   }
+  if (movementType) {
+    validateAssetStatusForMovement(asset, movementType);
+  }
   return asset;
+}
+
+/**
+ * Validates that the asset's current status allows the requested movement type.
+ * Prevents double-inputs like sending an already IN_MAINTENANCE asset to maintenance again.
+ */
+function validateAssetStatusForMovement(asset: { id: string; status: string; assignedToUserId: string | null }, movementType: string) {
+  const s = asset.status;
+
+  switch (movementType) {
+    case 'ASSIGNMENT':
+      if (s === 'DISPOSED') throw new AppError(400, 'ASSET_DISPOSED', 'Cannot assign a disposed asset');
+      if (s === 'LOST') throw new AppError(400, 'ASSET_LOST', 'Cannot assign a lost asset');
+      if (s === 'IN_MAINTENANCE') throw new AppError(400, 'ASSET_IN_MAINTENANCE', 'Cannot assign an asset currently in maintenance');
+      if (s === 'BORROWED') throw new AppError(400, 'ASSET_BORROWED', 'Cannot assign a borrowed asset — return it first');
+      break;
+
+    case 'UNASSIGNMENT':
+      if (!asset.assignedToUserId) throw new AppError(400, 'ASSET_NOT_ASSIGNED', 'Asset is not assigned to anyone');
+      if (s === 'DISPOSED') throw new AppError(400, 'ASSET_DISPOSED', 'Cannot unassign a disposed asset');
+      break;
+
+    case 'LOCATION_TRANSFER':
+      if (s === 'DISPOSED') throw new AppError(400, 'ASSET_DISPOSED', 'Cannot transfer a disposed asset');
+      break;
+
+    case 'LOAN_OUT':
+      if (s === 'BORROWED') throw new AppError(400, 'ASSET_ALREADY_BORROWED', 'Asset is already on loan');
+      if (s === 'DISPOSED') throw new AppError(400, 'ASSET_DISPOSED', 'Cannot loan a disposed asset');
+      if (s === 'LOST') throw new AppError(400, 'ASSET_LOST', 'Cannot loan a lost asset');
+      if (s === 'IN_MAINTENANCE') throw new AppError(400, 'ASSET_IN_MAINTENANCE', 'Cannot loan an asset in maintenance');
+      break;
+
+    case 'LOAN_RETURN':
+      if (s !== 'BORROWED') throw new AppError(400, 'ASSET_NOT_BORROWED', 'Asset is not currently on loan');
+      break;
+
+    case 'SEND_TO_MAINTENANCE':
+      if (s === 'IN_MAINTENANCE') throw new AppError(400, 'ASSET_ALREADY_IN_MAINTENANCE', 'Asset is already in maintenance');
+      if (s === 'DISPOSED') throw new AppError(400, 'ASSET_DISPOSED', 'Cannot send a disposed asset to maintenance');
+      break;
+
+    case 'RETURN_FROM_MAINTENANCE':
+      if (s !== 'IN_MAINTENANCE') throw new AppError(400, 'ASSET_NOT_IN_MAINTENANCE', 'Asset is not currently in maintenance');
+      break;
+
+    case 'DISPOSAL':
+      if (s === 'DISPOSED') throw new AppError(400, 'ASSET_ALREADY_DISPOSED', 'Asset is already disposed');
+      break;
+
+    case 'LOST':
+      if (s === 'LOST') throw new AppError(400, 'ASSET_ALREADY_LOST', 'Asset is already marked as lost');
+      if (s === 'DISPOSED') throw new AppError(400, 'ASSET_DISPOSED', 'Cannot mark a disposed asset as lost');
+      break;
+
+    case 'FOUND':
+      if (s !== 'LOST') throw new AppError(400, 'ASSET_NOT_LOST', 'Only lost assets can be marked as found');
+      break;
+
+    case 'SWAP':
+      if (s === 'DISPOSED') throw new AppError(400, 'ASSET_DISPOSED', 'Cannot swap a disposed asset');
+      if (s === 'LOST') throw new AppError(400, 'ASSET_LOST', 'Cannot swap a lost asset');
+      if (s === 'IN_MAINTENANCE') throw new AppError(400, 'ASSET_IN_MAINTENANCE', 'Cannot swap an asset in maintenance');
+      break;
+  }
 }
 
 function createAuditLog(
@@ -157,7 +225,7 @@ async function handleAssignment(input: CreateMovementInput, performedByUserId: s
   }
 
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'ASSIGNMENT');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -191,7 +259,7 @@ async function handleAssignment(input: CreateMovementInput, performedByUserId: s
 
 async function handleUnassignment(input: CreateMovementInput, performedByUserId: string) {
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'UNASSIGNMENT');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -229,7 +297,7 @@ async function handleLocationTransfer(input: CreateMovementInput, performedByUse
   }
 
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'LOCATION_TRANSFER');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -271,7 +339,7 @@ async function handleLoanOut(input: CreateMovementInput, performedByUserId: stri
   }
 
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'LOAN_OUT');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -305,7 +373,7 @@ async function handleLoanOut(input: CreateMovementInput, performedByUserId: stri
 
 async function handleLoanReturn(input: CreateMovementInput, performedByUserId: string) {
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'LOAN_RETURN');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -346,8 +414,8 @@ async function handleSwap(input: CreateMovementInput, performedByUserId: string)
   }
 
   return prisma.$transaction(async (tx) => {
-    const assetA = await requireAsset(tx, input.assetId);
-    const assetB = await requireAsset(tx, input.swapWithAssetId);
+    const assetA = await requireAsset(tx, input.assetId, 'SWAP');
+    const assetB = await requireAsset(tx, input.swapWithAssetId, 'SWAP');
     const refA = generateMovementRef();
     const refB = generateMovementRef();
 
@@ -416,7 +484,7 @@ async function handleSwap(input: CreateMovementInput, performedByUserId: string)
 
 async function handleSendToMaintenance(input: CreateMovementInput, performedByUserId: string) {
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'SEND_TO_MAINTENANCE');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -457,7 +525,7 @@ async function handleSendToMaintenance(input: CreateMovementInput, performedByUs
 
 async function handleReturnFromMaintenance(input: CreateMovementInput, performedByUserId: string) {
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'RETURN_FROM_MAINTENANCE');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -492,7 +560,7 @@ async function handleDisposal(input: CreateMovementInput, performedByUserId: str
   }
 
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'DISPOSAL');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -576,7 +644,7 @@ async function handleResignationReturn(input: CreateMovementInput, performedByUs
 
 async function handleFound(input: CreateMovementInput, performedByUserId: string) {
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'FOUND');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
@@ -607,7 +675,7 @@ async function handleFound(input: CreateMovementInput, performedByUserId: string
 
 async function handleLost(input: CreateMovementInput, performedByUserId: string) {
   return prisma.$transaction(async (tx) => {
-    const asset = await requireAsset(tx, input.assetId);
+    const asset = await requireAsset(tx, input.assetId, 'LOST');
     const ref = generateMovementRef();
 
     const movement = await repo.createInTransaction(tx, {
