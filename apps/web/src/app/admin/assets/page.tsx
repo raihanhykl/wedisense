@@ -7,6 +7,7 @@ import type { PaginationMeta } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
 import type { AssetListItem } from "@/types/admin";
+import PrintDialog from "@/components/shared/print-dialog";
 
 // ── Status badge helpers ────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
@@ -57,6 +58,7 @@ export default function AssetsPage() {
   const canCreate = usePermission("assets:create");
   const canUpdate = usePermission("assets:update");
   const canDelete = usePermission("assets:delete");
+  const canPrint = usePermission("assets:print");
 
   const [assets, setAssets] = useState<AssetListItem[]>([]);
   const [meta, setMeta] = useState<PaginationMeta>({
@@ -71,6 +73,10 @@ export default function AssetsPage() {
   const [locationFilter, setLocationFilter] = useState("");
   const [page, setPage] = useState(1);
   const [locations, setLocations] = useState<LocationOption[]>([]);
+
+  // Selection state for bulk print
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
 
   const fetchLocations = useCallback(async () => {
     try {
@@ -130,11 +136,40 @@ export default function AssetsPage() {
     if (!confirm("Are you sure you want to delete this asset?")) return;
     try {
       await apiDelete(`/api/assets/${id}`);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       void fetchAssets();
     } catch {
       // handle error
     }
   };
+
+  // Selection handlers
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === assets.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(assets.map((a) => a.id)));
+    }
+  };
+
+  const allSelected = assets.length > 0 && selectedIds.size === assets.length;
+  const someSelected = selectedIds.size > 0;
 
   const statusOptions = useMemo(
     () => ["ACTIVE", "IDLE", "IN_MAINTENANCE", "DISPOSED", "LOST", "BORROWED"],
@@ -146,15 +181,26 @@ export default function AssetsPage() {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Assets</h1>
-        {canCreate && (
-          <Link
-            href="/admin/assets/new"
-            data-tour="add-asset-btn"
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            Add Asset
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          {canPrint && someSelected && (
+            <button
+              type="button"
+              onClick={() => setPrintDialogOpen(true)}
+              className="rounded-md border border-primary bg-white px-4 py-2 text-sm font-medium text-primary hover:bg-primary/10"
+            >
+              Print Labels ({selectedIds.size})
+            </button>
+          )}
+          {canCreate && (
+            <Link
+              href="/admin/assets/new"
+              data-tour="add-asset-btn"
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Add Asset
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* Filters bar */}
@@ -193,11 +239,33 @@ export default function AssetsPage() {
         </select>
       </div>
 
+      {/* Selected count bar */}
+      {someSelected && (
+        <div className="mb-3 flex items-center gap-3 rounded-md border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
+          <span className="font-medium">{selectedIds.size} asset(s) selected</span>
+          <button
+            type="button"
+            onClick={() => setSelectedIds(new Set())}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-hidden rounded-lg border bg-card">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50">
+              <th className="px-3 py-3 text-left">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+              </th>
               <th className="px-4 py-3 text-left font-medium">Asset #</th>
               <th className="px-4 py-3 text-left font-medium">Name</th>
               <th className="px-4 py-3 text-left font-medium">Status</th>
@@ -214,7 +282,7 @@ export default function AssetsPage() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-4 py-8 text-center text-muted-foreground"
                 >
                   Loading assets...
@@ -223,7 +291,7 @@ export default function AssetsPage() {
             ) : assets.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-4 py-8 text-center text-muted-foreground"
                 >
                   No assets found.
@@ -231,7 +299,21 @@ export default function AssetsPage() {
               </tr>
             ) : (
               assets.map((asset) => (
-                <tr key={asset.id} className="border-b last:border-b-0">
+                <tr
+                  key={asset.id}
+                  className={cn(
+                    "border-b last:border-b-0",
+                    selectedIds.has(asset.id) && "bg-primary/5",
+                  )}
+                >
+                  <td className="px-3 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(asset.id)}
+                      onChange={() => toggleSelect(asset.id)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <Link
                       href={`/admin/assets/${asset.id}`}
@@ -309,6 +391,16 @@ export default function AssetsPage() {
           </div>
         </div>
       )}
+
+      {/* Print Dialog */}
+      <PrintDialog
+        open={printDialogOpen}
+        onClose={() => {
+          setPrintDialogOpen(false);
+          setSelectedIds(new Set());
+        }}
+        assetIds={Array.from(selectedIds)}
+      />
     </div>
   );
 }
