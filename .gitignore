@@ -32,3 +32,6 @@ coverage/
 
 # Prisma
 apps/api/prisma/*.db
+
+# SSL certificates
+*.pem

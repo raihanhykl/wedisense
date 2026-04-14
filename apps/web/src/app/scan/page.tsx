@@ -36,9 +36,9 @@ interface AssetLookupResult {
 }
 
 interface ProductLookupResult {
-  name: string;
-  brand?: string;
-  category?: string;
+  product: { id: string; name: string; brand: string | null } | null;
+  lookup: { name: string; brand: string | null; model: string | null } | null;
+  source: string;
 }
 
 export default function ScanPage() {
@@ -66,12 +66,17 @@ export default function ScanPage() {
         // 2. Check if EAN-13
         if (isValidEan13(value)) {
           try {
-            const product = await apiPost<ProductLookupResult>(
+            const result = await apiPost<ProductLookupResult>(
               "/api/products/lookup",
               { ean: value },
             );
-            if (product?.name) {
-              setState({ kind: "product-found", value, product });
+            const productInfo = result?.product
+              ? { name: result.product.name, brand: result.product.brand ?? undefined }
+              : result?.lookup
+                ? { name: result.lookup.name, brand: result.lookup.brand ?? undefined }
+                : null;
+            if (productInfo?.name) {
+              setState({ kind: "product-found", value, product: productInfo });
             } else {
               setState({ kind: "product-not-found", value });
             }

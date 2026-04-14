@@ -22,15 +22,16 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
 }
 
 async function lookupUpcItemDb(ean: string): Promise<EanLookupResult | null> {
-  const apiKey = process.env['UPCITEMDB_API_KEY'];
-  if (!apiKey) return null;
-
   try {
+    const apiKey = process.env['UPCITEMDB_API_KEY'];
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (apiKey) {
+      headers['user_key'] = apiKey;
+    }
+
     const res = await fetchWithTimeout(
       `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(ean)}`,
-      {
-        headers: { 'Accept': 'application/json', 'user_key': apiKey },
-      },
+      { headers },
       EAN_LOOKUP_TIMEOUT,
     );
 
