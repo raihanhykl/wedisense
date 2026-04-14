@@ -76,7 +76,8 @@ export default function PrintDialog({
       });
       setCreatedJob(job);
       if (job.pdfUrl) {
-        window.open(job.pdfUrl, "_blank");
+        const fullUrl = `${process.env.NEXT_PUBLIC_API_URL}${job.pdfUrl}`;
+        window.open(fullUrl, "_blank");
       }
     } catch (err: unknown) {
       setSubmitError(getApiErrorMessage(err, "Failed to create print job. Please try again."));
@@ -113,7 +114,7 @@ export default function PrintDialog({
             </div>
             {createdJob.pdfUrl ? (
               <a
-                href={createdJob.pdfUrl}
+                href={`${process.env.NEXT_PUBLIC_API_URL}${createdJob.pdfUrl}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground hover:bg-primary/90"

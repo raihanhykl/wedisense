@@ -421,7 +421,7 @@ export default function PrintPage() {
                       <td className="px-4 py-3">
                         {job.pdfUrl ? (
                           <a
-                            href={job.pdfUrl}
+                            href={`${process.env.NEXT_PUBLIC_API_URL}${job.pdfUrl}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-xs font-medium text-blue-700 hover:underline"
