@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGetPaginated, apiDelete } from "@/lib/api";
+import api, { apiGetPaginated, apiDelete } from "@/lib/api";
 import type { PaginationMeta } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
@@ -146,11 +146,30 @@ export default function PrintPage() {
     setTemplateDialogOpen(true);
   };
 
-  const handlePreview = (id: string) => {
-    window.open(
-      `${process.env.NEXT_PUBLIC_API_URL}/api/label-templates/${id}/preview`,
-      "_blank",
-    );
+  const handlePreview = async (id: string) => {
+    try {
+      // Need an asset to preview with — fetch first available asset
+      const assetsRes = await apiGetPaginated<Array<{ id: string; name: string }>>(
+        "/api/assets",
+        { limit: 1 },
+      );
+      const firstAsset = assetsRes.data[0];
+      if (!firstAsset) {
+        alert("No assets available for preview");
+        return;
+      }
+      // Fetch PDF as blob via authenticated request
+      const res = await api.post(
+        `/api/label-templates/${id}/preview`,
+        { assetId: firstAsset.id },
+        { responseType: "blob" },
+      );
+      const blob = new Blob([res.data as BlobPart], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    } catch {
+      alert("Failed to generate preview");
+    }
   };
 
   const handleTemplatesSearchChange = (value: string) => {
