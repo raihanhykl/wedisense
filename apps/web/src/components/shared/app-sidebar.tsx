@@ -13,6 +13,7 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
+  { label: "Scan", href: "/scan" },
   { label: "Dashboard", href: "/dashboard" },
   { label: "Assets", href: "/admin/assets" },
   { label: "Locations", href: "/admin/locations" },

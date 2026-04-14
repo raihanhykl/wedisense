@@ -14,6 +14,8 @@
     "@hookform/resolvers": "^4.1.3",
     "@tanstack/react-query": "^5.66.9",
     "@wedisense/shared": "workspace:*",
+    "@zxing/browser": "^0.1.5",
+    "@zxing/library": "^0.21.3",
     "axios": "^1.15.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
