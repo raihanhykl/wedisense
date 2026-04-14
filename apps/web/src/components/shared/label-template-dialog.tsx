@@ -29,14 +29,19 @@ const FIELD_KEY_OPTIONS = [
 ] as const;
 
 // ── Zod schema ─────────────────────────────────────────────────────
+const optionalNumber = z.preprocess(
+  (val) => (val === "" || val === undefined || val === null ? undefined : Number(val)),
+  z.number().optional(),
+);
+
 const labelFieldSchema = z.object({
   type: z.enum(FIELD_TYPES),
   field_key: z.string().optional(),
   label: z.string().optional(),
   x: z.coerce.number().min(0, "x must be >= 0"),
   y: z.coerce.number().min(0, "y must be >= 0"),
-  width: z.coerce.number().min(0).optional(),
-  font_size: z.coerce.number().min(1).optional(),
+  width: optionalNumber,
+  font_size: optionalNumber,
   bold: z.boolean().optional(),
   custom_value: z.string().optional(),
 });
