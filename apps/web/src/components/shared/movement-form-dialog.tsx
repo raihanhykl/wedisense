@@ -269,8 +269,13 @@ export default function MovementFormDialog({
       onClose();
       reset({ movementType: "ASSIGNMENT", notes: "" });
       setSelectedType("ASSIGNMENT");
-    } catch {
-      setSubmitError("Failed to create movement. Please try again.");
+    } catch (err: unknown) {
+      const axios = await import("axios");
+      if (axios.default.isAxiosError(err) && err.response?.data?.error?.message) {
+        setSubmitError(err.response.data.error.message as string);
+      } else {
+        setSubmitError("Failed to create movement. Please try again.");
+      }
     } finally {
       setSubmitting(false);
     }
