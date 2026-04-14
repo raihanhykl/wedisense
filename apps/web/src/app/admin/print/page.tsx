@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import api, { apiGetPaginated, apiDelete } from "@/lib/api";
 import type { PaginationMeta } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
 import type { LabelTemplateItem, PrintJobItem } from "@/types/admin";
-import LabelTemplateDialog from "@/components/shared/label-template-dialog";
 
 // ── Status badge colors ────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
@@ -46,6 +46,7 @@ type Tab = "templates" | "printJobs";
 
 // ── Page ───────────────────────────────────────────────────────────
 export default function PrintPage() {
+  const router = useRouter();
   const canManage = usePermission("labels:manage");
   const [activeTab, setActiveTab] = useState<Tab>("templates");
 
@@ -72,10 +73,6 @@ export default function PrintPage() {
   const [printJobsLoading, setPrintJobsLoading] = useState(true);
   const [printJobsPage, setPrintJobsPage] = useState(1);
 
-  // ── Dialog state ───────────────────────────────────────────────
-  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
-  const [editingTemplate, setEditingTemplate] =
-    useState<LabelTemplateItem | null>(null);
 
   // ── Fetch templates ────────────────────────────────────────────
   const fetchTemplates = useCallback(async () => {
@@ -142,8 +139,7 @@ export default function PrintPage() {
   };
 
   const handleEditTemplate = (template: LabelTemplateItem) => {
-    setEditingTemplate(template);
-    setTemplateDialogOpen(true);
+    router.push(`/admin/print/editor?id=${template.id}`);
   };
 
   const handlePreview = async (id: string) => {
@@ -227,10 +223,7 @@ export default function PrintPage() {
             {canManage && (
               <button
                 type="button"
-                onClick={() => {
-                  setEditingTemplate(null);
-                  setTemplateDialogOpen(true);
-                }}
+                onClick={() => router.push("/admin/print/editor")}
                 className="ml-auto rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               >
                 Add Template
@@ -473,16 +466,6 @@ export default function PrintPage() {
         </>
       )}
 
-      {/* ── Dialogs ───────────────────────────────────────────────── */}
-      <LabelTemplateDialog
-        open={templateDialogOpen}
-        onClose={() => {
-          setTemplateDialogOpen(false);
-          setEditingTemplate(null);
-        }}
-        onSaved={() => void fetchTemplates()}
-        template={editingTemplate}
-      />
     </div>
   );
 }
