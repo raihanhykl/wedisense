@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { apiGet, apiGetPaginated, apiPost, apiPut } from "@/lib/api";
@@ -52,6 +52,45 @@ function EditorContent() {
   const [saveError, setSaveError] = useState("");
   const [currentId, setCurrentId] = useState<string | null>(templateId);
 
+  // ── Dirty tracking ────────────────────────────────────────────
+  const [isDirty, setIsDirty] = useState(false);
+  const initialLoadDone = useRef(false);
+
+  // ── Undo / Redo history ──────────────────────────────────────
+  const [history, setHistory] = useState<EditorState[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const isDraggingRef = useRef(false);
+  const isUndoRedoRef = useRef(false);
+
+  const pushHistory = useCallback((newState: EditorState) => {
+    setHistory((prev) => {
+      const trimmed = prev.slice(0, historyIndex + 1);
+      const updated = [...trimmed, newState].slice(-50);
+      return updated;
+    });
+    setHistoryIndex((prev) => Math.min(prev + 1, 49));
+  }, [historyIndex]);
+
+  const undo = useCallback(() => {
+    if (historyIndex <= 0) return;
+    isUndoRedoRef.current = true;
+    const prevState = history[historyIndex - 1];
+    if (prevState) {
+      setState(prevState);
+      setHistoryIndex((i) => i - 1);
+    }
+  }, [historyIndex, history]);
+
+  const redo = useCallback(() => {
+    if (historyIndex >= history.length - 1) return;
+    isUndoRedoRef.current = true;
+    const nextState = history[historyIndex + 1];
+    if (nextState) {
+      setState(nextState);
+      setHistoryIndex((i) => i + 1);
+    }
+  }, [historyIndex, history]);
+
   // ── Preview assets ────────────────────────────────────────────
   const [previewAssets, setPreviewAssets] = useState<PreviewAsset[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string>("");
@@ -87,7 +126,7 @@ function EditorContent() {
         const tpl = await apiGet<LabelTemplateItem>(
           `/api/label-templates/${templateId}`,
         );
-        setState({
+        const loadedState: EditorState = {
           name: tpl.name,
           description: tpl.description ?? "",
           paperWidthMm: tpl.paperWidthMm,
@@ -101,12 +140,17 @@ function EditorContent() {
             x: f.x,
             y: f.y,
             width: f.width,
+            height: f.height,
             font_size: f.font_size,
             bold: f.bold,
             custom_value: f.custom_value,
           })),
           selectedFieldId: null,
-        });
+        };
+        setState(loadedState);
+        setHistory([loadedState]);
+        setHistoryIndex(0);
+        initialLoadDone.current = true;
         setCurrentId(templateId);
       } catch {
         // handle silently
@@ -114,6 +158,63 @@ function EditorContent() {
     }
     void loadTemplate();
   }, [templateId]);
+
+  // ── Initialize history for new templates ──────────────────────
+  useEffect(() => {
+    if (!templateId && history.length === 0) {
+      setHistory([state]);
+      setHistoryIndex(0);
+      initialLoadDone.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Track dirty + push history on meaningful state changes ───
+  useEffect(() => {
+    if (!initialLoadDone.current) return;
+    if (isUndoRedoRef.current) {
+      isUndoRedoRef.current = false;
+      return;
+    }
+    if (isDraggingRef.current) {
+      // During drag we mark dirty but don't push history
+      setIsDirty(true);
+      return;
+    }
+    setIsDirty(true);
+    pushHistory(state);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.name, state.description, state.paperWidthMm, state.paperHeightMm, state.isDefault, state.fields]);
+
+  // ── beforeunload warning ─────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  // ── Keyboard shortcuts for undo/redo ─────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isCtrl = e.ctrlKey || e.metaKey;
+      if (isCtrl && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (isCtrl && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        redo();
+      } else if (isCtrl && e.key === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [undo, redo]);
 
   // ── Field operations ──────────────────────────────────────────
   const handleAddField = useCallback((fieldData: Omit<EditorField, "id">) => {
@@ -179,6 +280,7 @@ function EditorContent() {
         x: f.x,
         y: f.y,
         width: f.width || undefined,
+        height: f.height || undefined,
         font_size: f.font_size || undefined,
         bold: f.bold || undefined,
         custom_value: f.custom_value || undefined,
@@ -202,6 +304,7 @@ function EditorContent() {
         );
       }
       setSaveStatus("saved");
+      setIsDirty(false);
       setTimeout(() => setSaveStatus("idle"), 2000);
     } catch (err: unknown) {
       setSaveError(getApiErrorMessage(err, "Failed to save template"));
@@ -215,10 +318,37 @@ function EditorContent() {
       <header className="sticky top-0 z-10 flex items-center gap-3 border-b bg-white px-4 py-2">
         <button
           type="button"
-          onClick={() => router.push("/admin/print")}
+          onClick={() => {
+            if (isDirty) {
+              if (!window.confirm("You have unsaved changes. Leave without saving?")) return;
+            }
+            router.push("/admin/print");
+          }}
           className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent"
         >
           &larr; Back
+        </button>
+
+        <div className="h-6 w-px bg-gray-200" />
+
+        {/* Undo / Redo */}
+        <button
+          type="button"
+          onClick={undo}
+          disabled={historyIndex <= 0}
+          className="rounded-md border px-2 py-1.5 text-sm hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Undo (Ctrl+Z)"
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          onClick={redo}
+          disabled={historyIndex >= history.length - 1}
+          className="rounded-md border px-2 py-1.5 text-sm hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Redo (Ctrl+Shift+Z)"
+        >
+          Redo
         </button>
 
         <div className="h-6 w-px bg-gray-200" />
@@ -329,6 +459,14 @@ function EditorContent() {
           previewAsset={previewAsset}
           onSelectField={handleSelectField}
           onUpdateField={handleUpdateField}
+          onDragStart={() => { isDraggingRef.current = true; }}
+          onDragEnd={() => {
+            isDraggingRef.current = false;
+            setState((current) => {
+              pushHistory(current);
+              return current;
+            });
+          }}
         />
 
         <PropertyPanel

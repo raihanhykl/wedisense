@@ -12,6 +12,27 @@ interface EditorCanvasProps {
   previewAsset: PreviewAsset | null;
   onSelectField: (id: string | null) => void;
   onUpdateField: (id: string, updates: Partial<EditorField>) => void;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
+}
+
+/** Resolve an asset field value by key */
+function resolveAssetValue(
+  fieldKey: string | undefined,
+  asset: PreviewAsset | null,
+): string {
+  if (!fieldKey) return "";
+  if (!asset) return `{${fieldKey}}`;
+  const map: Record<string, string | null> = {
+    asset_number: asset.assetNumber,
+    serial_number: asset.serialNumber,
+    name: asset.name,
+    location: asset.location,
+    assigned_to: asset.assignedTo,
+    purchase_date: asset.purchaseDate,
+    warranty_end_date: asset.warrantyEndDate,
+  };
+  return map[fieldKey] ?? `{${fieldKey}}`;
 }
 
 /** Resolve a field's display text from the preview asset */
@@ -24,20 +45,73 @@ function resolveFieldValue(
   }
 
   if (field.type === "field" && field.field_key) {
-    if (!asset) return `{${field.field_key}}`;
-    const map: Record<string, string | null> = {
-      asset_number: asset.assetNumber,
-      serial_number: asset.serialNumber,
-      name: asset.name,
-      location: asset.location,
-      assigned_to: asset.assignedTo,
-      purchase_date: asset.purchaseDate,
-      warranty_end_date: asset.warrantyEndDate,
-    };
-    return map[field.field_key] ?? `{${field.field_key}}`;
+    return resolveAssetValue(field.field_key, asset);
   }
 
   return "";
+}
+
+/** SVG barcode preview generated from text */
+function BarcodeSVG({ text, width, height }: { text: string; width: number; height: number }) {
+  const bars: Array<{ x: number; w: number }> = [];
+  let xPos = 2;
+  const charCodes = text.split("").map((c) => c.charCodeAt(0));
+  for (let i = 0; i < Math.min(charCodes.length * 3 + 6, 60); i++) {
+    const code = charCodes[i % charCodes.length] ?? 65;
+    const barWidth = ((code + i) % 3) + 1;
+    if (i % 2 === 0) bars.push({ x: xPos, w: barWidth });
+    xPos += barWidth + 0.5;
+  }
+  const totalW = xPos;
+  const sx = (width - 4) / totalW;
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="bg-white">
+      {bars.map((bar, i) => (
+        <rect key={i} x={2 + bar.x * sx} y={2} width={Math.max(bar.w * sx, 0.5)} height={height - 14} fill="#111" />
+      ))}
+      <text x={width / 2} y={height - 2} textAnchor="middle" fontSize={Math.min(9, height * 0.2)} fill="#333" fontFamily="monospace">
+        {text.length > 25 ? text.slice(0, 25) + "..." : text}
+      </text>
+    </svg>
+  );
+}
+
+/** SVG QR code preview generated from text */
+function QrCodeSVG({ text, size }: { text: string; size: number }) {
+  const gridSize = 7;
+  const cellSize = (size - 4) / gridSize;
+  const charCodes = text.split("").map((c) => c.charCodeAt(0));
+  const cells: Array<{ row: number; col: number }> = [];
+
+  for (let row = 0; row < gridSize; row++) {
+    for (let col = 0; col < gridSize; col++) {
+      // Fixed finder pattern corners
+      const isFinderCorner =
+        (row < 2 && col < 2) ||
+        (row < 2 && col >= gridSize - 2) ||
+        (row >= gridSize - 2 && col < 2);
+      const idx = row * gridSize + col;
+      const code = charCodes[idx % charCodes.length] ?? 65;
+      if (isFinderCorner || (code + idx) % 3 === 0) {
+        cells.push({ row, col });
+      }
+    }
+  }
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="bg-white">
+      {cells.map((cell, i) => (
+        <rect
+          key={i}
+          x={2 + cell.col * cellSize}
+          y={2 + cell.row * cellSize}
+          width={cellSize - 0.5}
+          height={cellSize - 0.5}
+          fill="#111"
+        />
+      ))}
+    </svg>
+  );
 }
 
 export default function EditorCanvas({
@@ -48,6 +122,8 @@ export default function EditorCanvas({
   previewAsset,
   onSelectField,
   onUpdateField,
+  onDragStart,
+  onDragEnd,
 }: EditorCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -108,8 +184,9 @@ export default function EditorCanvas({
         offsetMmX: mouseMmX - field.x,
         offsetMmY: mouseMmY - field.y,
       };
+      onDragStart?.();
     },
-    [onSelectField, scale],
+    [onSelectField, scale, onDragStart],
   );
 
   useEffect(() => {
@@ -139,6 +216,9 @@ export default function EditorCanvas({
     };
 
     const handleMouseUp = () => {
+      if (dragRef.current) {
+        onDragEnd?.();
+      }
       dragRef.current = null;
     };
 
@@ -148,7 +228,7 @@ export default function EditorCanvas({
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [scale, paperWidthMm, paperHeightMm, onUpdateField]);
+  }, [scale, paperWidthMm, paperHeightMm, onUpdateField, onDragEnd]);
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent) => {
@@ -178,63 +258,36 @@ export default function EditorCanvas({
     );
 
     if (field.type === "barcode") {
+      const barcodeW = widthPx ?? 120;
+      const barcodeH = field.height ? field.height * scale : barcodeW * 0.4;
+      const barcodeText = resolveAssetValue(field.field_key ?? "asset_number", previewAsset) || "WDS-XX-0000-00000";
       return (
         <div
           key={field.id}
           className={baseClasses}
-          style={{ left, top, width: widthPx ?? 120 }}
+          style={{ left, top, width: barcodeW, height: barcodeH }}
           onMouseDown={(e) => handleMouseDown(e, field)}
           title={`Barcode (${field.x}, ${field.y}) mm`}
         >
-          {/* Barcode graphic */}
-          <div className="flex flex-col items-center px-1 py-0.5">
-            <div className="flex h-6 w-full items-end justify-center gap-px">
-              {Array.from({ length: 20 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="bg-gray-800"
-                  style={{
-                    width: i % 3 === 0 ? 2 : 1,
-                    height: 16 + (i % 5) * 2,
-                  }}
-                />
-              ))}
-            </div>
-            <span
-              className="mt-0.5 truncate text-center"
-              style={{ fontSize: Math.max(fontSize * 0.8, 7) }}
-            >
-              {previewAsset?.assetNumber ?? "WDS-XX-0000-00000"}
-            </span>
-          </div>
+          <BarcodeSVG text={barcodeText} width={barcodeW} height={barcodeH} />
         </div>
       );
     }
 
     if (field.type === "qr_code") {
-      const qrSize = widthPx ?? 60;
+      const qrW = widthPx ?? 60;
+      const qrH = field.height ? field.height * scale : qrW;
+      const qrSize = Math.min(qrW, qrH);
+      const qrText = resolveAssetValue(field.field_key ?? "asset_number", previewAsset) || "WDS-XX-0000-00000";
       return (
         <div
           key={field.id}
           className={baseClasses}
-          style={{ left, top, width: qrSize, height: qrSize }}
+          style={{ left, top, width: qrW, height: qrH }}
           onMouseDown={(e) => handleMouseDown(e, field)}
           title={`QR Code (${field.x}, ${field.y}) mm`}
         >
-          <div className="flex h-full w-full items-center justify-center bg-white p-1">
-            <div className="grid h-full w-full grid-cols-5 grid-rows-5 gap-px">
-              {Array.from({ length: 25 }).map((_, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    i % 3 === 0 || i % 7 === 0
-                      ? "bg-gray-800"
-                      : "bg-white",
-                  )}
-                />
-              ))}
-            </div>
-          </div>
+          <QrCodeSVG text={qrText} size={qrSize} />
         </div>
       );
     }

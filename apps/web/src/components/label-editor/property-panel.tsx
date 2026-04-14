@@ -117,6 +117,50 @@ export default function PropertyPanel({
           />
         </div>
 
+        {/* Height (for barcode/qr_code) */}
+        {(field.type === "barcode" || field.type === "qr_code") && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">
+              Height (mm)
+            </label>
+            <input
+              type="number"
+              step={0.5}
+              value={field.height ?? ""}
+              onChange={(e) => {
+                const val = e.target.value;
+                handleChange({
+                  height: val === "" ? undefined : parseFloat(val) || 0,
+                });
+              }}
+              placeholder="Auto"
+              className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+            />
+          </div>
+        )}
+
+        {/* Data Source for barcode/qr_code */}
+        {(field.type === "barcode" || field.type === "qr_code") && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">
+              Data Source
+            </label>
+            <select
+              value={field.field_key ?? "asset_number"}
+              onChange={(e) => {
+                handleChange({ field_key: e.target.value });
+              }}
+              className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+            >
+              {ASSET_FIELD_OPTIONS.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Font Size & Bold (for text/field types) */}
         {showTextProps && (
           <>

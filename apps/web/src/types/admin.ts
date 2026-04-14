@@ -185,6 +185,7 @@ export interface LabelField {
   x: number;
   y: number;
   width?: number;
+  height?: number;
   font_size?: number;
   bold?: boolean;
   custom_value?: string;

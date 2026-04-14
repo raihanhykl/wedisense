@@ -1,11 +1,12 @@
 export interface EditorField {
   id: string;
   type: "barcode" | "qr_code" | "text" | "field" | "divider";
-  field_key?: string;
+  field_key?: string; // For barcode/qr_code: which asset field to encode. For field: which asset field to display
   label?: string;
   x: number;
   y: number;
   width?: number;
+  height?: number; // For barcode/qr_code
   font_size?: number;
   bold?: boolean;
   custom_value?: string;
