@@ -27,13 +27,19 @@ function ensureDir(dir: string): void {
  * Resolve an asset field value by key.
  */
 function resolveFieldValue(asset: AssetData, fieldKey: string): string {
+  // Support both snake_case (from frontend) and camelCase keys
   const map: Record<string, string | null> = {
+    asset_number: asset.assetNumber,
     assetNumber: asset.assetNumber,
+    serial_number: asset.serialNumber,
     serialNumber: asset.serialNumber,
     name: asset.name,
     location: asset.location,
+    assigned_to: asset.assignedTo,
     assignedTo: asset.assignedTo,
+    purchase_date: asset.purchaseDate,
     purchaseDate: asset.purchaseDate,
+    warranty_end_date: asset.warrantyEndDate,
     warrantyEndDate: asset.warrantyEndDate,
   };
   return map[fieldKey] ?? '';
@@ -70,16 +76,24 @@ async function renderFields(
   doc: PDFKit.PDFDocument,
   fields: LabelField[],
   asset: AssetData & { id: string },
+  options: { paperWidthMm: number; paperHeightMm: number },
 ): Promise<void> {
   for (const field of fields) {
     const x = mmToPt(field.x);
     const y = mmToPt(field.y);
     const width = field.width ? mmToPt(field.width) : undefined;
-    const fontSize = field.font_size ?? 10;
+    const fontSize = field.font_size ?? (field as unknown as Record<string, unknown>)['fontSize'] as number ?? 10;
 
     switch (field.type) {
       case 'text': {
-        const text = field.custom_value ?? field.label ?? '';
+        // Support legacy seed format: type "text" with "field" property for asset data
+        const fieldRef = (field as unknown as Record<string, unknown>)['field'] as string | undefined;
+        let text: string;
+        if (fieldRef) {
+          text = resolveFieldValue(asset, fieldRef);
+        } else {
+          text = field.custom_value ?? field.label ?? '';
+        }
         doc.fontSize(fontSize);
         if (field.bold) {
           doc.font('Helvetica-Bold');
@@ -91,7 +105,7 @@ async function renderFields(
       }
 
       case 'field': {
-        const key = field.field_key ?? '';
+        const key = field.field_key ?? (field as unknown as Record<string, unknown>)['field'] as string ?? '';
         const value = resolveFieldValue(asset, key);
         const label = field.label ? `${field.label}: ` : '';
         doc.fontSize(fontSize);
@@ -106,21 +120,10 @@ async function renderFields(
 
       case 'barcode': {
         try {
-          // Try loading from file first, otherwise generate inline
-          let buffer: Buffer;
-          if (asset.barcodeImageUrl) {
-            const imgPath = path.resolve(STORAGE_PATH, asset.barcodeImageUrl.replace(/^\/uploads\//, ''));
-            if (fs.existsSync(imgPath)) {
-              buffer = fs.readFileSync(imgPath);
-            } else {
-              buffer = await generateBarcodeBuffer(asset.assetNumber);
-            }
-          } else {
-            buffer = await generateBarcodeBuffer(asset.assetNumber);
-          }
-          const imgOpts: PDFKit.Mixins.ImageOption = {};
-          if (width) imgOpts.width = width;
-          doc.image(buffer, x, y, imgOpts);
+          const buffer = await generateBarcodeBuffer(asset.assetNumber);
+          // Constrain barcode to field width, or 80% of page width if not set
+          const maxWidth = width ?? mmToPt(options.paperWidthMm * 0.8);
+          doc.image(buffer, x, y, { width: maxWidth });
         } catch {
           // Fallback: render asset number as text
           doc.fontSize(fontSize).font('Helvetica').text(asset.assetNumber, x, y, { width });
@@ -131,9 +134,9 @@ async function renderFields(
       case 'qr_code': {
         try {
           const buffer = await generateQrBuffer(asset.id);
-          const imgOpts: PDFKit.Mixins.ImageOption = {};
-          if (width) imgOpts.width = width;
-          doc.image(buffer, x, y, imgOpts);
+          // Constrain QR to field width, or 40% of page height if not set
+          const maxWidth = width ?? mmToPt(Math.min(options.paperWidthMm, options.paperHeightMm) * 0.4);
+          doc.image(buffer, x, y, { width: maxWidth });
         } catch {
           doc.fontSize(fontSize).font('Helvetica').text('QR', x, y, { width });
         }
@@ -193,7 +196,7 @@ export async function generateLabelsPdf(
             doc.addPage({ size: [pageWidth, pageHeight], margin: 0 });
             first = false;
           }
-          await renderFields(doc, fields, asset);
+          await renderFields(doc, fields, asset, { paperWidthMm, paperHeightMm });
         }
       }
       doc.end();
