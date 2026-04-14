@@ -128,3 +128,22 @@ export interface AssetFormData {
   usefulLifeMonths: string;
   notes: string;
 }
+
+// ── Movement types ──────────────────────────────────────────────────
+export interface MovementListItem {
+  id: string;
+  movementType: string;
+  referenceNumber: string;
+  status: string;
+  notes: string | null;
+  expectedReturnDate: string | null;
+  actualReturnDate: string | null;
+  createdAt: string;
+  asset: { id: string; name: string; assetNumber: string };
+  fromUser: { id: string; name: string } | null;
+  toUser: { id: string; name: string } | null;
+  fromLocation: { id: string; name: string } | null;
+  toLocation: { id: string; name: string } | null;
+  performedBy: { id: string; name: string };
+  approvedBy: { id: string; name: string } | null;
+}
