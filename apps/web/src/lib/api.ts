@@ -108,4 +108,17 @@ export async function apiDelete<T>(url: string): Promise<T> {
   return res.data.data;
 }
 
+export type PaginationMeta = NonNullable<ApiEnvelope<unknown>["meta"]>;
+
+export async function apiGetPaginated<T>(
+  url: string,
+  params?: Record<string, unknown>,
+): Promise<{ data: T; meta: PaginationMeta }> {
+  const res = await api.get<ApiEnvelope<T>>(url, { params });
+  return {
+    data: res.data.data,
+    meta: res.data.meta ?? { page: 1, limit: 10, total: 0, totalPages: 1 },
+  };
+}
+
 export default api;

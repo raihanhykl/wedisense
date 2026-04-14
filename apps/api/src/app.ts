@@ -1,4 +1,5 @@
 import express, { type Express } from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -10,6 +11,7 @@ import { locationRouter } from './modules/locations/router.js';
 import { userRouter } from './modules/users/router.js';
 import { roleRouter } from './modules/roles/router.js';
 import { productRouter } from './modules/products/router.js';
+import { assetRouter } from './modules/assets/router.js';
 import { authenticate } from './middleware/authenticate.js';
 
 const app: Express = express();
@@ -45,6 +47,10 @@ app.use('/api/locations', authenticate, locationRouter);
 app.use('/api/users', authenticate, userRouter);
 app.use('/api/roles', authenticate, roleRouter);
 app.use('/api/products', authenticate, productRouter);
+app.use('/api/assets', authenticate, assetRouter);
+
+// ── Static Files (barcode/QR images) ──────────────────────
+app.use('/uploads', express.static(path.resolve(process.env['STORAGE_PATH'] ?? './uploads')));
 
 // ── Error Handler (must be last) ───────────────────────────
 app.use(errorHandler);

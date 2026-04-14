@@ -77,3 +77,54 @@ export interface Permission {
   action: string;
   description: string;
 }
+
+// ── Asset types ──────────────────────────────────────────────────────
+export interface AssetListItem {
+  id: string;
+  assetNumber: string;
+  name: string;
+  status: string;
+  condition: string;
+  serialNumber: string | null;
+  barcodeValue: string;
+  purchaseDate: string | null;
+  purchasePrice: string | null;
+  warrantyEndDate: string | null;
+  currentBookValue: string | null;
+  product: { id: string; name: string; brand: string | null } | null;
+  location: { id: string; name: string; code: string };
+  assignedTo: { id: string; name: string; email: string } | null;
+}
+
+export interface AssetDetail extends AssetListItem {
+  barcodeType: string;
+  barcodeImageUrl: string | null;
+  currency: string;
+  vendor: string | null;
+  invoiceNumber: string | null;
+  warrantyStartDate: string | null;
+  usefulLifeMonths: number | null;
+  notes: string | null;
+  customFields: Record<string, unknown> | null;
+  createdBy: { id: string; name: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssetFormData {
+  productId: string;
+  name: string;
+  serialNumber: string;
+  locationId: string;
+  assignedToUserId: string;
+  status: string;
+  condition: string;
+  purchaseDate: string;
+  purchasePrice: string;
+  vendor: string;
+  invoiceNumber: string;
+  warrantyStartDate: string;
+  warrantyEndDate: string;
+  usefulLifeMonths: string;
+  notes: string;
+}
