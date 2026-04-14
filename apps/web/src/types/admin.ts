@@ -176,3 +176,36 @@ export interface MaintenanceLogItem {
   schedule: { id: string; title: string } | null;
   performedBy: { id: string; name: string };
 }
+
+// ── Label & Print types ─────────────────────────────────────────────
+export interface LabelField {
+  type: 'barcode' | 'qr_code' | 'text' | 'field' | 'divider';
+  field_key?: string;
+  label?: string;
+  x: number;
+  y: number;
+  width?: number;
+  font_size?: number;
+  bold?: boolean;
+  custom_value?: string;
+}
+
+export interface LabelTemplateItem {
+  id: string;
+  name: string;
+  description: string | null;
+  paperWidthMm: number;
+  paperHeightMm: number;
+  isDefault: boolean;
+  fields: LabelField[];
+  createdAt: string;
+}
+
+export interface PrintJobItem {
+  id: string;
+  status: string;
+  copiesPerAsset: number;
+  pdfUrl: string | null;
+  createdAt: string;
+  labelTemplate: { id: string; name: string };
+}

@@ -14,6 +14,7 @@ import { productRouter } from './modules/products/router.js';
 import { assetRouter } from './modules/assets/router.js';
 import { movementRouter } from './modules/movements/router.js';
 import { maintenanceRouter } from './modules/maintenance/router.js';
+import { labelRouter } from './modules/labels/router.js';
 import { authenticate } from './middleware/authenticate.js';
 
 const app: Express = express();
@@ -52,6 +53,7 @@ app.use('/api/products', authenticate, productRouter);
 app.use('/api/assets', authenticate, assetRouter);
 app.use('/api/movements', authenticate, movementRouter);
 app.use('/api/maintenance', authenticate, maintenanceRouter);
+app.use('/api', authenticate, labelRouter);
 
 // ── Static Files (barcode/QR images) ──────────────────────
 app.use('/uploads', express.static(path.resolve(process.env['STORAGE_PATH'] ?? './uploads')));
