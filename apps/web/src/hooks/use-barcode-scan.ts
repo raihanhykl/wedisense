@@ -5,7 +5,11 @@ import {
   BrowserMultiFormatReader,
   type IScannerControls,
 } from "@zxing/browser";
-import { NotFoundException } from "@zxing/library";
+import {
+  NotFoundException,
+  BarcodeFormat,
+  DecodeHintType,
+} from "@zxing/library";
 
 interface UseBarcodeScanReturn {
   startScanning: (videoElement: HTMLVideoElement) => Promise<void>;
@@ -38,15 +42,28 @@ export function useBarcodeScan(): UseBarcodeScanReturn {
 
       try {
         if (!readerRef.current) {
-          readerRef.current = new BrowserMultiFormatReader();
+          // Configure hints for better 1D barcode (Code128) detection
+          const hints = new Map<DecodeHintType, unknown>();
+          hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+            BarcodeFormat.CODE_128,
+            BarcodeFormat.CODE_39,
+            BarcodeFormat.EAN_13,
+            BarcodeFormat.EAN_8,
+            BarcodeFormat.UPC_A,
+            BarcodeFormat.UPC_E,
+            BarcodeFormat.QR_CODE,
+            BarcodeFormat.DATA_MATRIX,
+          ]);
+          hints.set(DecodeHintType.TRY_HARDER, true);
+          readerRef.current = new BrowserMultiFormatReader(hints);
         }
 
         const controls = await readerRef.current.decodeFromConstraints(
           {
             video: {
               facingMode: "environment",
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
             },
           },
           videoElement,
