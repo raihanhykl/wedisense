@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGetPaginated, apiPost } from "@/lib/api";
 import type { PaginationMeta } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
 import type { MovementListItem } from "@/types/admin";
 import MovementFormDialog from "@/components/shared/movement-form-dialog";
-import MovementTimeline from "@/components/shared/movement-timeline";
 
 // ── Status badge colors ──────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {

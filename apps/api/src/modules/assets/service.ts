@@ -369,6 +369,19 @@ export async function updateAsset(id: string, input: UpdateAssetInput, userId: s
     throw new AppError(404, 'ASSET_NOT_FOUND', 'Asset not found');
   }
 
+  // Block direct status transitions to LOST or DISPOSED — must go through movements module
+  if (
+    input.status !== undefined &&
+    (input.status === 'LOST' || input.status === 'DISPOSED') &&
+    existing.status !== input.status
+  ) {
+    throw new AppError(
+      400,
+      'INVALID_STATUS_TRANSITION',
+      'Use POST /api/movements with type LOST or DISPOSAL to set this status',
+    );
+  }
+
   // Validate location if changed
   if (input.locationId && input.locationId !== existing.locationId) {
     const location = await prisma.location.findUnique({

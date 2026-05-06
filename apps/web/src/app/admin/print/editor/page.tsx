@@ -35,7 +35,6 @@ function EditorContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const templateId = searchParams.get("id");
-  const isEdit = !!templateId;
 
   // ── Editor state ──────────────────────────────────────────────
   const [state, setState] = useState<EditorState>({

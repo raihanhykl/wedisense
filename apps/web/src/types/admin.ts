@@ -177,6 +177,30 @@ export interface MaintenanceLogItem {
   performedBy: { id: string; name: string };
 }
 
+// ── Notification types ──────────────────────────────────────────────
+export type NotificationType =
+  | "WARRANTY_EXPIRING"
+  | "LOAN_OVERDUE"
+  | "MAINTENANCE_DUE"
+  | "ASSET_LOST"
+  | "ASSET_DISPOSED"
+  | "REPORT_READY"
+  | "PRINT_READY"
+  | "IMPORT_COMPLETE"
+  | "TOUR_UPDATED";
+
+export interface NotificationItem {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  data: { url?: string; assetId?: string; movementId?: string; [k: string]: unknown } | null;
+  isRead: boolean;
+  readAt: string | null;
+  createdAt: string;
+}
+
 // ── Label & Print types ─────────────────────────────────────────────
 export interface LabelField {
   type: 'barcode' | 'qr_code' | 'text' | 'field' | 'divider';

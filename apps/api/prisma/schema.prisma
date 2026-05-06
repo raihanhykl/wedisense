@@ -107,6 +107,7 @@ enum NotificationType {
   PRINT_READY
   IMPORT_COMPLETE
   ASSET_DISPOSED
+  TOUR_UPDATED
 }
 
 enum ReportType {

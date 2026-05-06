@@ -19,6 +19,7 @@ const navItems: NavItem[] = [
   { label: "Movements", href: "/admin/movements" },
   { label: "Maintenance", href: "/admin/maintenance" },
   { label: "Print", href: "/admin/print" },
+  { label: "Notifications", href: "/admin/notifications" },
   { label: "Locations", href: "/admin/locations" },
   { label: "Users", href: "/admin/users", permission: "users:manage" },
   { label: "Roles", href: "/admin/roles", permission: "roles:manage" },

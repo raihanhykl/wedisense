@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Weekly Summary</title></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
+  <div style="background:#1a56db;padding:16px;border-radius:8px 8px 0 0">
+    <h1 style="color:#fff;margin:0;font-size:20px">Wedisense — Weekly Summary</h1>
+  </div>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 8px 8px">
+    <p>Hello {{name}},</p>
+    <p>Here is your weekly asset management summary for the week starting <strong>{{weekStart}}</strong>:</p>
+    <table style="width:100%;border-collapse:collapse;margin:16px 0">
+      <tr style="background:#f3f4f6">
+        <td style="padding:8px 12px;border:1px solid #e5e7eb">Total Active Assets</td>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:bold">{{totalAssets}}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb">New Assets This Week</td>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:bold">{{newAssetsThisWeek}}</td>
+      </tr>
+      <tr style="background:#f3f4f6">
+        <td style="padding:8px 12px;border:1px solid #e5e7eb">Total Movements This Week</td>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:bold">{{newMovements}}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb">Overdue Loans</td>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:bold;color:#dc2626">{{overdueLoans}}</td>
+      </tr>
+      <tr style="background:#f3f4f6">
+        <td style="padding:8px 12px;border:1px solid #e5e7eb">Maintenance Due (7 days)</td>
+        <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:bold;color:#d97706">{{dueMaintenance}}</td>
+      </tr>
+    </table>
+    <p>
+      <a href="/admin/dashboard" style="display:inline-block;background:#1a56db;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none">View Dashboard</a>
+    </p>
+  </div>
+  <div style="text-align:center;padding:16px;color:#9ca3af;font-size:12px">
+    Wedisense — Asset Management System
+  </div>
+</body>
+</html>

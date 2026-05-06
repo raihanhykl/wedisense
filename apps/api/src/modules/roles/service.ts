@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import * as roleRepo from './repository.js';
 import type { CreateRoleInput, UpdateRoleInput, SetPermissionsInput } from './schema.js';
+import { tourSyncQueue } from '../../lib/queue.js';
 
 export async function listRoles() {
   return roleRepo.findMany();
@@ -145,9 +146,11 @@ export async function setRolePermissions(
     },
   });
 
-  // Phase 11 placeholder
-  console.log(
-    `[tour_sync] Permission change for role ${roleId} — tour_sync job would be queued here`,
+  // Queue tour_sync job to update onboarding tour steps for this role
+  await tourSyncQueue.add(
+    'sync',
+    { roleId },
+    { jobId: `tour-sync:${roleId}`, removeOnComplete: { count: 10 } },
   );
 
   return newPermissions;

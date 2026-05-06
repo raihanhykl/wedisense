@@ -7,6 +7,7 @@ import * as repo from './repository.js';
 import type { CreateMovementInput } from './schema.js';
 import type { MovementListFilters, PrismaTransactionClient } from './types.js';
 import type { PaginationQuery } from '@wedisense/shared';
+import { notifyRole } from '../notifications/index.js';
 
 // ── Build where clause ───────────────────────────────────────────────
 
@@ -559,11 +560,20 @@ async function handleDisposal(input: CreateMovementInput, performedByUserId: str
     throw new AppError(400, 'NOTES_REQUIRED', 'notes (reason) is required for DISPOSAL');
   }
 
-  return prisma.$transaction(async (tx) => {
+  let assetName: string;
+  let assetNumber: string;
+  let assetId: string;
+  let movementId: string;
+
+  const movement = await prisma.$transaction(async (tx) => {
     const asset = await requireAsset(tx, input.assetId, 'DISPOSAL');
     const ref = generateMovementRef();
 
-    const movement = await repo.createInTransaction(tx, {
+    assetName = asset.name;
+    assetNumber = asset.assetNumber;
+    assetId = asset.id;
+
+    const created = await repo.createInTransaction(tx, {
       referenceNumber: ref,
       movementType: 'DISPOSAL',
       status: 'COMPLETED',
@@ -573,19 +583,34 @@ async function handleDisposal(input: CreateMovementInput, performedByUserId: str
       attachments: input.attachments ?? null,
     });
 
+    movementId = created.id;
+
     await repo.updateAssetInTransaction(tx, asset.id, {
       status: 'DISPOSED',
     });
 
-    await createAuditLog(tx, performedByUserId, 'CREATE', movement.id, {
+    await createAuditLog(tx, performedByUserId, 'CREATE', created.id, {
       movementType: 'DISPOSAL',
       referenceNumber: ref,
       assetId: asset.id,
       finalBookValue: asset.currentBookValue?.toString() ?? null,
     });
 
-    return movement;
+    return created;
   });
+
+  // Fire-and-forget: notify admins about disposal (never rolls back the tx)
+  void notifyRole('ADMIN', {
+    type: 'ASSET_DISPOSED',
+    titleKey: 'asset_disposed.title',
+    messageKey: 'asset_disposed.message',
+    vars: { assetName: assetName!, assetNumber: assetNumber! },
+    data: { assetId: assetId!, movementId: movementId!, url: `/admin/assets/${assetId!}` },
+  }).catch((err: unknown) => {
+    console.error('[handleDisposal] Notify error (non-fatal):', err instanceof Error ? err.message : err);
+  });
+
+  return movement;
 }
 
 // ── RESIGNATION_RETURN ──────────────────────────────────────────────
@@ -674,11 +699,20 @@ async function handleFound(input: CreateMovementInput, performedByUserId: string
 // ── LOST ────────────────────────────────────────────────────────────
 
 async function handleLost(input: CreateMovementInput, performedByUserId: string) {
-  return prisma.$transaction(async (tx) => {
+  let assetName: string;
+  let assetNumber: string;
+  let assetId: string;
+  let movementId: string;
+
+  const movement = await prisma.$transaction(async (tx) => {
     const asset = await requireAsset(tx, input.assetId, 'LOST');
     const ref = generateMovementRef();
 
-    const movement = await repo.createInTransaction(tx, {
+    assetName = asset.name;
+    assetNumber = asset.assetNumber;
+    assetId = asset.id;
+
+    const created = await repo.createInTransaction(tx, {
       referenceNumber: ref,
       movementType: 'LOST',
       status: 'COMPLETED',
@@ -688,18 +722,33 @@ async function handleLost(input: CreateMovementInput, performedByUserId: string)
       attachments: input.attachments ?? null,
     });
 
+    movementId = created.id;
+
     await repo.updateAssetInTransaction(tx, asset.id, {
       status: 'LOST',
     });
 
-    await createAuditLog(tx, performedByUserId, 'CREATE', movement.id, {
+    await createAuditLog(tx, performedByUserId, 'CREATE', created.id, {
       movementType: 'LOST',
       referenceNumber: ref,
       assetId: asset.id,
     });
 
-    return movement;
+    return created;
   });
+
+  // Fire-and-forget: notify admins about lost asset (never rolls back the tx)
+  void notifyRole('ADMIN', {
+    type: 'ASSET_LOST',
+    titleKey: 'asset_lost.title',
+    messageKey: 'asset_lost.message',
+    vars: { assetName: assetName!, assetNumber: assetNumber! },
+    data: { assetId: assetId!, movementId: movementId!, url: `/admin/assets/${assetId!}` },
+  }).catch((err: unknown) => {
+    console.error('[handleLost] Notify error (non-fatal):', err instanceof Error ? err.message : err);
+  });
+
+  return movement;
 }
 
 // ── Approve Movement ────────────────────────────────────────────────
