@@ -150,7 +150,8 @@ export async function setRolePermissions(
   await tourSyncQueue.add(
     'sync',
     { roleId },
-    { jobId: `tour-sync:${roleId}`, removeOnComplete: { count: 10 } },
+    // BullMQ rejects ':' inside custom job IDs (reserved as redis key separator).
+    { jobId: `tour-sync-${roleId}`, removeOnComplete: { count: 10 } },
   );
 
   return newPermissions;
