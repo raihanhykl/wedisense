@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { prisma } from './prisma.js';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -44,9 +45,9 @@ const IMPORT_COLUMNS: Array<{
   required: boolean;
   example: string;
 }> = [
-  { header: 'Product ID (UUID)*', key: 'productId', width: 40, required: true, example: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+  { header: 'Product ID or EAN*', key: 'productId', width: 40, required: true, example: 'Copy from "Products" sheet — UUID or EAN-13' },
   { header: 'Name*', key: 'name', width: 30, required: true, example: 'MacBook Pro 14"' },
-  { header: 'Location ID (UUID)*', key: 'locationId', width: 40, required: true, example: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
+  { header: 'Location ID or Code*', key: 'locationId', width: 40, required: true, example: 'Copy from "Locations" sheet — UUID or code' },
   { header: 'Serial Number', key: 'serialNumber', width: 25, required: false, example: 'C02XY1234' },
   { header: 'Status', key: 'status', width: 18, required: false, example: 'ACTIVE' },
   { header: 'Condition', key: 'condition', width: 15, required: false, example: 'NEW' },
@@ -145,6 +146,69 @@ export async function buildAssetImportTemplate(): Promise<Buffer> {
     ws.getCell(`${conditionColLetter}${r}`).dataValidation = conditionValidation;
   }
 
+  // ── Reference sheet: Products ──────────────────────────────────────
+  // Listed so the user can copy either the UUID or the EAN-13 code into
+  // the import sheet's "Product ID or EAN" column.
+  const products = await prisma.product.findMany({
+    select: { id: true, eanCode: true, name: true, brand: true, model: true },
+    orderBy: { name: 'asc' },
+  });
+  const productsWs = wb.addWorksheet('Products', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  productsWs.columns = [
+    { header: 'Product ID (UUID)', key: 'id', width: 40 },
+    { header: 'EAN', key: 'eanCode', width: 18 },
+    { header: 'Name', key: 'name', width: 35 },
+    { header: 'Brand', key: 'brand', width: 20 },
+    { header: 'Model', key: 'model', width: 20 },
+  ];
+  styleHeader(productsWs.getRow(1));
+  for (const p of products) {
+    productsWs.addRow({
+      id: p.id,
+      eanCode: p.eanCode ?? '',
+      name: p.name,
+      brand: p.brand ?? '',
+      model: p.model ?? '',
+    });
+  }
+  productsWs.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: 5 },
+  };
+
+  // ── Reference sheet: Locations ─────────────────────────────────────
+  const locations = await prisma.location.findMany({
+    where: { isActive: true },
+    select: { id: true, code: true, name: true, city: true, type: true },
+    orderBy: { name: 'asc' },
+  });
+  const locationsWs = wb.addWorksheet('Locations', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  locationsWs.columns = [
+    { header: 'Location ID (UUID)', key: 'id', width: 40 },
+    { header: 'Code', key: 'code', width: 16 },
+    { header: 'Name', key: 'name', width: 35 },
+    { header: 'City', key: 'city', width: 20 },
+    { header: 'Type', key: 'type', width: 18 },
+  ];
+  styleHeader(locationsWs.getRow(1));
+  for (const l of locations) {
+    locationsWs.addRow({
+      id: l.id,
+      code: l.code,
+      name: l.name,
+      city: l.city ?? '',
+      type: l.type,
+    });
+  }
+  locationsWs.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: 5 },
+  };
+
   // Instructions worksheet
   const instructWs = wb.addWorksheet('Instructions');
   instructWs.getCell('A1').value = 'Wedisense Asset Import Template';
@@ -152,25 +216,41 @@ export async function buildAssetImportTemplate(): Promise<Buffer> {
   instructWs.getCell('A3').value = 'Instructions:';
   instructWs.getCell('A3').font = { bold: true };
   const instructions = [
-    '1. Fill in the "Assets Import" sheet starting from row 3 (row 2 is a sample).',
+    '1. Fill in the "Assets Import" sheet starting from row 3 (row 2 is a sample — delete it before importing).',
     '2. Fields marked with * are required.',
-    '3. Product ID and Location ID must be valid UUIDs from the system.',
-    '4. Status values: ACTIVE, IDLE, IN_MAINTENANCE, DISPOSED, LOST, BORROWED',
-    '5. Condition values: NEW, GOOD, FAIR, POOR, DAMAGED',
-    '6. Date format: YYYY-MM-DD (e.g. 2024-01-15)',
-    '7. Purchase Price should be numeric only (no currency symbol).',
-    '8. Delete the sample row (row 2) before importing.',
+    '3. "Product ID or EAN" — paste a Product UUID OR its 13-digit EAN code. Both are accepted.',
+    '4. "Location ID or Code" — paste a Location UUID OR its short code (e.g. "HO-JKT"). Both are accepted.',
+    '5. See the "Products" and "Locations" sheets for the full list of valid values.',
+    '6. Status values: ACTIVE, IDLE, IN_MAINTENANCE, DISPOSED, LOST, BORROWED',
+    '7. Condition values: NEW, GOOD, FAIR, POOR, DAMAGED',
+    '8. Date format: YYYY-MM-DD (e.g. 2024-01-15)',
+    '9. Purchase Price should be numeric only (no currency symbol).',
+    '10. Default currency is IDR if left blank.',
   ];
   instructions.forEach((text, i) => {
     instructWs.getCell(`A${4 + i}`).value = text;
   });
-  instructWs.getColumn('A').width = 80;
+  instructWs.getColumn('A').width = 100;
 
   // ExcelJS declares its own Buffer interface (extends ArrayBuffer), not Node's Buffer.
   // The cast is required to bridge these incompatible type declarations.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
   const rawBuffer = await wb.xlsx.writeBuffer() as unknown as Buffer;
   return rawBuffer;
+}
+
+// Helper for consistent header styling across all reference sheets.
+function styleHeader(row: ExcelJS.Row): void {
+  row.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1E3A5F' },
+    };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+  row.height = 22;
 }
 
 // ── parseAssetImportSheet ─────────────────────────────────────────────
@@ -242,11 +322,11 @@ export async function parseAssetImportSheet(
 
     const rowErrors: ParseError[] = [];
 
-    // Required field validation
+    // Required field validation. productId and locationId may be either
+    // a UUID or a natural key (product EAN-13 / location code) — the
+    // post-pass below resolves natural keys to UUIDs in a single query.
     if (!productId) {
-      rowErrors.push({ rowIndex: rowNum, field: 'productId', message: 'Product ID is required', value: productId });
-    } else if (!isValidUuid(productId)) {
-      rowErrors.push({ rowIndex: rowNum, field: 'productId', message: 'Product ID must be a valid UUID', value: productId });
+      rowErrors.push({ rowIndex: rowNum, field: 'productId', message: 'Product ID or EAN is required', value: productId });
     }
 
     if (!name) {
@@ -254,9 +334,7 @@ export async function parseAssetImportSheet(
     }
 
     if (!locationId) {
-      rowErrors.push({ rowIndex: rowNum, field: 'locationId', message: 'Location ID is required', value: locationId });
-    } else if (!isValidUuid(locationId)) {
-      rowErrors.push({ rowIndex: rowNum, field: 'locationId', message: 'Location ID must be a valid UUID', value: locationId });
+      rowErrors.push({ rowIndex: rowNum, field: 'locationId', message: 'Location ID or code is required', value: locationId });
     }
 
     // Optional UUID fields
@@ -334,7 +412,78 @@ export async function parseAssetImportSheet(
     });
   });
 
-  return { rows, errors };
+  // ── Resolve natural keys (EAN / location code) to UUIDs ─────────────
+  // Single bulk lookup per dimension instead of per-row DB hits.
+  const naturalProductKeys = new Set<string>();
+  const naturalLocationKeys = new Set<string>();
+  for (const r of rows) {
+    if (r.productId && !isValidUuid(r.productId)) naturalProductKeys.add(r.productId);
+    if (r.locationId && !isValidUuid(r.locationId)) naturalLocationKeys.add(r.locationId);
+  }
+
+  const productByKey = new Map<string, string>();
+  const locationByKey = new Map<string, string>();
+
+  if (naturalProductKeys.size > 0) {
+    const products = await prisma.product.findMany({
+      where: { eanCode: { in: Array.from(naturalProductKeys) } },
+      select: { id: true, eanCode: true },
+    });
+    for (const p of products) {
+      if (p.eanCode) productByKey.set(p.eanCode, p.id);
+    }
+  }
+  if (naturalLocationKeys.size > 0) {
+    const locations = await prisma.location.findMany({
+      where: { code: { in: Array.from(naturalLocationKeys) } },
+      select: { id: true, code: true },
+    });
+    for (const l of locations) {
+      locationByKey.set(l.code, l.id);
+    }
+  }
+
+  // Apply resolution, drop rows that fail to resolve into errors[].
+  const resolved: AssetImportRow[] = [];
+  for (const r of rows) {
+    const rowResolutionErrors: ParseError[] = [];
+
+    if (r.productId && !isValidUuid(r.productId)) {
+      const id = productByKey.get(r.productId);
+      if (id) {
+        r.productId = id;
+      } else {
+        rowResolutionErrors.push({
+          rowIndex: r.rowIndex,
+          field: 'productId',
+          message: `Product with EAN "${r.productId}" not found. Pick a Product UUID or EAN from the "Products" sheet.`,
+          value: r.productId,
+        });
+      }
+    }
+
+    if (r.locationId && !isValidUuid(r.locationId)) {
+      const id = locationByKey.get(r.locationId);
+      if (id) {
+        r.locationId = id;
+      } else {
+        rowResolutionErrors.push({
+          rowIndex: r.rowIndex,
+          field: 'locationId',
+          message: `Location with code "${r.locationId}" not found. Pick a Location UUID or code from the "Locations" sheet.`,
+          value: r.locationId,
+        });
+      }
+    }
+
+    if (rowResolutionErrors.length === 0) {
+      resolved.push(r);
+    } else {
+      errors.push(...rowResolutionErrors);
+    }
+  }
+
+  return { rows: resolved, errors };
 }
 
 // ── writeRowsToWorksheet ──────────────────────────────────────────────
