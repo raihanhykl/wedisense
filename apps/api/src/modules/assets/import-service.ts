@@ -45,6 +45,11 @@ function generateReferenceNumber(): string {
 /**
  * Bulk import asset rows inside a transaction.
  * Continues past row-level errors; aborts only on DB-level errors.
+ *
+ * Rows can request creation of a brand new product via `newProductSpec`.
+ * Pre-pass: dedupe new-product specs by lowercased name, look up the
+ * referenced category by name, create the products in a single
+ * transaction, then patch each row's `productId` to the resulting UUID.
  */
 export async function bulkImport(
   rows: AssetImportRow[],
@@ -54,9 +59,99 @@ export async function bulkImport(
     return { created: [], failed: [] };
   }
 
+  // ── Pre-pass: materialise any new products referenced via newProductSpec
+  // before we kick off the asset-creation transaction. We dedupe by
+  // (lowercased name, lowercased category) so that 20 rows referencing
+  // "Lenovo ThinkPad X1" produce one product, not twenty.
+  const earlyFailed: ImportError[] = [];
+  const newProductRows = rows.filter((r) => r.newProductSpec);
+  if (newProductRows.length > 0) {
+    // Group rows by a stable dedupe key.
+    type Spec = NonNullable<AssetImportRow['newProductSpec']>;
+    const byKey = new Map<string, { spec: Spec; rowIndices: number[] }>();
+    for (const r of newProductRows) {
+      const spec = r.newProductSpec!;
+      const key = `${spec.name.toLowerCase()}|${spec.categoryName.toLowerCase()}`;
+      const bucket = byKey.get(key);
+      if (bucket) {
+        bucket.rowIndices.push(r.rowIndex);
+      } else {
+        byKey.set(key, { spec, rowIndices: [r.rowIndex] });
+      }
+    }
+
+    // Resolve every referenced category by name in one query (case-insensitive).
+    const categoryNames = Array.from(new Set(Array.from(byKey.values()).map((b) => b.spec.categoryName)));
+    const categories = await prisma.assetCategory.findMany({
+      where: {
+        OR: [
+          { name: { in: categoryNames, mode: 'insensitive' } },
+          { code: { in: categoryNames, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, name: true, code: true },
+    });
+    const categoryByName = new Map<string, string>();
+    for (const c of categories) {
+      categoryByName.set(c.name.toLowerCase(), c.id);
+      categoryByName.set(c.code.toLowerCase(), c.id);
+    }
+
+    // For each dedupe-bucket, either create the product or attribute the
+    // failure to every row that referenced it.
+    const productKeyToId = new Map<string, string>();
+    await prisma.$transaction(async (tx) => {
+      for (const [key, { spec, rowIndices }] of byKey) {
+        const categoryId = categoryByName.get(spec.categoryName.toLowerCase());
+        if (!categoryId) {
+          for (const idx of rowIndices) {
+            earlyFailed.push({
+              rowIndex: idx,
+              field: 'productCategory',
+              message: `Category "${spec.categoryName}" not found. See the "Categories" sheet for valid names.`,
+              value: spec.categoryName,
+            });
+          }
+          continue;
+        }
+        const product = await tx.product.create({
+          data: {
+            name: spec.name,
+            ...(spec.brand && { brand: spec.brand }),
+            ...(spec.model && { model: spec.model }),
+            ...(spec.eanCode && { eanCode: spec.eanCode }),
+            category: { connect: { id: categoryId } },
+            source: 'MANUAL',
+          },
+        });
+        productKeyToId.set(key, product.id);
+      }
+    });
+
+    // Patch productId on every row that requested a new product.
+    for (const r of newProductRows) {
+      const spec = r.newProductSpec!;
+      const key = `${spec.name.toLowerCase()}|${spec.categoryName.toLowerCase()}`;
+      const resolvedId = productKeyToId.get(key);
+      if (resolvedId) {
+        r.productId = resolvedId;
+        delete r.newProductSpec;
+      }
+      // else: earlyFailed already has an entry; the row will be filtered out below
+    }
+  }
+
+  // Filter out rows that we couldn't resolve a product for.
+  const failedRowIndices = new Set(earlyFailed.map((e) => e.rowIndex));
+  const remainingRows = rows.filter((r) => !failedRowIndices.has(r.rowIndex));
+
+  if (remainingRows.length === 0) {
+    return { created: [], failed: earlyFailed };
+  }
+
   // Pre-load all referenced products and locations in two queries
-  const productIds = [...new Set(rows.map((r) => r.productId))];
-  const locationIds = [...new Set(rows.map((r) => r.locationId))];
+  const productIds = [...new Set(remainingRows.map((r) => r.productId))];
+  const locationIds = [...new Set(remainingRows.map((r) => r.locationId))];
 
   const [products, locations] = await Promise.all([
     prisma.product.findMany({
@@ -72,7 +167,7 @@ export async function bulkImport(
   const locationSet = new Set(locations.map((l) => l.id));
 
   // Also pre-check serial number uniqueness for those rows that have them
-  const serialNumbers = rows.filter((r) => r.serialNumber).map((r) => r.serialNumber as string);
+  const serialNumbers = remainingRows.filter((r) => r.serialNumber).map((r) => r.serialNumber as string);
   const existingSerials = serialNumbers.length > 0
     ? await prisma.asset.findMany({
         where: { serialNumber: { in: serialNumbers } },
@@ -81,11 +176,11 @@ export async function bulkImport(
     : [];
   const takenSerials = new Set(existingSerials.map((a) => a.serialNumber as string));
 
-  const failed: ImportError[] = [];
+  const failed: ImportError[] = [...earlyFailed];
   const validRows: Array<{ row: AssetImportRow; categoryCode: string }> = [];
 
   // Validate each row against pre-loaded data
-  for (const row of rows) {
+  for (const row of remainingRows) {
     const product = productMap.get(row.productId);
     if (!product) {
       failed.push({ rowIndex: row.rowIndex, field: 'productId', message: `Product not found: ${row.productId}`, value: row.productId });

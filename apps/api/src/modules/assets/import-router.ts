@@ -39,9 +39,24 @@ const assetConditionEnum = z.enum([
   'DAMAGED',
 ]);
 
+// Spec carried over from the preview phase when the row wants a new
+// product created (rather than matched to an existing one).
+const newProductSpecSchema = z.object({
+  name: z.string().min(1).max(255),
+  categoryName: z.string().min(1).max(255),
+  brand: z.string().min(1).max(255).optional(),
+  model: z.string().min(1).max(255).optional(),
+  eanCode: z.string().min(1).max(64).optional(),
+});
+
 const importRowSchema = z.object({
   rowIndex: z.number().int().nonnegative(),
-  productId: z.string().uuid(),
+  // productId is normally a UUID after parse, but when the row will create
+  // a new product it stays as the raw user-typed name carrying a
+  // newProductSpec. The bulkImport service replaces it with the new
+  // product's UUID before asset creation.
+  productId: z.string().min(1),
+  newProductSpec: newProductSpecSchema.optional(),
   name: z.string().min(1).max(255),
   serialNumber: z.string().trim().min(1).optional(),
   status: assetStatusEnum,
@@ -57,7 +72,10 @@ const importRowSchema = z.object({
   warrantyEndDate: z.coerce.date().optional(),
   usefulLifeMonths: z.number().int().positive().optional(),
   notes: z.string().optional(),
-});
+}).refine(
+  (r) => z.string().uuid().safeParse(r.productId).success || r.newProductSpec !== undefined,
+  { message: 'productId must be a UUID, or newProductSpec must be provided to create the product on-the-fly', path: ['productId'] },
+);
 
 const confirmBodySchema = z.object({
   validatedRows: z.array(importRowSchema).min(1),

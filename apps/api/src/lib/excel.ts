@@ -5,7 +5,18 @@ import { prisma } from './prisma.js';
 
 export interface AssetImportRow {
   rowIndex: number;
+  /** Resolved product UUID (after parser maps from name/EAN/UUID/new-product spec). */
   productId: string;
+  /** Present only when the productId field above was synthesised from a row
+   * that requested a new product. The bulkImport service uses this to insert
+   * the product before the asset (deduped across rows by Name+Category). */
+  newProductSpec?: {
+    name: string;
+    categoryName: string;
+    brand?: string;
+    model?: string;
+    eanCode?: string;
+  };
   name: string;
   serialNumber?: string;
   status: 'ACTIVE' | 'IDLE' | 'IN_MAINTENANCE' | 'DISPOSED' | 'LOST' | 'BORROWED';
@@ -61,6 +72,15 @@ const IMPORT_COLUMNS: Array<{
   { header: 'Warranty End Date', key: 'warrantyEndDate', width: 22, required: false, example: '2025-01-14' },
   { header: 'Useful Life (months)', key: 'usefulLifeMonths', width: 22, required: false, example: '36' },
   { header: 'Notes', key: 'notes', width: 40, required: false, example: '' },
+
+  // ── Fields used ONLY when the product in column "Product" does not yet
+  // exist in the system. Leave blank to require that the product already
+  // be in the catalog. Provide at minimum "Product Category" to create
+  // a new product on-the-fly during import.
+  { header: 'Product Category', key: 'productCategory', width: 25, required: false, example: 'IT Equipment' },
+  { header: 'Product Brand', key: 'productBrand', width: 20, required: false, example: 'Apple' },
+  { header: 'Product Model', key: 'productModel', width: 20, required: false, example: 'A2992' },
+  { header: 'Product EAN', key: 'productEan', width: 18, required: false, example: '8801643734718' },
 ];
 
 const VALID_STATUSES = ['ACTIVE', 'IDLE', 'IN_MAINTENANCE', 'DISPOSED', 'LOST', 'BORROWED'] as const;
@@ -178,6 +198,34 @@ export async function buildAssetImportTemplate(): Promise<Buffer> {
     to: { row: 1, column: 5 },
   };
 
+  // ── Reference sheet: Categories ────────────────────────────────────
+  // Required when the "Product" column refers to a new product not yet
+  // in the catalog — fill "Product Category" with one of these names.
+  const categories = await prisma.assetCategory.findMany({
+    select: { id: true, code: true, name: true, description: true },
+    orderBy: { name: 'asc' },
+  });
+  const categoriesWs = wb.addWorksheet('Categories', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  categoriesWs.columns = [
+    { header: 'Category Name', key: 'name', width: 30 },
+    { header: 'Code', key: 'code', width: 15 },
+    { header: 'Description', key: 'description', width: 50 },
+  ];
+  styleHeader(categoriesWs.getRow(1));
+  for (const c of categories) {
+    categoriesWs.addRow({
+      name: c.name,
+      code: c.code,
+      description: c.description ?? '',
+    });
+  }
+  categoriesWs.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: 3 },
+  };
+
   // ── Reference sheet: Locations ─────────────────────────────────────
   const locations = await prisma.location.findMany({
     where: { isActive: true },
@@ -219,19 +267,29 @@ export async function buildAssetImportTemplate(): Promise<Buffer> {
     '1. Fill in the "Assets Import" sheet starting from row 3 (row 2 is a sample — delete it before importing).',
     '2. Fields marked with * are required.',
     '',
-    'PRODUCT column — just type the product name. Examples:',
-    '   • "MacBook Pro 14"           (Name — easiest)',
-    '   • "MAN-IT-MBP14-M3"          (EAN code — disambiguates duplicate names)',
-    '   • "8f56f60b-d271-..."        (UUID — copy from the "Products" sheet)',
-    'If the name matches multiple products, you will get a disambiguation error.',
+    'PRODUCT column (column A) — type the product name.',
+    'CASE A: The product already exists in the catalog',
+    '   Just type the name (e.g. "MacBook Pro 14"). The "Product Brand",',
+    '   "Product Model", "Product EAN" and "Product Category" columns can be',
+    '   left blank — they are ignored when the product is found.',
     '',
-    'LOCATION column — just type the location name. Examples:',
+    'CASE B: The product does NOT exist yet (e.g. you are bringing in a new',
+    'brand or model for the first time)',
+    '   • Type the new product name in column A',
+    '   • Fill in "Product Category" (required) — pick from the "Categories" sheet',
+    '   • Optionally fill in "Product Brand", "Product Model", "Product EAN"',
+    '   The product will be created automatically during import, and the asset',
+    '   row will reference it. If multiple rows have the same new product name',
+    '   + category, only ONE product is created and reused across all rows.',
+    '',
+    'LOCATION column — type the location name (must already exist).',
     '   • "Head Office Lantai 1"     (Name — easiest)',
     '   • "PI-HO-L1"                 (Code — short)',
     '   • "f3285de6-..."             (UUID — copy from the "Locations" sheet)',
+    '   Locations are NOT auto-created (to prevent typos creating new sites).',
     '',
-    'Matching is case-insensitive. See the "Products" and "Locations" sheets',
-    'for the full list of valid values.',
+    'Matching is case-insensitive. See "Products", "Categories", "Locations"',
+    'sheets for the full lists.',
     '',
     'Other fields:',
     '   Status:    ACTIVE | IDLE | IN_MAINTENANCE | DISPOSED | LOST | BORROWED  (default ACTIVE)',
@@ -293,8 +351,13 @@ export async function parseAssetImportSheet(
   firstRow.eachCell((cell, colNum) => {
     const cellVal = cell.value;
     const raw = (cellVal === null || cellVal === undefined ? '' : typeof cellVal === 'object' ? '' : String(cellVal)).trim();
-    // Normalize header to key
-    const col = IMPORT_COLUMNS.find((c) => raw.startsWith(c.header.replace('*', '').trim()));
+    // Match exactly (ignoring the trailing "*" required marker) so that
+    // "Product Category" does NOT match the "Product" column. Earlier code
+    // used startsWith which broke once columns shared a prefix.
+    const normalised = raw.replace(/\*$/, '').trim().toLowerCase();
+    const col = IMPORT_COLUMNS.find(
+      (c) => c.header.replace(/\*$/, '').trim().toLowerCase() === normalised,
+    );
     if (col) {
       headerMap.set(col.key, colNum);
     }
@@ -404,6 +467,13 @@ export async function parseAssetImportSheet(
       return;
     }
 
+    // Optional product-creation hints (used by post-pass only if the
+    // product cannot be resolved against the existing catalog).
+    const productCategory = getCellValue(row, 'productCategory') || undefined;
+    const productBrand = getCellValue(row, 'productBrand') || undefined;
+    const productModel = getCellValue(row, 'productModel') || undefined;
+    const productEan = getCellValue(row, 'productEan') || undefined;
+
     rows.push({
       rowIndex: rowNum,
       productId,
@@ -422,6 +492,18 @@ export async function parseAssetImportSheet(
       warrantyEndDate: warrantyEndDate ?? undefined,
       usefulLifeMonths,
       notes: getCellValue(row, 'notes') || undefined,
+      // Stash hints on the row for the resolver below.
+      ...(productCategory || productBrand || productModel || productEan
+        ? {
+            newProductSpec: {
+              name: productId, // user's value in column A is the new product name
+              categoryName: productCategory ?? '',
+              ...(productBrand && { brand: productBrand }),
+              ...(productModel && { model: productModel }),
+              ...(productEan && { eanCode: productEan }),
+            },
+          }
+        : {}),
     });
   });
 
@@ -545,7 +627,10 @@ export async function parseAssetImportSheet(
     if (r.productId && !isValidUuid(r.productId)) {
       const match = productByKey.get(r.productId);
       if (match && 'unique' in match) {
+        // Existing product found — clear any newProductSpec hint (we don't
+        // want to overwrite an existing product's metadata from import hints).
         r.productId = match.unique.id;
+        delete r.newProductSpec;
       } else if (match && 'ambiguous' in match) {
         const opts = match.ambiguous
           .slice(0, 3)
@@ -557,14 +642,21 @@ export async function parseAssetImportSheet(
           message: `Product "${r.productId}" matches ${match.ambiguous.length} entries: ${opts}. Use the EAN code or UUID to disambiguate (see the "Products" sheet).`,
           value: r.productId,
         });
+      } else if (r.newProductSpec && r.newProductSpec.categoryName) {
+        // Not in catalog but caller provided category → mark for creation.
+        // productId stays the natural-key string; bulkImport resolves it.
+        r.newProductSpec.name = r.productId; // ensure name matches column A
       } else {
         rowResolutionErrors.push({
           rowIndex: r.rowIndex,
           field: 'productId',
-          message: `Product "${r.productId}" not found. Open the "Products" sheet in the template and use a Name, EAN, or UUID from that list.`,
+          message: `Product "${r.productId}" not found. To CREATE a new product, also fill in "Product Category" (required) and optionally Brand/Model/EAN. To use an existing product, pick one from the "Products" sheet.`,
           value: r.productId,
         });
       }
+    } else if (r.productId && isValidUuid(r.productId)) {
+      // UUID supplied — disregard any newProductSpec hint to avoid surprises.
+      delete r.newProductSpec;
     }
 
     if (r.locationId && !isValidUuid(r.locationId)) {
