@@ -285,6 +285,63 @@ export interface AssetImportConfirmResponse {
   failed: AssetImportError[];
 }
 
+// ── Dashboard types ───────────────────────────────────────────────────
+export interface DashboardSummary {
+  totalAssets: number;
+  totalAssetsLastMonth: number;
+  totalBookValue: string;
+  totalBookValueLastMonth: string;
+  newAssetsThisMonth: number;
+  byStatus: { status: string; count: number }[];
+  byCondition: { condition: string; count: number }[];
+}
+
+export interface DashboardAlerts {
+  warrantyExpiring: number;
+  loanOverdue: number;
+  maintenanceDue: number;
+  unreadNotifications: number;
+}
+
+export interface RecentMovement {
+  id: string;
+  referenceNumber: string;
+  movementType: string;
+  status: string;
+  createdAt: string;
+  asset: { id: string; assetNumber: string; name: string };
+  fromUser: { id: string; name: string } | null;
+  toUser: { id: string; name: string } | null;
+  fromLocation: { id: string; name: string } | null;
+  toLocation: { id: string; name: string } | null;
+  performedBy: { id: string; name: string };
+}
+
+export interface AssetsByLocation {
+  locationId: string;
+  locationName: string;
+  count: number;
+}
+
+export interface AssetsByCategory {
+  categoryId: string;
+  categoryName: string;
+  count: number;
+}
+
+export interface DepreciationSummary {
+  totalPurchasePrice: string;
+  totalCurrentBookValue: string;
+  totalDepreciation: string;
+  byCategory: {
+    categoryId: string;
+    categoryName: string;
+    purchasePrice: string;
+    currentBookValue: string;
+    depreciationPercent: number;
+  }[];
+}
+
 // ── Label & Print types ─────────────────────────────────────────────
 export interface LabelField {
   type: 'barcode' | 'qr_code' | 'text' | 'field' | 'divider';

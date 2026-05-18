@@ -5,6 +5,15 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function formatIDR(value: string | number): string {
+  const num = typeof value === "string" ? Number(value) : value;
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(num);
+}
+
 export function relativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (ms < 0) return "just now";
