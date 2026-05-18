@@ -46,7 +46,7 @@ export const tourSyncQueue = new Queue<{ roleId: string }>('tour-sync', {
   defaultJobOptions,
 });
 
-export const reportGenerateQueue = new Queue<{ reportId: string }>('report-generate', {
+export const reportGenerateQueue = new Queue<{ reportId: string; format: 'excel' | 'pdf' }>('report-generate', {
   connection,
   defaultJobOptions,
 });
@@ -56,7 +56,7 @@ export const printGenerateQueue = new Queue<{ printJobId: string }>('print-gener
   defaultJobOptions,
 });
 
-export const importProcessQueue = new Queue<{ importId: string }>('import-process', {
+export const importProcessQueue = new Queue<{ importId: string; userId: string; filePath: string }>('import-process', {
   connection,
   defaultJobOptions,
 });

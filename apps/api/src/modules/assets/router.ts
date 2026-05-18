@@ -1,4 +1,5 @@
 import { Router, type Router as RouterType } from 'express';
+import { Prisma } from '@prisma/client';
 import { asyncHandler } from '../../utils/async-handler.js';
 import { sendSuccess, sendCreated } from '../../utils/response.js';
 import { authorize } from '../../middleware/authorize.js';
@@ -10,10 +11,21 @@ import {
   assetListFilterSchema,
 } from './schema.js';
 import * as assetService from './service.js';
+import { count as countAssets } from './repository.js';
+import { generateAssetListReport } from '../reports/generators/asset-list.generator.js';
+import { reportGenerateQueue } from '../../lib/queue.js';
+import { prisma } from '../../lib/prisma.js';
+import { assetImportRouter } from './import-router.js';
 
 const router: RouterType = Router();
 
-// GET /api/assets — paginated list with filters
+const ASYNC_ROW_THRESHOLD = 5000;
+
+// ── Import sub-router (multer scoped inside) ──────────────────────────
+// Must be registered before /:id to prevent shadowing
+router.use('/import', assetImportRouter);
+
+// ── GET /api/assets — paginated list with filters ─────────────────────
 router.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -29,7 +41,7 @@ router.get(
   }),
 );
 
-// POST /api/assets/bulk — bulk create assets
+// ── POST /api/assets/bulk — bulk create assets ────────────────────────
 router.post(
   '/bulk',
   authorize('assets:create'),
@@ -40,31 +52,97 @@ router.post(
   }),
 );
 
-// POST /api/assets/import — placeholder Phase 12
-router.post(
-  '/import',
-  authorize('assets:create'),
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      error: { code: 'NOT_IMPLEMENTED', message: 'Import feature is planned for Phase 12' },
-    });
-  }),
-);
-
-// GET /api/assets/export — placeholder Phase 12
+// ── GET /api/assets/export — export to Excel (sync ≤5000, async ≥5000)
 router.get(
   '/export',
-  authorize('assets:create'),
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      error: { code: 'NOT_IMPLEMENTED', message: 'Export feature is planned for Phase 12' },
+  authorize('assets:export'),
+  asyncHandler(async (req, res) => {
+    const filters = assetListFilterSchema.parse(req.query);
+    const accessibleLocationIds = req.user!.accessibleLocationIds;
+
+    const where: Prisma.AssetWhereInput = {
+      deletedAt: null,
+      locationId: { in: accessibleLocationIds },
+      ...(filters.status && { status: filters.status }),
+      ...(filters.condition && { condition: filters.condition }),
+      ...(filters.categoryId && { product: { categoryId: filters.categoryId } }),
+      ...(filters.locationId && { locationId: filters.locationId }),
+      ...(filters.assignedToUserId && { assignedToUserId: filters.assignedToUserId }),
+    };
+
+    const total = await countAssets(where);
+
+    if (total >= ASYNC_ROW_THRESHOLD) {
+      // Async: create Report record + enqueue job
+      const report = await prisma.report.create({
+        data: {
+          name: `Asset Export ${new Date().toISOString().split('T')[0] ?? ''}`,
+          type: 'ASSET_LIST',
+          parameters: {
+            ...filters,
+            locationIds: accessibleLocationIds,
+          } as unknown as Prisma.InputJsonValue,
+          status: 'GENERATING',
+          createdBy: { connect: { id: req.user!.id } },
+        },
+      });
+
+      await reportGenerateQueue.add(
+        'generate',
+        { reportId: report.id, format: 'excel' },
+        {
+          jobId: `report-${report.id}`,
+          removeOnComplete: { count: 50 },
+          removeOnFail: { count: 100 },
+        },
+      );
+
+      sendSuccess(res, {
+        mode: 'async',
+        reportId: report.id,
+        message: `Export queued (${total} assets). You will be notified when ready.`,
+      });
+      return;
+    }
+
+    // Sync: generate Excel and stream directly.
+    // CRITICAL: always pass `locationIds` (RBAC scope) so a location-scoped
+    // user cannot pull assets outside their accessible locations.
+    const parameters: Record<string, unknown> = {
+      locationIds: accessibleLocationIds,
+    };
+    if (filters.status) parameters['status'] = filters.status;
+    if (filters.condition) parameters['condition'] = filters.condition;
+    if (filters.categoryId) parameters['categoryId'] = filters.categoryId;
+    if (filters.locationId) parameters['locationId'] = filters.locationId;
+    if (filters.assignedToUserId) parameters['assignedToUserId'] = filters.assignedToUserId;
+
+    const buffer = await generateAssetListReport(parameters, 'excel');
+
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user!.id,
+        action: 'EXPORT',
+        resourceType: 'Asset',
+        resourceId: 'bulk',
+        newValues: { filters, count: total } as unknown as Prisma.InputJsonValue,
+      },
     });
+
+    const date = new Date().toISOString().split('T')[0] ?? 'export';
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="assets-export-${date}.xlsx"`,
+    );
+    res.send(buffer);
   }),
 );
 
-// GET /api/assets/barcode/:value — lookup asset by barcode_value
+// ── GET /api/assets/barcode/:value ────────────────────────────────────
 router.get(
   '/barcode/:value',
   asyncHandler(async (req, res) => {
@@ -74,7 +152,7 @@ router.get(
   }),
 );
 
-// POST /api/assets — create asset
+// ── POST /api/assets — create asset ──────────────────────────────────
 router.post(
   '/',
   authorize('assets:create'),
@@ -85,7 +163,7 @@ router.post(
   }),
 );
 
-// GET /api/assets/:id — get single asset
+// ── GET /api/assets/:id ───────────────────────────────────────────────
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -95,7 +173,7 @@ router.get(
   }),
 );
 
-// PUT /api/assets/:id — update asset
+// ── PUT /api/assets/:id ───────────────────────────────────────────────
 router.put(
   '/:id',
   authorize('assets:update'),
@@ -107,7 +185,7 @@ router.put(
   }),
 );
 
-// DELETE /api/assets/:id — soft delete asset
+// ── DELETE /api/assets/:id ────────────────────────────────────────────
 router.delete(
   '/:id',
   authorize('assets:delete'),
@@ -118,7 +196,7 @@ router.delete(
   }),
 );
 
-// GET /api/assets/:id/movements — paginated movement history
+// ── GET /api/assets/:id/movements ────────────────────────────────────
 router.get(
   '/:id/movements',
   asyncHandler(async (req, res) => {
@@ -129,7 +207,7 @@ router.get(
   }),
 );
 
-// GET /api/assets/:id/maintenance — paginated maintenance history
+// ── GET /api/assets/:id/maintenance ──────────────────────────────────
 router.get(
   '/:id/maintenance',
   asyncHandler(async (req, res) => {

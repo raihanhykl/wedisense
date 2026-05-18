@@ -201,6 +201,90 @@ export interface NotificationItem {
   createdAt: string;
 }
 
+// ── Report types ─────────────────────────────────────────────────────
+export type ReportType =
+  | "ASSET_LIST"
+  | "MOVEMENT"
+  | "MAINTENANCE"
+  | "DEPRECIATION"
+  | "AUDIT"
+  | "CUSTOM";
+
+export type ReportStatus = "PENDING" | "GENERATING" | "READY" | "FAILED";
+
+export type ReportFormat = "excel" | "pdf";
+
+export type ReportSchedule = "NONE" | "DAILY" | "WEEKLY" | "MONTHLY";
+
+export interface ReportItem {
+  id: string;
+  name: string;
+  type: ReportType;
+  status: ReportStatus;
+  lastGeneratedAt: string | null;
+  fileUrl: string | null;
+  parameters: Record<string, unknown> | null;
+  schedule: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: { id: string; name: string } | null;
+}
+
+// ── Asset Import types ────────────────────────────────────────────────
+// Shape matches backend `AssetImportRow` in apps/api/src/lib/excel.ts.
+// Flat structure — DO NOT change without also updating the backend.
+export interface AssetImportRow {
+  rowIndex: number;
+  productId: string;
+  name: string;
+  serialNumber?: string;
+  status: 'ACTIVE' | 'IDLE' | 'IN_MAINTENANCE' | 'DISPOSED' | 'LOST' | 'BORROWED';
+  condition: 'NEW' | 'GOOD' | 'FAIR' | 'POOR' | 'DAMAGED';
+  locationId: string;
+  assignedToUserId?: string;
+  purchaseDate?: string;
+  purchasePrice?: number;
+  currency: string;
+  vendor?: string;
+  invoiceNumber?: string;
+  warrantyStartDate?: string;
+  warrantyEndDate?: string;
+  usefulLifeMonths?: number;
+  notes?: string;
+}
+
+export interface AssetImportError {
+  rowIndex: number;
+  field: string;
+  message: string;
+  value?: unknown;
+}
+
+export interface AssetImportPreviewResponse {
+  mode: 'sync';
+  preview: AssetImportRow[];
+  parseErrors: AssetImportError[];
+  validatedRows: AssetImportRow[];
+  rowCount: number;
+}
+
+export interface AssetImportAsyncResponse {
+  mode: 'async';
+  importId: string;
+  rowCount: number;
+  parseErrors: AssetImportError[];
+  message: string;
+}
+
+export type AssetImportResponse =
+  | AssetImportPreviewResponse
+  | AssetImportAsyncResponse;
+
+export interface AssetImportConfirmResponse {
+  created: number;
+  failed: AssetImportError[];
+}
+
 // ── Label & Print types ─────────────────────────────────────────────
 export interface LabelField {
   type: 'barcode' | 'qr_code' | 'text' | 'field' | 'divider';

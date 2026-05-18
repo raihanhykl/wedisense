@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { apiGetPaginated, apiDelete } from "@/lib/api";
+import api from "@/lib/api";
 import type { PaginationMeta } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
 import type { AssetListItem } from "@/types/admin";
@@ -59,6 +61,8 @@ export default function AssetsPage() {
   const canUpdate = usePermission("assets:update");
   const canDelete = usePermission("assets:delete");
   const canPrint = usePermission("assets:print");
+  const canExport = usePermission("assets:export");
+  const canImport = usePermission("assets:import");
 
   const [assets, setAssets] = useState<AssetListItem[]>([]);
   const [meta, setMeta] = useState<PaginationMeta>({
@@ -77,6 +81,10 @@ export default function AssetsPage() {
   // Selection state for bulk print
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+
+  // Export state
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportBanner, setExportBanner] = useState<string | null>(null);
 
   const fetchLocations = useCallback(async () => {
     try {
@@ -171,6 +179,58 @@ export default function AssetsPage() {
   const allSelected = assets.length > 0 && selectedIds.size === assets.length;
   const someSelected = selectedIds.size > 0;
 
+  const handleExport = async () => {
+    setExportLoading(true);
+    setExportBanner(null);
+    try {
+      const params: Record<string, string> = {};
+      if (search.trim()) params.search = search.trim();
+      if (statusFilter) params.status = statusFilter;
+      if (locationFilter) params.locationId = locationFilter;
+
+      const queryString = new URLSearchParams(params).toString();
+      const url = `/api/assets/export${queryString ? `?${queryString}` : ""}`;
+
+      const response = await api.get<Blob>(url, { responseType: "blob" });
+
+      // Backend can return EITHER the xlsx file OR a JSON envelope
+      // { success, data: { mode: 'async', reportId, ... } } for large exports.
+      // We sniff Content-Type to discriminate.
+      const contentType = response.headers["content-type"] as string | undefined;
+      if (contentType && contentType.includes("application/json")) {
+        const text = await response.data.text();
+        const json = JSON.parse(text) as {
+          data?: { mode?: string; reportId?: string; message?: string };
+        };
+        if (json.data?.mode === "async") {
+          setExportBanner(
+            json.data.message ??
+              "Export queued — you'll be notified when the report is ready.",
+          );
+          return;
+        }
+        // Unexpected JSON — surface as error
+        setExportBanner("Unexpected response from server. Please try again.");
+        return;
+      }
+
+      // Blob download
+      const blobUrl = URL.createObjectURL(response.data);
+      const anchor = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10);
+      anchor.href = blobUrl;
+      anchor.download = `wedisense-assets-${date}.xlsx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: unknown) {
+      setExportBanner(getApiErrorMessage(err, "Export failed. Please try again."));
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   const statusOptions = useMemo(
     () => ["ACTIVE", "IDLE", "IN_MAINTENANCE", "DISPOSED", "LOST", "BORROWED"],
     [],
@@ -191,6 +251,17 @@ export default function AssetsPage() {
               Print Labels ({selectedIds.size})
             </button>
           )}
+          {canExport && (
+            <button
+              type="button"
+              onClick={() => void handleExport()}
+              disabled={exportLoading}
+              data-tour="export-assets-btn"
+              className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+            >
+              {exportLoading ? "Exporting..." : "Export Excel"}
+            </button>
+          )}
           {canCreate && (
             <Link
               href="/admin/assets/new"
@@ -202,6 +273,33 @@ export default function AssetsPage() {
           )}
         </div>
       </div>
+
+      {/* Export async banner */}
+      {exportBanner && (
+        <div className="mb-4 flex items-center justify-between rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <span>{exportBanner}</span>
+          <button
+            type="button"
+            onClick={() => setExportBanner(null)}
+            className="ml-4 text-blue-600 hover:text-blue-800"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
+      {/* Import link */}
+      {canImport && (
+        <div className="mb-4 flex items-center gap-2">
+          <Link
+            href="/admin/assets/import"
+            data-tour="import-assets-btn"
+            className="text-sm text-primary hover:underline"
+          >
+            Import from Excel
+          </Link>
+        </div>
+      )}
 
       {/* Filters bar */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
