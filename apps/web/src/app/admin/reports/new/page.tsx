@@ -1,14 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import Link from "next/link";
-import { apiPost } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import type { ReportItem, ReportType, ReportSchedule } from "@/types/admin";
+
+interface LocationOption {
+  id: string;
+  code: string;
+  name: string;
+  city: string | null;
+}
 
 // ── Schema ──────────────────────────────────────────────────────────
 const reportSchema = z.object({
@@ -47,6 +54,23 @@ const SCHEDULE_OPTIONS: Array<{ value: ReportSchedule; label: string }> = [
 export default function NewReportPage() {
   const router = useRouter();
   const [submitError, setSubmitError] = useState("");
+  const [locations, setLocations] = useState<LocationOption[]>([]);
+
+  // Load locations once for the location-filter dropdown. Failure is
+  // non-fatal — user can still create a report without a location filter.
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<LocationOption[]>("/api/locations")
+      .then((data) => {
+        if (!cancelled) setLocations(data);
+      })
+      .catch(() => {
+        // Silent — empty list means the filter is unavailable, not broken.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const {
     register,
@@ -243,18 +267,25 @@ export default function NewReportPage() {
             </div>
           )}
 
-          {/* Location ID */}
+          {/* Location (optional dropdown) */}
           {["ASSET_LIST", "MOVEMENT", "CUSTOM"].includes(selectedType) && (
             <div>
               <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                Location ID (optional)
+                Location (optional — leave as &quot;All Locations&quot; for no filter)
               </label>
-              <input
-                type="text"
+              <select
                 {...register("paramLocationId")}
-                placeholder="UUID of location to filter by"
                 className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-              />
+              >
+                <option value="">All Locations</option>
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                    {loc.city ? ` — ${loc.city}` : ""}
+                    {loc.code ? ` [${loc.code}]` : ""}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
