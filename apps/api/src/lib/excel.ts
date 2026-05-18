@@ -45,9 +45,9 @@ const IMPORT_COLUMNS: Array<{
   required: boolean;
   example: string;
 }> = [
-  { header: 'Product ID or EAN*', key: 'productId', width: 40, required: true, example: 'Copy from "Products" sheet — UUID or EAN-13' },
-  { header: 'Name*', key: 'name', width: 30, required: true, example: 'MacBook Pro 14"' },
-  { header: 'Location ID or Code*', key: 'locationId', width: 40, required: true, example: 'Copy from "Locations" sheet — UUID or code' },
+  { header: 'Product*', key: 'productId', width: 35, required: true, example: 'MacBook Pro 14' },
+  { header: 'Name*', key: 'name', width: 30, required: true, example: 'MacBook Pro 14 - Unit 5' },
+  { header: 'Location*', key: 'locationId', width: 35, required: true, example: 'Head Office Lantai 1' },
   { header: 'Serial Number', key: 'serialNumber', width: 25, required: false, example: 'C02XY1234' },
   { header: 'Status', key: 'status', width: 18, required: false, example: 'ACTIVE' },
   { header: 'Condition', key: 'condition', width: 15, required: false, example: 'NEW' },
@@ -218,14 +218,27 @@ export async function buildAssetImportTemplate(): Promise<Buffer> {
   const instructions = [
     '1. Fill in the "Assets Import" sheet starting from row 3 (row 2 is a sample — delete it before importing).',
     '2. Fields marked with * are required.',
-    '3. "Product ID or EAN" — paste a Product UUID OR its 13-digit EAN code. Both are accepted.',
-    '4. "Location ID or Code" — paste a Location UUID OR its short code (e.g. "HO-JKT"). Both are accepted.',
-    '5. See the "Products" and "Locations" sheets for the full list of valid values.',
-    '6. Status values: ACTIVE, IDLE, IN_MAINTENANCE, DISPOSED, LOST, BORROWED',
-    '7. Condition values: NEW, GOOD, FAIR, POOR, DAMAGED',
-    '8. Date format: YYYY-MM-DD (e.g. 2024-01-15)',
-    '9. Purchase Price should be numeric only (no currency symbol).',
-    '10. Default currency is IDR if left blank.',
+    '',
+    'PRODUCT column — just type the product name. Examples:',
+    '   • "MacBook Pro 14"           (Name — easiest)',
+    '   • "MAN-IT-MBP14-M3"          (EAN code — disambiguates duplicate names)',
+    '   • "8f56f60b-d271-..."        (UUID — copy from the "Products" sheet)',
+    'If the name matches multiple products, you will get a disambiguation error.',
+    '',
+    'LOCATION column — just type the location name. Examples:',
+    '   • "Head Office Lantai 1"     (Name — easiest)',
+    '   • "PI-HO-L1"                 (Code — short)',
+    '   • "f3285de6-..."             (UUID — copy from the "Locations" sheet)',
+    '',
+    'Matching is case-insensitive. See the "Products" and "Locations" sheets',
+    'for the full list of valid values.',
+    '',
+    'Other fields:',
+    '   Status:    ACTIVE | IDLE | IN_MAINTENANCE | DISPOSED | LOST | BORROWED  (default ACTIVE)',
+    '   Condition: NEW | GOOD | FAIR | POOR | DAMAGED                            (default NEW)',
+    '   Date:      YYYY-MM-DD format, e.g. 2024-01-15',
+    '   Price:     numeric only, no currency symbol or thousand separator',
+    '   Currency:  3-letter ISO code, defaults to IDR if blank',
   ];
   instructions.forEach((text, i) => {
     instructWs.getCell(`A${4 + i}`).value = text;
@@ -412,8 +425,13 @@ export async function parseAssetImportSheet(
     });
   });
 
-  // ── Resolve natural keys (EAN / location code) to UUIDs ─────────────
-  // Single bulk lookup per dimension instead of per-row DB hits.
+  // ── Resolve human-friendly references to UUIDs ──────────────────────
+  // Each field can be:
+  //   - a UUID  → used as-is, no DB lookup
+  //   - an EAN-13 (Product) or location code (Location) → exact match
+  //   - a Name → case-insensitive exact match against name
+  // If the same name matches multiple records, we surface a disambiguation
+  // error rather than silently picking the first match.
   const naturalProductKeys = new Set<string>();
   const naturalLocationKeys = new Set<string>();
   for (const r of rows) {
@@ -421,25 +439,101 @@ export async function parseAssetImportSheet(
     if (r.locationId && !isValidUuid(r.locationId)) naturalLocationKeys.add(r.locationId);
   }
 
-  const productByKey = new Map<string, string>();
-  const locationByKey = new Map<string, string>();
+  // Resolution result per key. If multiple matches, we keep the list so we
+  // can format a useful error.
+  type Match<T> = { unique: T } | { ambiguous: T[] } | undefined;
+  type ProductRef = {
+    id: string;
+    name: string;
+    brand: string | null;
+    model: string | null;
+    eanCode: string | null;
+  };
+  type LocationRef = { id: string; code: string; name: string };
+  const productByKey = new Map<string, Match<ProductRef>>();
+  const locationByKey = new Map<string, Match<LocationRef>>();
 
   if (naturalProductKeys.size > 0) {
+    const keys = Array.from(naturalProductKeys);
+    const lowered = keys.map((k) => k.toLowerCase());
     const products = await prisma.product.findMany({
-      where: { eanCode: { in: Array.from(naturalProductKeys) } },
-      select: { id: true, eanCode: true },
+      where: {
+        OR: [
+          { eanCode: { in: keys } },
+          // Prisma's `mode: 'insensitive'` works on Postgres for citext-style search.
+          { name: { in: keys, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, eanCode: true, name: true, brand: true, model: true },
     });
+
+    // Build lookup maps: by EAN (exact) and by lowercased name (collect all matches)
+    const byEan = new Map<string, typeof products[number]>();
+    const byName: Map<string, typeof products[number][]> = new Map();
     for (const p of products) {
-      if (p.eanCode) productByKey.set(p.eanCode, p.id);
+      if (p.eanCode) byEan.set(p.eanCode, p);
+      const nKey = p.name.toLowerCase();
+      const arr = byName.get(nKey) ?? [];
+      arr.push(p);
+      byName.set(nKey, arr);
+    }
+
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i]!;
+      const ean = byEan.get(k);
+      if (ean) {
+        productByKey.set(k, { unique: ean });
+        continue;
+      }
+      const nameMatches = byName.get(lowered[i]!);
+      if (nameMatches && nameMatches.length === 1) {
+        productByKey.set(k, { unique: nameMatches[0]! });
+      } else if (nameMatches && nameMatches.length > 1) {
+        productByKey.set(k, { ambiguous: nameMatches });
+      } else {
+        productByKey.set(k, undefined);
+      }
     }
   }
+
   if (naturalLocationKeys.size > 0) {
+    const keys = Array.from(naturalLocationKeys);
+    const lowered = keys.map((k) => k.toLowerCase());
     const locations = await prisma.location.findMany({
-      where: { code: { in: Array.from(naturalLocationKeys) } },
-      select: { id: true, code: true },
+      where: {
+        isActive: true,
+        OR: [
+          { code: { in: keys } },
+          { name: { in: keys, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, code: true, name: true },
     });
+    const byCode = new Map<string, typeof locations[number]>();
+    const byName: Map<string, typeof locations[number][]> = new Map();
     for (const l of locations) {
-      locationByKey.set(l.code, l.id);
+      byCode.set(l.code, l);
+      const nKey = l.name.toLowerCase();
+      const arr = byName.get(nKey) ?? [];
+      arr.push(l);
+      byName.set(nKey, arr);
+    }
+
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i]!;
+      const code = byCode.get(k);
+      if (code) {
+        locationByKey.set(k, { unique: code });
+        continue;
+      }
+      const nameMatches = byName.get(lowered[i]!);
+      if (nameMatches && nameMatches.length === 1) {
+        locationByKey.set(k, { unique: nameMatches[0]! });
+      } else if (nameMatches && nameMatches.length > 1) {
+        locationByKey.set(k, { ambiguous: nameMatches });
+      } else {
+        locationByKey.set(k, undefined);
+      }
     }
   }
 
@@ -449,28 +543,50 @@ export async function parseAssetImportSheet(
     const rowResolutionErrors: ParseError[] = [];
 
     if (r.productId && !isValidUuid(r.productId)) {
-      const id = productByKey.get(r.productId);
-      if (id) {
-        r.productId = id;
+      const match = productByKey.get(r.productId);
+      if (match && 'unique' in match) {
+        r.productId = match.unique.id;
+      } else if (match && 'ambiguous' in match) {
+        const opts = match.ambiguous
+          .slice(0, 3)
+          .map((p) => `"${p.name}${p.brand ? ` (${p.brand}${p.model ? ` ${p.model}` : ''})` : ''}" [${p.eanCode ?? 'no EAN'}]`)
+          .join(', ');
+        rowResolutionErrors.push({
+          rowIndex: r.rowIndex,
+          field: 'productId',
+          message: `Product "${r.productId}" matches ${match.ambiguous.length} entries: ${opts}. Use the EAN code or UUID to disambiguate (see the "Products" sheet).`,
+          value: r.productId,
+        });
       } else {
         rowResolutionErrors.push({
           rowIndex: r.rowIndex,
           field: 'productId',
-          message: `Product with EAN "${r.productId}" not found. Pick a Product UUID or EAN from the "Products" sheet.`,
+          message: `Product "${r.productId}" not found. Open the "Products" sheet in the template and use a Name, EAN, or UUID from that list.`,
           value: r.productId,
         });
       }
     }
 
     if (r.locationId && !isValidUuid(r.locationId)) {
-      const id = locationByKey.get(r.locationId);
-      if (id) {
-        r.locationId = id;
+      const match = locationByKey.get(r.locationId);
+      if (match && 'unique' in match) {
+        r.locationId = match.unique.id;
+      } else if (match && 'ambiguous' in match) {
+        const opts = match.ambiguous
+          .slice(0, 3)
+          .map((l) => `"${l.name}" [code: ${l.code}]`)
+          .join(', ');
+        rowResolutionErrors.push({
+          rowIndex: r.rowIndex,
+          field: 'locationId',
+          message: `Location "${r.locationId}" matches ${match.ambiguous.length} entries: ${opts}. Use the location code or UUID to disambiguate (see the "Locations" sheet).`,
+          value: r.locationId,
+        });
       } else {
         rowResolutionErrors.push({
           rowIndex: r.rowIndex,
           field: 'locationId',
-          message: `Location with code "${r.locationId}" not found. Pick a Location UUID or code from the "Locations" sheet.`,
+          message: `Location "${r.locationId}" not found. Open the "Locations" sheet in the template and use a Name, code, or UUID from that list.`,
           value: r.locationId,
         });
       }
