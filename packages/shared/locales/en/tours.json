@@ -7,7 +7,9 @@
     "close": "Close",
     "stepCounter": "Step {{current}} of {{total}}",
     "exitConfirm": "Exit tutorial?",
-    "restartTutorial": "Restart Tutorial"
+    "restartTutorial": "Restart Tutorial",
+    "targetMissing": "Tour paused",
+    "targetMissingHint": "This step's target isn't ready on the current page. You can resume the tutorial from your profile."
   },
   "super_admin": {
     "dashboard": {

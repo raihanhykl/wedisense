@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { NextStepProvider, NextStep, useNextStep } from "nextstepjs";
 import type { Tour } from "nextstepjs";
+import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth.store";
 import { useTourStore } from "@/stores/tour.store";
 import { apiGet, apiPut } from "@/lib/api";
@@ -23,9 +24,22 @@ import TourLiveRegion from "./tour-live-region";
 import type { TourDto } from "@/types/admin";
 import "@/styles/tour.css";
 
+// Cross-page navigation safety net: if the next step's target element
+// doesn't materialize within this many ms after the step becomes active,
+// we surface a toast and close the tour instead of leaving the popover
+// orphaned over empty space. Tuned for typical Next.js dev-mode hydration
+// (~500ms) plus a comfortable buffer for slower routes.
+const TARGET_WAIT_TIMEOUT_MS = 3000;
+
 // ── Inner component — has access to useNextStep() ────────────────────
 function TourEngine({ children }: { children: React.ReactNode }) {
-  const { startNextStep, closeNextStep, setCurrentStep } = useNextStep();
+  const {
+    startNextStep,
+    closeNextStep,
+    setCurrentStep,
+    currentStep,
+    currentTour,
+  } = useNextStep();
   const { isAuthenticated, accessToken, user } = useAuthStore();
   const {
     status,
@@ -118,6 +132,49 @@ function TourEngine({ children }: { children: React.ReactNode }) {
       document.body.removeAttribute("data-tour-active");
     };
   }, [activeTourId]);
+
+  // ── Target-presence guard for cross-page steps ─────────────────────
+  // NextStep handles nextRoute/prevRoute navigation, but if the target
+  // element never materialises on the destination page (DOM refactor,
+  // permission revoked the row, slow data fetch, etc.) the popover would
+  // float over empty space silently. We watch each step transition: if
+  // the target is missing, MutationObserver waits up to TARGET_WAIT_TIMEOUT_MS;
+  // on timeout we toast + close the tour. Already-present targets short-circuit.
+  useEffect(() => {
+    if (!currentTour || currentStep < 0) return;
+    const tour = tours.find((t) => t.id === currentTour);
+    const step = tour?.steps[currentStep];
+    if (!step) return;
+
+    const selector = step.targetElement;
+    if (document.querySelector(selector)) return;
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const observer = new MutationObserver(() => {
+      if (document.querySelector(selector)) {
+        observer.disconnect();
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    timeoutId = setTimeout(() => {
+      observer.disconnect();
+      // Final check — element may have appeared between the last mutation
+      // batch and our timeout firing.
+      if (document.querySelector(selector)) return;
+      toast.warning(tTour(lang, "common.targetMissing"), {
+        description: tTour(lang, "common.targetMissingHint"),
+      });
+      closeNextStep();
+      setActiveTour(null);
+    }, TARGET_WAIT_TIMEOUT_MS);
+
+    return () => {
+      observer.disconnect();
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [currentTour, currentStep, tours, lang, closeNextStep, setActiveTour]);
 
   // ── Clear store on logout ──────────────────────────────────────────
   useEffect(() => {
