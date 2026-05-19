@@ -35,3 +35,10 @@ apps/api/prisma/*.db
 
 # SSL certificates
 *.pem
+
+# Local smoke-test artifacts
+phase*.png
+.playwright-mcp/
+apps/api/uploads/
+HANDOFF.md
+apps/web/dev-server.mjs
