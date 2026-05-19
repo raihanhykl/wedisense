@@ -526,3 +526,37 @@ export interface PrintJobItem {
   createdAt: string;
   labelTemplate: { id: string; name: string };
 }
+
+// ── Tour types ────────────────────────────────────────────────────────
+export type TourStepPosition = 'top' | 'bottom' | 'left' | 'right' | 'auto';
+export type TourProgressAction = 'next' | 'prev' | 'skip' | 'complete';
+
+export interface TourStepDto {
+  stepIndex: number;
+  title: string;         // i18n key, e.g. "tours.admin.dashboard.title"
+  description: string;   // i18n key
+  targetElement: string; // CSS selector or `[data-tour='asset-list']`
+  position: TourStepPosition;
+  requiredPermission: { resource: string; action: string } | null;
+  route: string;
+  isActive: boolean;
+}
+
+export interface TourProgressDto {
+  completedSteps: number[];
+  lastStepIndex: number;
+  isCompleted: boolean;
+  isSkipped: boolean;
+  lastSeenAt: string | null;
+}
+
+export interface TourDto {
+  id: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  roleId: string;
+  roleName: string;
+  steps: TourStepDto[];
+  progress: TourProgressDto | null;
+}
