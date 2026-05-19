@@ -178,11 +178,36 @@ model User {
   printJobs              PrintJob[]
   labelTemplates         LabelTemplate[]
   tourProgress           UserTourProgress[]
+  savedViews             UserSavedView[]
 
   @@index([status])
   @@index([deletedAt])
   @@index([employeeId])
   @@map("users")
+}
+
+// Per-user saved filter/sort/column configurations for list pages. One row =
+// one named view ("Laptop di Pondok Indah"); `config` is a JSON blob shaped
+// and validated by the app (no DB-level constraint on its keys). `resource`
+// is the list it applies to ("assets" today, extensible to "movements" etc.
+// without a schema change). At most one default per (userId, resource) pair
+// is enforced in service code, not via partial unique index — Postgres
+// supports it but it makes "set as default" require an extra round-trip to
+// clear the previous default, and the enforcement is simple in app code.
+model UserSavedView {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  resource  String   @map("resource")
+  name      String   @map("name")
+  config    Json     @map("config")
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, resource])
+  @@map("user_saved_views")
 }
 
 model Role {
