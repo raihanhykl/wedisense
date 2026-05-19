@@ -1,1 +1,102 @@
-{}
+{
+  "common": {
+    "next": "Next",
+    "previous": "Previous",
+    "skip": "Skip",
+    "finish": "Finish",
+    "close": "Close",
+    "stepCounter": "Step {{current}} of {{total}}",
+    "exitConfirm": "Exit tutorial?",
+    "restartTutorial": "Restart Tutorial"
+  },
+  "super_admin": {
+    "dashboard": {
+      "title": "Welcome to Dashboard",
+      "description": "Get a complete overview of your assets, key metrics, and recent activity across all locations."
+    },
+    "users": {
+      "title": "User Management",
+      "description": "Invite new team members, manage accounts, and assign roles with location-specific scoping."
+    },
+    "roles": {
+      "title": "Role Management",
+      "description": "Create and configure custom roles with granular permissions. Changes sync automatically to onboarding tours."
+    },
+    "assets": {
+      "title": "Asset Management",
+      "description": "View, create, and manage all assets across every location. Use filters and barcode scanning for quick access."
+    },
+    "reports": {
+      "title": "Reports",
+      "description": "Generate asset, movement, maintenance, depreciation, and audit reports. Schedule them for automatic delivery."
+    }
+  },
+  "admin": {
+    "dashboard": {
+      "title": "Welcome to Dashboard",
+      "description": "Your central hub for asset management — track totals, alerts, and recent movements at a glance."
+    },
+    "users": {
+      "title": "User Management",
+      "description": "Manage users and assign roles to team members within their respective locations."
+    },
+    "assets": {
+      "title": "Asset Management",
+      "description": "Full control over the asset lifecycle — create, update, transfer, and decommission assets."
+    },
+    "reports": {
+      "title": "Reports",
+      "description": "Generate and view comprehensive reports. Download as Excel or PDF, or schedule them for recurring delivery."
+    }
+  },
+  "manager": {
+    "dashboard": {
+      "title": "Welcome to Dashboard",
+      "description": "View assets and activities under your management scope across your assigned locations."
+    },
+    "assets": {
+      "title": "Asset Operations",
+      "description": "Create and manage assets in your locations. Use bulk import for large inventories."
+    },
+    "movements": {
+      "title": "Movement Approvals",
+      "description": "Review and approve asset transfer, assignment, and loan requests from your team."
+    },
+    "maintenance": {
+      "title": "Maintenance",
+      "description": "Schedule preventive maintenance and log completed work to keep assets in top condition."
+    },
+    "reports": {
+      "title": "Reports",
+      "description": "Generate reports scoped to your locations for inventory, movements, and maintenance history."
+    }
+  },
+  "staff": {
+    "dashboard": {
+      "title": "Welcome to Dashboard",
+      "description": "See a summary of assets assigned to you and any pending actions."
+    },
+    "assets": {
+      "title": "Your Assets",
+      "description": "Browse and search all assets available to you. Scan a barcode to jump straight to an asset's detail."
+    },
+    "movements": {
+      "title": "Request Movements",
+      "description": "Submit requests to transfer or borrow assets. Your manager will review and approve."
+    }
+  },
+  "viewer": {
+    "dashboard": {
+      "title": "Welcome to Dashboard",
+      "description": "Get a read-only overview of all organizational assets and their current status."
+    },
+    "assets": {
+      "title": "Browse Assets",
+      "description": "View and search all registered assets. Use filters to find by location, category, or status."
+    },
+    "reports": {
+      "title": "View Reports",
+      "description": "Access available reports and analytics to gain insights into the asset portfolio."
+    }
+  }
+}

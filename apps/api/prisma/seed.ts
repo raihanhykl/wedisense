@@ -558,12 +558,14 @@ async function main() {
       roleName: 'SUPER_ADMIN',
       name: 'Super Admin Onboarding',
       description: 'Complete system tour for super administrators',
+      // 5 steps: dashboard, users, roles, assets, reports
+      // Audit step removed — no /admin/audit page exists yet. Replaced with Reports.
       steps: [
-        { step_index: 0, title: 'Welcome to Dashboard', description: 'Overview of your assets and key metrics', target_element: "[data-tour='dashboard']", position: 'bottom', required_permission: null, route: '/dashboard' },
-        { step_index: 1, title: 'User Management', description: 'Manage users, invite new team members, and assign roles', target_element: "[data-tour='users']", position: 'right', required_permission: { resource: 'users', action: 'manage' }, route: '/admin/users' },
-        { step_index: 2, title: 'Role Management', description: 'Create and configure custom roles with specific permissions', target_element: "[data-tour='roles']", position: 'right', required_permission: { resource: 'roles', action: 'manage' }, route: '/admin/roles' },
-        { step_index: 3, title: 'Asset Management', description: 'View, create, and manage all assets across locations', target_element: "[data-tour='assets']", position: 'bottom', required_permission: { resource: 'assets', action: 'read' }, route: '/assets' },
-        { step_index: 4, title: 'Audit Logs', description: 'Review all system activities and changes', target_element: "[data-tour='audit']", position: 'right', required_permission: { resource: 'audit', action: 'read' }, route: '/admin/audit' },
+        { step_index: 0, title: 'tours.super_admin.dashboard.title', description: 'tours.super_admin.dashboard.description', target_element: "[data-tour='dashboard-summary']", position: 'bottom', required_permission: null, route: '/dashboard', is_active: true },
+        { step_index: 1, title: 'tours.super_admin.users.title',     description: 'tours.super_admin.users.description',     target_element: "[data-tour='user-management']",  position: 'right',  required_permission: { resource: 'users', action: 'manage' },  route: '/admin/users',    is_active: true },
+        { step_index: 2, title: 'tours.super_admin.roles.title',     description: 'tours.super_admin.roles.description',     target_element: "[data-tour='role-management']",  position: 'right',  required_permission: { resource: 'roles', action: 'manage' },  route: '/admin/roles',    is_active: true },
+        { step_index: 3, title: 'tours.super_admin.assets.title',    description: 'tours.super_admin.assets.description',    target_element: "[data-tour='asset-list']",        position: 'bottom', required_permission: { resource: 'assets', action: 'read' },   route: '/admin/assets',   is_active: true },
+        { step_index: 4, title: 'tours.super_admin.reports.title',   description: 'tours.super_admin.reports.description',   target_element: "[data-tour='reports-list']",      position: 'right',  required_permission: { resource: 'reports', action: 'view' },  route: '/admin/reports',  is_active: true },
       ],
     },
     {
@@ -571,10 +573,10 @@ async function main() {
       name: 'Admin Onboarding',
       description: 'Administrative tour for system administrators',
       steps: [
-        { step_index: 0, title: 'Welcome to Dashboard', description: 'Your central hub for asset management', target_element: "[data-tour='dashboard']", position: 'bottom', required_permission: null, route: '/dashboard' },
-        { step_index: 1, title: 'User Management', description: 'Manage users and assign roles to team members', target_element: "[data-tour='users']", position: 'right', required_permission: { resource: 'users', action: 'manage' }, route: '/admin/users' },
-        { step_index: 2, title: 'Asset Management', description: 'Full control over asset lifecycle', target_element: "[data-tour='assets']", position: 'bottom', required_permission: { resource: 'assets', action: 'read' }, route: '/assets' },
-        { step_index: 3, title: 'Reports', description: 'Generate and view comprehensive reports', target_element: "[data-tour='reports']", position: 'right', required_permission: { resource: 'reports', action: 'view' }, route: '/reports' },
+        { step_index: 0, title: 'tours.admin.dashboard.title',  description: 'tours.admin.dashboard.description',  target_element: "[data-tour='dashboard-summary']", position: 'bottom', required_permission: null, route: '/dashboard', is_active: true },
+        { step_index: 1, title: 'tours.admin.users.title',      description: 'tours.admin.users.description',      target_element: "[data-tour='user-management']",  position: 'right',  required_permission: { resource: 'users', action: 'manage' },  route: '/admin/users',   is_active: true },
+        { step_index: 2, title: 'tours.admin.assets.title',     description: 'tours.admin.assets.description',     target_element: "[data-tour='asset-list']",        position: 'bottom', required_permission: { resource: 'assets', action: 'read' },   route: '/admin/assets',  is_active: true },
+        { step_index: 3, title: 'tours.admin.reports.title',    description: 'tours.admin.reports.description',    target_element: "[data-tour='reports-list']",      position: 'right',  required_permission: { resource: 'reports', action: 'view' },  route: '/admin/reports', is_active: true },
       ],
     },
     {
@@ -582,11 +584,11 @@ async function main() {
       name: 'Manager Onboarding',
       description: 'Tour for asset and operations managers',
       steps: [
-        { step_index: 0, title: 'Welcome to Dashboard', description: 'View assets under your management', target_element: "[data-tour='dashboard']", position: 'bottom', required_permission: null, route: '/dashboard' },
-        { step_index: 1, title: 'Asset Operations', description: 'Create and manage assets in your locations', target_element: "[data-tour='assets']", position: 'bottom', required_permission: { resource: 'assets', action: 'create' }, route: '/assets' },
-        { step_index: 2, title: 'Movement Approvals', description: 'Approve asset transfer and assignment requests', target_element: "[data-tour='movements']", position: 'right', required_permission: { resource: 'movements', action: 'approve' }, route: '/movements' },
-        { step_index: 3, title: 'Maintenance', description: 'Schedule and track asset maintenance', target_element: "[data-tour='maintenance']", position: 'right', required_permission: { resource: 'maintenance', action: 'manage' }, route: '/maintenance' },
-        { step_index: 4, title: 'Reports', description: 'Generate reports for your locations', target_element: "[data-tour='reports']", position: 'right', required_permission: { resource: 'reports', action: 'view' }, route: '/reports' },
+        { step_index: 0, title: 'tours.manager.dashboard.title',   description: 'tours.manager.dashboard.description',   target_element: "[data-tour='dashboard-summary']", position: 'bottom', required_permission: null, route: '/dashboard', is_active: true },
+        { step_index: 1, title: 'tours.manager.assets.title',      description: 'tours.manager.assets.description',      target_element: "[data-tour='asset-list']",        position: 'bottom', required_permission: { resource: 'assets', action: 'create' },    route: '/admin/assets',      is_active: true },
+        { step_index: 2, title: 'tours.manager.movements.title',   description: 'tours.manager.movements.description',   target_element: "[data-tour='movement-list']",     position: 'right',  required_permission: { resource: 'movements', action: 'approve' }, route: '/admin/movements',   is_active: true },
+        { step_index: 3, title: 'tours.manager.maintenance.title', description: 'tours.manager.maintenance.description', target_element: "[data-tour='maintenance']",        position: 'right',  required_permission: { resource: 'maintenance', action: 'manage' }, route: '/admin/maintenance', is_active: true },
+        { step_index: 4, title: 'tours.manager.reports.title',     description: 'tours.manager.reports.description',     target_element: "[data-tour='reports-list']",      position: 'right',  required_permission: { resource: 'reports', action: 'view' },       route: '/admin/reports',     is_active: true },
       ],
     },
     {
@@ -594,9 +596,10 @@ async function main() {
       name: 'Staff Onboarding',
       description: 'Basic tour for staff members',
       steps: [
-        { step_index: 0, title: 'Welcome to Dashboard', description: 'View your assigned assets', target_element: "[data-tour='dashboard']", position: 'bottom', required_permission: null, route: '/dashboard' },
-        { step_index: 1, title: 'Your Assets', description: 'Browse and search assets available to you', target_element: "[data-tour='assets']", position: 'bottom', required_permission: { resource: 'assets', action: 'read' }, route: '/assets' },
-        { step_index: 2, title: 'Request Movements', description: 'Request asset transfers and assignments', target_element: "[data-tour='movements']", position: 'right', required_permission: { resource: 'movements', action: 'create' }, route: '/movements/new' },
+        { step_index: 0, title: 'tours.staff.dashboard.title',  description: 'tours.staff.dashboard.description',  target_element: "[data-tour='dashboard-summary']", position: 'bottom', required_permission: null, route: '/dashboard', is_active: true },
+        { step_index: 1, title: 'tours.staff.assets.title',     description: 'tours.staff.assets.description',     target_element: "[data-tour='asset-list']",        position: 'bottom', required_permission: { resource: 'assets', action: 'read' },      route: '/admin/assets',    is_active: true },
+        // STAFF step 2: movements list (no separate /new page; creating a movement starts from the list)
+        { step_index: 2, title: 'tours.staff.movements.title',  description: 'tours.staff.movements.description',  target_element: "[data-tour='movement-list']",     position: 'right',  required_permission: { resource: 'movements', action: 'create' }, route: '/admin/movements', is_active: true },
       ],
     },
     {
@@ -604,9 +607,9 @@ async function main() {
       name: 'Viewer Onboarding',
       description: 'Read-only tour for viewers',
       steps: [
-        { step_index: 0, title: 'Welcome to Dashboard', description: 'Overview of organizational assets', target_element: "[data-tour='dashboard']", position: 'bottom', required_permission: null, route: '/dashboard' },
-        { step_index: 1, title: 'Browse Assets', description: 'View and search all registered assets', target_element: "[data-tour='assets']", position: 'bottom', required_permission: { resource: 'assets', action: 'read' }, route: '/assets' },
-        { step_index: 2, title: 'View Reports', description: 'Access available reports and analytics', target_element: "[data-tour='reports']", position: 'right', required_permission: { resource: 'reports', action: 'view' }, route: '/reports' },
+        { step_index: 0, title: 'tours.viewer.dashboard.title', description: 'tours.viewer.dashboard.description', target_element: "[data-tour='dashboard-summary']", position: 'bottom', required_permission: null, route: '/dashboard', is_active: true },
+        { step_index: 1, title: 'tours.viewer.assets.title',   description: 'tours.viewer.assets.description',   target_element: "[data-tour='asset-list']",        position: 'bottom', required_permission: { resource: 'assets', action: 'read' },  route: '/admin/assets',  is_active: true },
+        { step_index: 2, title: 'tours.viewer.reports.title',  description: 'tours.viewer.reports.description',  target_element: "[data-tour='reports-list']",      position: 'right',  required_permission: { resource: 'reports', action: 'view' }, route: '/admin/reports', is_active: true },
       ],
     },
   ]

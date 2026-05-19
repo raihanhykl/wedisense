@@ -20,6 +20,7 @@ import { notificationsRouter } from './modules/notifications/index.js';
 import { reportsRouter } from './modules/reports/index.js';
 import { dashboardRouter } from './modules/dashboard/index.js';
 import { savedViewsRouter } from './modules/saved-views/router.js';
+import { toursRouter } from './modules/tours/router.js';
 import { authenticate } from './middleware/authenticate.js';
 
 const app: Express = express();
@@ -64,6 +65,7 @@ app.use('/api/notifications', authenticate, notificationsRouter);
 app.use('/api/reports', authenticate, reportsRouter);
 app.use('/api/dashboard', authenticate, dashboardRouter);
 app.use('/api/saved-views', authenticate, savedViewsRouter);
+app.use('/api/tours', authenticate, toursRouter);
 
 // ── Static Files (barcode/QR images) ──────────────────────
 app.use('/uploads', express.static(path.resolve(process.env['STORAGE_PATH'] ?? './uploads')));
