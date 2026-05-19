@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BarChart2, Boxes, TrendingUp, AlertTriangle } from "lucide-react";
+import { BarChart2, Boxes, TrendingUp, AlertTriangle, Menu } from "lucide-react";
 import ProtectedRoute from "@/components/shared/protected-route";
 import AppSidebar from "@/components/shared/app-sidebar";
 import NotificationBell from "@/components/shared/notification-bell";
@@ -39,6 +39,9 @@ function DashboardContent() {
   // Refresh trigger — increment to re-fetch all widgets
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  // Mobile sidebar drawer state. Matches the admin layout's pattern so the
+  // hamburger toggle behaves identically across the app.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [summary, setSummary] = useState<WidgetState<DashboardSummary | null>>(
     makeWidget(null),
@@ -178,15 +181,27 @@ function DashboardContent() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <AppSidebar />
+      <AppSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Header strip */}
-        <header className="flex h-14 shrink-0 items-center justify-end border-b bg-card px-4">
+        {/* Header strip — includes mobile hamburger same as admin layout. */}
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-card px-4">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open menu"
+            className="-ml-1 inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="flex-1" />
           <NotificationBell />
         </header>
 
         {/* Scrollable main content */}
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">
           {/* Page heading */}
           <div className="mb-6 flex items-center justify-between">
             <div>
