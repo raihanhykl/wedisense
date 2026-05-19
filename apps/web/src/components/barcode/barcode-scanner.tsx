@@ -23,9 +23,15 @@ export default function BarcodeScanner({
     }
   }, [startScanning]);
 
-  // Auto-start camera on mount
+  // Auto-start camera on mount, stop on unmount. Belt-and-suspenders: the
+  // hook itself releases resources on unmount, but wiring this explicitly
+  // here too means a future refactor that swaps the hook can't silently
+  // regress the camera-indicator bug.
   useEffect(() => {
     void handleStart();
+    return () => {
+      stopScanning();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

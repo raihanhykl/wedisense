@@ -9,6 +9,10 @@ import {
   updateAssetSchema,
   bulkCreateAssetSchema,
   assetListFilterSchema,
+  bulkMoveLocationSchema,
+  bulkAssignUserSchema,
+  bulkChangeConditionSchema,
+  bulkDeleteSchema,
 } from './schema.js';
 import * as assetService from './service.js';
 import { count as countAssets } from './repository.js';
@@ -52,6 +56,72 @@ router.post(
   }),
 );
 
+// ── Bulk action endpoints ──────────────────────────────────────────
+// Permission model:
+//   - move-location, assign-user, change-condition → assets:update
+//   - delete                                       → assets:delete
+// Each returns a per-asset success/failure breakdown so the UI can show
+// a "moved 95 of 100" toast plus a drilldown for the failures.
+
+router.post(
+  '/bulk-move-location',
+  authorize('assets:update'),
+  asyncHandler(async (req, res) => {
+    const { assetIds, toLocationId } = bulkMoveLocationSchema.parse(req.body);
+    const result = await assetService.bulkMoveAssets(
+      assetIds,
+      toLocationId,
+      req.user!.id,
+      req.user!.accessibleLocationIds,
+    );
+    sendSuccess(res, result);
+  }),
+);
+
+router.post(
+  '/bulk-assign-user',
+  authorize('assets:update'),
+  asyncHandler(async (req, res) => {
+    const { assetIds, toUserId } = bulkAssignUserSchema.parse(req.body);
+    const result = await assetService.bulkAssignAssets(
+      assetIds,
+      toUserId,
+      req.user!.id,
+      req.user!.accessibleLocationIds,
+    );
+    sendSuccess(res, result);
+  }),
+);
+
+router.post(
+  '/bulk-change-condition',
+  authorize('assets:update'),
+  asyncHandler(async (req, res) => {
+    const { assetIds, condition } = bulkChangeConditionSchema.parse(req.body);
+    const result = await assetService.bulkChangeAssetCondition(
+      assetIds,
+      condition,
+      req.user!.id,
+      req.user!.accessibleLocationIds,
+    );
+    sendSuccess(res, result);
+  }),
+);
+
+router.post(
+  '/bulk-delete',
+  authorize('assets:delete'),
+  asyncHandler(async (req, res) => {
+    const { assetIds } = bulkDeleteSchema.parse(req.body);
+    const result = await assetService.bulkDeleteAssets(
+      assetIds,
+      req.user!.id,
+      req.user!.accessibleLocationIds,
+    );
+    sendSuccess(res, result);
+  }),
+);
+
 // ── GET /api/assets/export — export to Excel (sync ≤5000, async ≥5000)
 router.get(
   '/export',
@@ -68,9 +138,41 @@ router.get(
       ...(filters.categoryId && { product: { categoryId: filters.categoryId } }),
       ...(filters.locationId && { locationId: filters.locationId }),
       ...(filters.assignedToUserId && { assignedToUserId: filters.assignedToUserId }),
+      ...((filters.purchaseDateFrom || filters.purchaseDateTo) && {
+        purchaseDate: {
+          ...(filters.purchaseDateFrom && { gte: filters.purchaseDateFrom }),
+          ...(filters.purchaseDateTo && { lte: filters.purchaseDateTo }),
+        },
+      }),
+      ...(filters.search && {
+        OR: [
+          { name: { contains: filters.search, mode: 'insensitive' } },
+          { assetNumber: { contains: filters.search, mode: 'insensitive' } },
+          { serialNumber: { contains: filters.search, mode: 'insensitive' } },
+        ],
+      }),
     };
 
     const total = await countAssets(where);
+
+    // Filter set forwarded to the generator. Dates must be serialised to ISO
+    // strings so the JSON-stored Report.parameters round-trips correctly for
+    // the async path.
+    const generatorParameters: Record<string, unknown> = {
+      locationIds: accessibleLocationIds,
+    };
+    if (filters.status) generatorParameters['status'] = filters.status;
+    if (filters.condition) generatorParameters['condition'] = filters.condition;
+    if (filters.categoryId) generatorParameters['categoryId'] = filters.categoryId;
+    if (filters.locationId) generatorParameters['locationId'] = filters.locationId;
+    if (filters.assignedToUserId) generatorParameters['assignedToUserId'] = filters.assignedToUserId;
+    if (filters.search) generatorParameters['search'] = filters.search;
+    if (filters.purchaseDateFrom) {
+      generatorParameters['purchaseDateFrom'] = filters.purchaseDateFrom.toISOString();
+    }
+    if (filters.purchaseDateTo) {
+      generatorParameters['purchaseDateTo'] = filters.purchaseDateTo.toISOString();
+    }
 
     if (total >= ASYNC_ROW_THRESHOLD) {
       // Async: create Report record + enqueue job
@@ -78,10 +180,7 @@ router.get(
         data: {
           name: `Asset Export ${new Date().toISOString().split('T')[0] ?? ''}`,
           type: 'ASSET_LIST',
-          parameters: {
-            ...filters,
-            locationIds: accessibleLocationIds,
-          } as unknown as Prisma.InputJsonValue,
+          parameters: generatorParameters as unknown as Prisma.InputJsonValue,
           status: 'GENERATING',
           createdBy: { connect: { id: req.user!.id } },
         },
@@ -108,16 +207,7 @@ router.get(
     // Sync: generate Excel and stream directly.
     // CRITICAL: always pass `locationIds` (RBAC scope) so a location-scoped
     // user cannot pull assets outside their accessible locations.
-    const parameters: Record<string, unknown> = {
-      locationIds: accessibleLocationIds,
-    };
-    if (filters.status) parameters['status'] = filters.status;
-    if (filters.condition) parameters['condition'] = filters.condition;
-    if (filters.categoryId) parameters['categoryId'] = filters.categoryId;
-    if (filters.locationId) parameters['locationId'] = filters.locationId;
-    if (filters.assignedToUserId) parameters['assignedToUserId'] = filters.assignedToUserId;
-
-    const buffer = await generateAssetListReport(parameters, 'excel');
+    const buffer = await generateAssetListReport(generatorParameters, 'excel');
 
     await prisma.auditLog.create({
       data: {

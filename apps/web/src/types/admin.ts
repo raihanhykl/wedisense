@@ -91,9 +91,76 @@ export interface AssetListItem {
   purchasePrice: string | null;
   warrantyEndDate: string | null;
   currentBookValue: string | null;
-  product: { id: string; name: string; brand: string | null } | null;
+  product: {
+    id: string;
+    name: string;
+    brand: string | null;
+    category: { id: string; name: string } | null;
+  } | null;
   location: { id: string; name: string; code: string };
   assignedTo: { id: string; name: string; email: string } | null;
+}
+
+export interface AssetCategoryOption {
+  id: string;
+  name: string;
+  code: string;
+  parentId: string | null;
+}
+
+// ── Saved views ──────────────────────────────────────────────────────
+// Per-user filter/sort/column configurations for list pages. Server stores
+// the config blob as opaque JSON; each list page documents and validates
+// its own expected shape.
+
+export interface SavedView {
+  id: string;
+  userId: string;
+  resource: string;
+  name: string;
+  // Server returns JSON; consumers narrow to their page-specific shape.
+  config: Record<string, unknown>;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Shape stored in `config` for the asset list. Optional everywhere because
+// a partial view is a meaningful concept ("just save my filters, not
+// search"). The page's `applyViewConfig` reader treats missing keys as "no
+// override".
+export interface AssetListViewConfig {
+  search?: string;
+  statusFilter?: string;
+  locationFilter?: string;
+  categoryFilter?: string;
+  sortField?: string;
+  sortOrder?: "asc" | "desc";
+}
+
+// Full category record returned by GET /api/asset-categories on the
+// management page. The dropdown stub above is a subset of this for old
+// callers that only need id/name/code.
+export type DepreciationMethod = 'STRAIGHT_LINE' | 'DECLINING_BALANCE' | 'NONE';
+
+export interface AssetCategoryDetail {
+  id: string;
+  name: string;
+  code: string;
+  description: string | null;
+  parentId: string | null;
+  parent: { id: string; name: string; code: string } | null;
+  depreciationMethod: DepreciationMethod;
+  defaultDepreciationRate: number | null;
+  defaultUsefulLifeMonths: number | null;
+  icon: string | null;
+  color: string | null;
+  createdAt: string;
+  updatedAt: string;
+  // Aggregated count of products referencing this category. Surfaced
+  // alongside the row so admins can see "X products in this category"
+  // before deciding whether to delete.
+  _count: { products: number };
 }
 
 export interface AssetDetail extends AssetListItem {
@@ -233,14 +300,34 @@ export interface ReportItem {
 // ── Asset Import types ────────────────────────────────────────────────
 // Shape matches backend `AssetImportRow` in apps/api/src/lib/excel.ts.
 // Flat structure — DO NOT change without also updating the backend.
+//
+// Note: `productId` and `locationId` are either resolved UUIDs OR the raw
+// user-typed natural key (name / code / EAN) when the row will create a new
+// product. The display values `productLabel` and `locationLabel` are always
+// human-readable for use in the preview table.
 export interface AssetImportRow {
   rowIndex: number;
   productId: string;
+  /** Canonical product name (when resolved) or raw user-typed value (when
+   *  new). Use this in any UI rendering. */
+  productLabel?: string;
+  /** Carries the new-product spec when the parser couldn't match `productId`
+   *  to an existing product. The backend creates the product before the
+   *  asset insert; the frontend just round-trips this field through confirm. */
+  newProductSpec?: {
+    name: string;
+    categoryName: string;
+    brand?: string;
+    model?: string;
+    eanCode?: string;
+  };
   name: string;
   serialNumber?: string;
   status: 'ACTIVE' | 'IDLE' | 'IN_MAINTENANCE' | 'DISPOSED' | 'LOST' | 'BORROWED';
   condition: 'NEW' | 'GOOD' | 'FAIR' | 'POOR' | 'DAMAGED';
   locationId: string;
+  /** Canonical location name (always set once the parser resolved). */
+  locationLabel?: string;
   assignedToUserId?: string;
   purchaseDate?: string;
   purchasePrice?: number;
@@ -258,6 +345,28 @@ export interface AssetImportError {
   field: string;
   message: string;
   value?: unknown;
+  /** Snapshot of every recognised column's raw value for this row. Used by
+   *  the inline-repair UI to prefill the editor. Multiple errors on the
+   *  same row carry the same snapshot — the editor de-duplicates them. */
+  rawValues?: Record<string, string>;
+}
+
+/** Single canonical-key → worksheet-column resolution as returned by the
+ *  backend. `source` lets the UI show users where a mapping came from
+ *  (exact = template match, synonym = fuzzy match, manual = user override). */
+export interface AssetImportColumnMappingItem {
+  columnNumber: number;
+  actualHeader: string;
+  source: 'exact' | 'synonym' | 'manual';
+}
+
+/** Backend's view of the column mapping for a given upload. The mapping
+ *  panel uses `headers` to populate dropdowns and `mapping` to highlight
+ *  the currently-selected column per canonical field. */
+export interface AssetImportDetectedMapping {
+  mapping: Partial<Record<string, AssetImportColumnMappingItem>>;
+  headers: Array<{ columnNumber: number; text: string }>;
+  requiredMissing: string[];
 }
 
 export interface AssetImportPreviewResponse {
@@ -266,6 +375,14 @@ export interface AssetImportPreviewResponse {
   parseErrors: AssetImportError[];
   validatedRows: AssetImportRow[];
   rowCount: number;
+  /** Rows whose serial already matches a live asset — they will be skipped
+   *  (not error) at commit. Surface this in the Review step so the user
+   *  isn't surprised by the Result count. */
+  willSkip: AssetImportSkipped[];
+  /** How the backend interpreted the file's column headers. Always present
+   *  for fresh uploads; the UI can hide the panel when every field was an
+   *  exact match. */
+  detectedMapping?: AssetImportDetectedMapping;
 }
 
 export interface AssetImportAsyncResponse {
@@ -274,15 +391,49 @@ export interface AssetImportAsyncResponse {
   rowCount: number;
   parseErrors: AssetImportError[];
   message: string;
+  detectedMapping?: AssetImportDetectedMapping;
 }
 
 export type AssetImportResponse =
   | AssetImportPreviewResponse
   | AssetImportAsyncResponse;
 
+export interface AssetImportSkipped {
+  rowIndex: number;
+  reason: 'duplicate_serial';
+  existing: {
+    id: string;
+    assetNumber: string;
+    name: string;
+    serialNumber: string;
+  };
+}
+
+// Polled status payload for async imports (file >= 5000 rows).
+// Returned by GET /api/assets/import/:importId/status.
+export interface AssetImportStatus {
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  progress?: { processed: number; total: number };
+  created?: number;
+  skipped?: number;
+  failed?: number;
+  error?: string;
+  result?: { errors: AssetImportError[] };
+}
+
 export interface AssetImportConfirmResponse {
+  /** Number of new assets actually created in this run. */
   created: number;
-  failed: AssetImportError[];
+  /** Number of rows skipped because the asset already exists (duplicate serial). */
+  skipped: number;
+  /** Number of rows that failed validation or insert. */
+  failed: number;
+  /** Per-row failure details. */
+  errors: AssetImportError[];
+  /** Per-row skip details (so the UI can link to the existing asset). */
+  skippedRows: AssetImportSkipped[];
+  /** Newly created assets — useful for "view imported" navigation. */
+  assets: Array<{ id: string; assetNumber: string; name: string }>;
 }
 
 // ── Dashboard types ───────────────────────────────────────────────────

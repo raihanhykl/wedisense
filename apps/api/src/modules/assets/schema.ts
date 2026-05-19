@@ -45,6 +45,29 @@ export const bulkCreateAssetSchema = z.object({
   assets: z.array(createAssetSchema).min(1).max(100),
 });
 
+// ── Bulk action schemas ──────────────────────────────────────────────
+// All bulk action endpoints share the same ID-array shape. Capped at 200
+// per request — past that the user is better served by a saved filter +
+// "Apply to all matching" workflow we haven't built yet.
+const bulkAssetIdsSchema = z.object({
+  assetIds: z.array(z.string().uuid()).min(1).max(200),
+});
+
+export const bulkMoveLocationSchema = bulkAssetIdsSchema.extend({
+  toLocationId: z.string().uuid(),
+});
+
+export const bulkAssignUserSchema = bulkAssetIdsSchema.extend({
+  // null = unassignment (system handles UNASSIGNMENT movements)
+  toUserId: z.string().uuid().nullable(),
+});
+
+export const bulkChangeConditionSchema = bulkAssetIdsSchema.extend({
+  condition: z.enum(['NEW', 'GOOD', 'FAIR', 'POOR', 'DAMAGED']),
+});
+
+export const bulkDeleteSchema = bulkAssetIdsSchema;
+
 export const assetListFilterSchema = z.object({
   search: z.string().optional(),
   status: z.enum(['ACTIVE', 'IDLE', 'IN_MAINTENANCE', 'DISPOSED', 'LOST', 'BORROWED']).optional(),

@@ -5,7 +5,16 @@ import type { PrismaTransactionClient } from './types.js';
 // ── Include presets ──────────────────────────────────────────────────
 
 const listInclude = {
-  product: { select: { id: true, name: true, brand: true } },
+  product: {
+    select: {
+      id: true,
+      name: true,
+      brand: true,
+      // Category is shown as a list column + powers the filter dropdown.
+      // Selecting it here avoids an N+1 fetch from the frontend.
+      category: { select: { id: true, name: true } },
+    },
+  },
   location: { select: { id: true, name: true, code: true } },
   assignedTo: { select: { id: true, name: true, email: true } },
 } as const;
@@ -79,16 +88,22 @@ export function createInTransaction(
   });
 }
 
-export function update(id: string, data: Prisma.AssetUpdateInput) {
-  return prisma.asset.update({
+export function update(
+  id: string,
+  data: Prisma.AssetUpdateInput,
+  tx?: PrismaTransactionClient,
+) {
+  const client = (tx ?? prisma) as typeof prisma;
+  return client.asset.update({
     where: { id },
     data,
     include: detailInclude,
   });
 }
 
-export function softDelete(id: string) {
-  return prisma.asset.update({
+export function softDelete(id: string, tx?: PrismaTransactionClient) {
+  const client = (tx ?? prisma) as typeof prisma;
+  return client.asset.update({
     where: { id },
     data: { deletedAt: new Date() },
   });

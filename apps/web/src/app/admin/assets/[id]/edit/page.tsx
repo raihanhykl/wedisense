@@ -5,7 +5,40 @@ import { useParams, useRouter } from "next/navigation";
 import ProtectedRoute from "@/components/shared/protected-route";
 import AssetForm from "@/components/shared/asset-form";
 import { apiGet, apiPut } from "@/lib/api";
+import { assetFormToApiPayload } from "@/lib/asset-form-payload";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { AssetFormData, AssetDetail } from "@/types/admin";
+
+// ── Edit form skeleton (matches AssetForm layout: header + 4 fieldset blocks).
+function EditFormSkeleton() {
+  return (
+    <div className="p-6">
+      <div className="mb-6 space-y-2">
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-4 w-64" />
+      </div>
+      <div className="space-y-8">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="rounded-lg border bg-card p-5">
+            <Skeleton className="mb-4 h-5 w-32" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              {Array.from({ length: 4 }).map((__, j) => (
+                <div key={j} className="space-y-2">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div className="flex justify-end gap-3">
+          <Skeleton className="h-10 w-20" />
+          <Skeleton className="h-10 w-32" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function EditAssetContent() {
   const params = useParams<{ id: string }>();
@@ -30,16 +63,15 @@ function EditAssetContent() {
   }, [fetchAsset]);
 
   const handleSubmit = async (data: AssetFormData) => {
-    await apiPut<AssetDetail>(`/api/assets/${params.id}`, data);
+    await apiPut<AssetDetail>(
+      `/api/assets/${params.id}`,
+      assetFormToApiPayload(data),
+    );
     router.push(`/admin/assets/${params.id}`);
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center p-12">
-        <p className="text-sm text-muted-foreground">Loading asset...</p>
-      </div>
-    );
+    return <EditFormSkeleton />;
   }
 
   if (!asset) {

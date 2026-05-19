@@ -1,10 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { apiGet } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/error";
+import {
+  useProducts,
+  useLocations,
+  useUsers,
+} from "@/hooks/use-reference-data";
 import type { AssetFormData } from "@/types/admin";
 
 // ── Zod schema ──────────────────────────────────────────────────────
@@ -27,24 +32,6 @@ const assetSchema = z.object({
 });
 
 type AssetSchemaValues = z.infer<typeof assetSchema>;
-
-// ── Option types ────────────────────────────────────────────────────
-interface ProductOption {
-  id: string;
-  name: string;
-  brand: string | null;
-}
-
-interface LocationOption {
-  id: string;
-  name: string;
-}
-
-interface UserOption {
-  id: string;
-  name: string;
-  email: string;
-}
 
 // ── Status & condition options ──────────────────────────────────────
 const STATUS_OPTIONS = [
@@ -71,18 +58,36 @@ export default function AssetForm({
   onSubmit,
   submitLabel,
 }: AssetFormProps) {
-  const [products, setProducts] = useState<ProductOption[]>([]);
-  const [locations, setLocations] = useState<LocationOption[]>([]);
-  const [users, setUsers] = useState<UserOption[]>([]);
   const [productSearch, setProductSearch] = useState("");
+  // Debounced version actually fed into the products query — see the
+  // useEffect below. Mirrors the same pattern in MultiAssetCreateForm.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Holds the human-readable backend rejection (e.g. INVALID_STATUS_TRANSITION).
+  // Without this the rejected promise bubbles up to Next.js's dev overlay and
+  // the user sees a useless stack trace instead of the actual reason.
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Reference data via TanStack Query — cached across page mounts.
+  const { data: products = [] } = useProducts(debouncedSearch);
+  const { data: locations = [] } = useLocations();
+  const { data: users = [] } = useUsers();
+
+  useEffect(() => {
+    if (productSearch === debouncedSearch) return;
+    const handle = window.setTimeout(() => {
+      setDebouncedSearch(productSearch);
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [productSearch, debouncedSearch]);
 
   const {
     register,
     handleSubmit,
     setValue,
     watch,
-    formState: { errors },
+    reset,
+    formState: { errors, isDirty },
   } = useForm<AssetSchemaValues>({
     resolver: zodResolver(assetSchema),
     defaultValues: defaultValues ?? {
@@ -106,48 +111,6 @@ export default function AssetForm({
 
   const selectedProductId = watch("productId");
 
-  // Fetch reference data
-  const fetchProducts = useCallback(async () => {
-    try {
-      const data = await apiGet<ProductOption[]>("/api/products", {
-        search: productSearch,
-        limit: 50,
-      });
-      setProducts(data);
-    } catch {
-      // handle error
-    }
-  }, [productSearch]);
-
-  const fetchLocations = useCallback(async () => {
-    try {
-      const data = await apiGet<LocationOption[]>("/api/locations", {
-        limit: 100,
-      });
-      setLocations(data);
-    } catch {
-      // handle error
-    }
-  }, []);
-
-  const fetchUsers = useCallback(async () => {
-    try {
-      const data = await apiGet<UserOption[]>("/api/users", { limit: 100 });
-      setUsers(data);
-    } catch {
-      // handle error
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchLocations();
-    void fetchUsers();
-  }, [fetchLocations, fetchUsers]);
-
-  useEffect(() => {
-    void fetchProducts();
-  }, [fetchProducts]);
-
   // Auto-fill name from product
   useEffect(() => {
     if (!defaultValues && selectedProductId) {
@@ -160,11 +123,50 @@ export default function AssetForm({
 
   const onFormSubmit = async (data: AssetSchemaValues) => {
     setSubmitting(true);
+    setSubmitError(null);
     try {
       await onSubmit(data as AssetFormData);
+      // After a successful save reset the form to the saved values so
+      // `isDirty` flips back to false. Otherwise the unsaved-changes guard
+      // would still fire when the user navigates away post-save.
+      reset(data);
+    } catch (err: unknown) {
+      // Surface the backend's message (e.g. the
+      // INVALID_STATUS_TRANSITION explanation when changing status to
+      // BORROWED) instead of letting the rejection escape to the global
+      // overlay.
+      setSubmitError(getApiErrorMessage(err, "Failed to save asset. Please try again."));
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // ── Unsaved-changes guard ──────────────────────────────────────────
+  // Two layers:
+  //  1. Browser-level: `beforeunload` triggers the native "Leave site?"
+  //     prompt on hard navigation/reload/close. Standards mandate ignoring
+  //     custom messages — the browser shows its own.
+  //  2. In-app navigation (Cancel button, breadcrumb clicks): we own those
+  //     handlers, so a custom confirm() with a clear question is shown.
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Required by Chrome. Modern browsers ignore the actual message.
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  const handleCancel = () => {
+    if (isDirty) {
+      const ok = window.confirm(
+        "You have unsaved changes. Are you sure you want to discard them?",
+      );
+      if (!ok) return;
+    }
+    window.history.back();
   };
 
   const fieldClass =
@@ -424,11 +426,23 @@ export default function AssetForm({
         </div>
       </fieldset>
 
+      {/* Submission error banner — backend rejections (validation, status
+          transition guards, etc.) show here instead of bubbling to the
+          Next.js error overlay. */}
+      {submitError && (
+        <div
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          {submitError}
+        </div>
+      )}
+
       {/* Submit */}
       <div className="flex justify-end gap-3">
         <button
           type="button"
-          onClick={() => window.history.back()}
+          onClick={handleCancel}
           className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
         >
           Cancel

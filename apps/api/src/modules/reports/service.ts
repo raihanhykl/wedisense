@@ -320,29 +320,109 @@ export async function runReportJob(payload: GenerateReportJobPayload): Promise<v
 
 // ── Inline bulk import runner (used by the import job) ────────────────
 
+// Status keys live in Redis with a TTL so completed imports auto-evict.
+// Frontend polls the status endpoint until either status === 'completed' or
+// the key is gone (treated as "result expired, view result file directly").
+const IMPORT_STATUS_TTL_SECONDS = 60 * 60; // 1 hour
+
+function importStatusKey(importId: string): string {
+  return `import:${importId}:status`;
+}
+
+async function writeImportStatus(
+  importId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const { redis } = await import('../../lib/redis.js');
+  // We always overwrite the full object — partial updates are not safe with
+  // a string-encoded JSON value and the payload is small (<1KB).
+  await redis.set(
+    importStatusKey(importId),
+    JSON.stringify({ ...payload, updatedAt: new Date().toISOString() }),
+    'EX',
+    IMPORT_STATUS_TTL_SECONDS,
+  );
+}
+
+export async function readImportStatus(
+  importId: string,
+): Promise<Record<string, unknown> | null> {
+  const { redis } = await import('../../lib/redis.js');
+  const raw = await redis.get(importStatusKey(importId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function runImportJob(payload: {
   importId: string;
   userId: string;
   filePath: string;
+  /** Optional column-mapping override captured at upload time. Persisted on
+   *  the job so the worker resolves columns the same way the user confirmed
+   *  in the wizard, even if the worker runs minutes later. */
+  columnMapping?: Partial<Record<string, number | string>>;
 }): Promise<void> {
-  const { importId, userId, filePath } = payload;
+  const { importId, userId, filePath, columnMapping } = payload;
 
   const { parseAssetImportSheet } = await import('../../lib/excel.js');
   const { bulkImport } = await import('../assets/import-service.js');
   const { notify } = await import('../notifications/service.js');
 
   let successCount = 0;
+  let skipCount = 0;
   let failCount = 0;
+
+  await writeImportStatus(importId, {
+    status: 'processing',
+    progress: { processed: 0, total: 0 },
+    created: 0,
+    skipped: 0,
+    failed: 0,
+  });
 
   try {
     const fileBuffer = fs.readFileSync(filePath);
-    const { rows, errors } = await parseAssetImportSheet(fileBuffer);
+    const { rows, errors } = await parseAssetImportSheet(
+      fileBuffer,
+      columnMapping ? { columnMappingOverride: columnMapping } : {},
+    );
 
     failCount = errors.length;
 
+    // Reflect parse-level failures in the status payload so the bar moves
+    // immediately even before bulkImport starts pushing checkpoints.
+    await writeImportStatus(importId, {
+      status: 'processing',
+      progress: { processed: 0, total: rows.length },
+      created: 0,
+      skipped: 0,
+      failed: failCount,
+    });
+
     if (rows.length > 0) {
-      const result = await bulkImport(rows, userId);
+      const result = await bulkImport(rows, userId, {
+        onProgress: async (update) => {
+          // Combine bulkImport's per-row progress with parse-level failures
+          // (which it doesn't know about). `update.failed` is just bulkImport's
+          // own failure count.
+          await writeImportStatus(importId, {
+            status: 'processing',
+            progress: {
+              processed: update.processed,
+              total: update.total,
+            },
+            created: update.created,
+            skipped: update.skipped,
+            failed: errors.length + update.failed,
+          });
+        },
+      });
       successCount = result.created.length;
+      skipCount = result.skipped.length;
       failCount += result.failed.length;
     }
 
@@ -354,8 +434,41 @@ export async function runImportJob(payload: {
     );
     fs.writeFileSync(
       resultPath,
-      JSON.stringify({ importId, successCount, failCount, errors, timestamp: new Date().toISOString() }),
+      JSON.stringify({ importId, successCount, skipCount, failCount, errors, timestamp: new Date().toISOString() }),
     );
+
+    // Audit log for the async import. The sync path's bulkImport already
+    // writes its own audit row for the asset module; this one captures the
+    // file-level operation explicitly.
+    await prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'IMPORT',
+        resourceType: 'Asset',
+        resourceId: `import:${importId}`,
+        newValues: {
+          mode: 'async',
+          importId,
+          created: successCount,
+          skipped: skipCount,
+          failed: failCount,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    await writeImportStatus(importId, {
+      status: 'completed',
+      progress: { processed: rows.length + errors.length, total: rows.length + errors.length },
+      created: successCount,
+      skipped: skipCount,
+      failed: failCount,
+    });
+  } catch (err) {
+    await writeImportStatus(importId, {
+      status: 'failed',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
   } finally {
     // Delete the uploaded file
     if (fs.existsSync(filePath)) {

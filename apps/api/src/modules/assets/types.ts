@@ -7,7 +7,13 @@ export type PrismaTransactionClient = Omit<
 >;
 
 /** Allowed sort fields for asset list */
-export type AssetSortField = 'assetNumber' | 'name' | 'status' | 'purchaseDate' | 'createdAt';
+export type AssetSortField =
+  | 'assetNumber'
+  | 'name'
+  | 'status'
+  | 'purchaseDate'
+  | 'purchasePrice'
+  | 'createdAt';
 
 /** Filters for asset list query */
 export interface AssetListFilters {

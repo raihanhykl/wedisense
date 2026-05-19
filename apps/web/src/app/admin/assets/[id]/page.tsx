@@ -3,10 +3,43 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { apiGet } from "@/lib/api";
+import { toast } from "sonner";
+import { apiGet, apiDelete } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
+import { Skeleton } from "@/components/ui/skeleton";
+import PrintDialog from "@/components/shared/print-dialog";
 import type { AssetDetail } from "@/types/admin";
+
+// ── Skeleton matching the real detail layout so swap-in is non-jarring.
+function DetailSkeleton() {
+  return (
+    <div className="p-6">
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-72" />
+          <Skeleton className="h-4 w-40" />
+        </div>
+        <div className="flex gap-2">
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-9 w-20" />
+          <Skeleton className="h-9 w-28" />
+        </div>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="space-y-3 rounded-lg border bg-card p-4 md:p-5">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-5/6" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ── Status badge ────────────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
@@ -71,13 +104,16 @@ interface AssetMovement {
 }
 
 // ── Info row ────────────────────────────────────────────────────────
+// On mobile (<sm) the label sits ABOVE the value so long values aren't
+// crammed into the narrow column to the right of a fixed-width label.
+// On sm+ the original two-column layout is back.
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-4 py-2">
-      <dt className="w-40 shrink-0 text-sm font-medium text-muted-foreground">
+    <div className="flex flex-col gap-0.5 py-2 sm:flex-row sm:items-start sm:gap-4">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground sm:w-40 sm:shrink-0 sm:text-sm sm:normal-case sm:tracking-normal">
         {label}
       </dt>
-      <dd className="text-sm">{children}</dd>
+      <dd className="break-words text-sm">{children}</dd>
     </div>
   );
 }
@@ -87,10 +123,38 @@ export default function AssetDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const canUpdate = usePermission("assets:update");
+  const canPrint = usePermission("assets:print");
+  const canDelete = usePermission("assets:delete");
 
   const [asset, setAsset] = useState<AssetDetail | null>(null);
   const [movements, setMovements] = useState<AssetMovement[]>([]);
   const [loading, setLoading] = useState(true);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = useCallback(async () => {
+    if (!asset) return;
+    if (
+      !confirm(
+        `Delete asset ${asset.assetNumber}? This cannot be undone — make sure you've recorded a DISPOSAL movement first if this asset has any history.`,
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await apiDelete(`/api/assets/${asset.id}`);
+      toast.success(`Asset ${asset.assetNumber} deleted.`);
+      router.push("/admin/assets");
+    } catch (err: unknown) {
+      // Backend may 409 if asset has non-INITIAL movements and is not in a
+      // terminal state — surface the message instead of failing silently.
+      toast.error(
+        getApiErrorMessage(err, "Failed to delete asset. Please try again."),
+      );
+      setDeleting(false);
+    }
+  }, [asset, router]);
 
   const fetchAsset = useCallback(async () => {
     setLoading(true);
@@ -122,11 +186,7 @@ export default function AssetDetailPage() {
   }, [fetchAsset, fetchMovements]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center p-12">
-        <p className="text-sm text-muted-foreground">Loading asset...</p>
-      </div>
-    );
+    return <DetailSkeleton />;
   }
 
   if (!asset) {
@@ -145,41 +205,56 @@ export default function AssetDetailPage() {
   }
 
   return (
-    <div className="p-6" data-tour="asset-detail">
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">{asset.name}</h1>
+    <div className="p-4 md:p-6" data-tour="asset-detail">
+      {/* Header — stacks vertically on mobile so the title doesn't get
+          squashed and the 4 buttons have room to wrap. */}
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-bold tracking-tight sm:text-2xl">
+            {asset.name}
+          </h1>
           <p className="text-sm text-muted-foreground">{asset.assetNumber}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="-mx-1 flex flex-wrap gap-2 sm:mx-0">
           <Link
             href="/admin/assets"
-            className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
+            className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent sm:px-4"
           >
-            Back to List
+            Back
           </Link>
           {canUpdate && (
             <Link
               href={`/admin/assets/${asset.id}/edit`}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 sm:px-4"
             >
               Edit
             </Link>
           )}
-          <button
-            type="button"
-            onClick={() => alert("Print label feature coming soon.")}
-            className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
-          >
-            Print Label
-          </button>
+          {canPrint && (
+            <button
+              type="button"
+              onClick={() => setPrintDialogOpen(true)}
+              className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent sm:px-4"
+            >
+              Print
+            </button>
+          )}
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+              className="rounded-md border border-destructive/40 px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 sm:px-4"
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </button>
+          )}
         </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Basic Info */}
-        <div className="rounded-lg border bg-card p-5">
+        <div className="rounded-lg border bg-card p-4 md:p-5">
           <h2 className="mb-4 text-lg font-semibold">Basic Info</h2>
           <dl className="divide-y">
             <InfoRow label="Asset Number">{asset.assetNumber}</InfoRow>
@@ -214,7 +289,7 @@ export default function AssetDetailPage() {
         </div>
 
         {/* Financial */}
-        <div className="rounded-lg border bg-card p-5">
+        <div className="rounded-lg border bg-card p-4 md:p-5">
           <h2 className="mb-4 text-lg font-semibold">Financial</h2>
           <dl className="divide-y">
             <InfoRow label="Purchase Date">
@@ -239,7 +314,7 @@ export default function AssetDetailPage() {
         </div>
 
         {/* Warranty */}
-        <div className="rounded-lg border bg-card p-5">
+        <div className="rounded-lg border bg-card p-4 md:p-5">
           <h2 className="mb-4 text-lg font-semibold">Warranty</h2>
           <dl className="divide-y">
             <InfoRow label="Warranty Start">
@@ -252,7 +327,7 @@ export default function AssetDetailPage() {
         </div>
 
         {/* Assignment / Barcode */}
-        <div className="rounded-lg border bg-card p-5">
+        <div className="rounded-lg border bg-card p-4 md:p-5">
           <h2 className="mb-4 text-lg font-semibold">Barcode</h2>
           <dl className="divide-y">
             <InfoRow label="Barcode Type">{asset.barcodeType}</InfoRow>
@@ -272,7 +347,7 @@ export default function AssetDetailPage() {
       </div>
 
       {/* Metadata */}
-      <div className="mt-6 rounded-lg border bg-card p-5">
+      <div className="mt-6 rounded-lg border bg-card p-4 md:p-5">
         <h2 className="mb-4 text-lg font-semibold">Metadata</h2>
         <dl className="grid gap-x-8 sm:grid-cols-3">
           <InfoRow label="Created By">
@@ -285,7 +360,7 @@ export default function AssetDetailPage() {
 
       {/* Recent Movements */}
       {movements.length > 0 && (
-        <div className="mt-6 rounded-lg border bg-card p-5">
+        <div className="mt-6 rounded-lg border bg-card p-4 md:p-5">
           <h2 className="mb-4 text-lg font-semibold">Recent Movements</h2>
           <div className="space-y-4">
             {movements.map((movement) => (
@@ -317,6 +392,14 @@ export default function AssetDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Single-asset print dialog. Reuses the same component the list view
+          uses for bulk print — assetIds is a 1-element array here. */}
+      <PrintDialog
+        open={printDialogOpen}
+        onClose={() => setPrintDialogOpen(false)}
+        assetIds={[asset.id]}
+      />
     </div>
   );
 }
