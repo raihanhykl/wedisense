@@ -20,6 +20,12 @@ interface TourState {
   activeTourId: string | null;
   status: TourStatus;
   autoStartHandled: boolean;
+  // Cross-page launch intent. Set by useTour.startTour when the first step
+  // lives on a different route than the caller — useTour can't survive its
+  // own component unmount after router.push, so it stages the intent here
+  // and TourProvider picks it up on the destination route once the target
+  // DOM is present.
+  pendingStartTourId: string | null;
 }
 
 interface TourActions {
@@ -27,6 +33,7 @@ interface TourActions {
   setStatus: (status: TourStatus) => void;
   setActiveTour: (id: string | null) => void;
   markAutoStartHandled: () => void;
+  setPendingStart: (id: string | null) => void;
   clear: () => void;
 }
 
@@ -35,6 +42,7 @@ const INITIAL_STATE: TourState = {
   activeTourId: null,
   status: "idle",
   autoStartHandled: false,
+  pendingStartTourId: null,
 };
 
 export const useTourStore = create<TourState & TourActions>()((set) => ({
@@ -44,5 +52,6 @@ export const useTourStore = create<TourState & TourActions>()((set) => ({
   setStatus: (status) => set({ status }),
   setActiveTour: (id) => set({ activeTourId: id }),
   markAutoStartHandled: () => set({ autoStartHandled: true }),
+  setPendingStart: (id) => set({ pendingStartTourId: id }),
   clear: () => set({ ...INITIAL_STATE }),
 }));

@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { NextStepProvider, NextStep, useNextStep } from "nextstepjs";
 import type { Tour } from "nextstepjs";
+import { usePathname } from "next/navigation";
 import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth.store";
 import { useTourStore } from "@/stores/tour.store";
@@ -46,12 +47,15 @@ function TourEngine({ children }: { children: React.ReactNode }) {
     tours,
     activeTourId,
     autoStartHandled,
+    pendingStartTourId,
     setTours,
     setStatus,
     setActiveTour,
     markAutoStartHandled,
+    setPendingStart,
     clear,
   } = useTourStore();
+  const pathname = usePathname();
 
   const lang = user?.preferredLanguage ?? "id";
 
@@ -132,6 +136,62 @@ function TourEngine({ children }: { children: React.ReactNode }) {
       document.body.removeAttribute("data-tour-active");
     };
   }, [activeTourId]);
+
+  // ── Pending cross-page start ──────────────────────────────────────
+  // useTour.startTour can't launch the tour directly when the first step
+  // lives on a different route — the calling component (e.g. the profile
+  // page) unmounts during router.push. It stages the intent in the store
+  // and we pick it up here once pathname matches the first step's route.
+  // Uses MutationObserver to wait for the target before invoking NextStep,
+  // which is more reliable than a fixed setTimeout on slow first-paint.
+  useEffect(() => {
+    if (!pendingStartTourId) return;
+    const tour = tours.find((t) => t.id === pendingStartTourId);
+    if (!tour || tour.steps.length === 0) {
+      setPendingStart(null);
+      return;
+    }
+    const firstStep = tour.steps[0];
+    if (!firstStep || firstStep.route !== pathname) return;
+
+    const launch = () => {
+      setActiveTour(tour.id);
+      startNextStep(tour.id);
+      setPendingStart(null);
+    };
+
+    if (document.querySelector(firstStep.targetElement)) {
+      launch();
+      return;
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const observer = new MutationObserver(() => {
+      if (document.querySelector(firstStep.targetElement)) {
+        observer.disconnect();
+        if (timeoutId) clearTimeout(timeoutId);
+        launch();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    timeoutId = setTimeout(() => {
+      observer.disconnect();
+      setPendingStart(null);
+    }, TARGET_WAIT_TIMEOUT_MS);
+
+    return () => {
+      observer.disconnect();
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [
+    pendingStartTourId,
+    pathname,
+    tours,
+    startNextStep,
+    setActiveTour,
+    setPendingStart,
+  ]);
 
   // ── Target-presence guard for cross-page steps ─────────────────────
   // NextStep handles nextRoute/prevRoute navigation, but if the target

@@ -156,7 +156,13 @@ export default function AppSidebar({ open, onClose }: AppSidebarProps) {
 
         {/* User section */}
         <div className="border-t px-4 py-3">
-          <p className="truncate text-sm font-medium">{userName}</p>
+          <Link
+            href="/admin/profile"
+            onClick={onClose}
+            className="block truncate text-sm font-medium hover:text-primary"
+          >
+            {userName}
+          </Link>
           <button
             onClick={handleLogout}
             className="mt-1 text-xs text-muted-foreground hover:text-destructive"
