@@ -27,6 +27,7 @@ async function main() {
     { resource: 'audit', action: 'read' },
     { resource: 'labels', action: 'manage' },
     { resource: 'tours', action: 'manage' },
+    { resource: 'categories', action: 'manage' },
   ]
 
   const permissions: Record<string, string> = {}

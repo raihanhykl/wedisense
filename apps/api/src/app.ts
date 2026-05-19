@@ -12,12 +12,14 @@ import { userRouter } from './modules/users/router.js';
 import { roleRouter } from './modules/roles/router.js';
 import { productRouter } from './modules/products/router.js';
 import { assetRouter } from './modules/assets/router.js';
+import { assetCategoryRouter } from './modules/asset-categories/router.js';
 import { movementRouter } from './modules/movements/router.js';
 import { maintenanceRouter } from './modules/maintenance/router.js';
 import { labelRouter } from './modules/labels/router.js';
 import { notificationsRouter } from './modules/notifications/index.js';
 import { reportsRouter } from './modules/reports/index.js';
 import { dashboardRouter } from './modules/dashboard/index.js';
+import { savedViewsRouter } from './modules/saved-views/router.js';
 import { authenticate } from './middleware/authenticate.js';
 
 const app: Express = express();
@@ -53,6 +55,7 @@ app.use('/api/locations', authenticate, locationRouter);
 app.use('/api/users', authenticate, userRouter);
 app.use('/api/roles', authenticate, roleRouter);
 app.use('/api/products', authenticate, productRouter);
+app.use('/api/asset-categories', authenticate, assetCategoryRouter);
 app.use('/api/assets', authenticate, assetRouter);
 app.use('/api/movements', authenticate, movementRouter);
 app.use('/api/maintenance', authenticate, maintenanceRouter);
@@ -60,6 +63,7 @@ app.use('/api', authenticate, labelRouter);
 app.use('/api/notifications', authenticate, notificationsRouter);
 app.use('/api/reports', authenticate, reportsRouter);
 app.use('/api/dashboard', authenticate, dashboardRouter);
+app.use('/api/saved-views', authenticate, savedViewsRouter);
 
 // ── Static Files (barcode/QR images) ──────────────────────
 app.use('/uploads', express.static(path.resolve(process.env['STORAGE_PATH'] ?? './uploads')));
