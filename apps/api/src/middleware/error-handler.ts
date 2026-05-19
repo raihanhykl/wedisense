@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 import type { ApiErrorResponse } from '@wedisense/shared';
 
 export class AppError extends Error {
@@ -29,6 +30,29 @@ export function errorHandler(
       },
     };
     res.status(err.statusCode).json(body);
+    return;
+  }
+
+  // Zod validation errors surface as 422 with the per-field details. Without
+  // this branch they fall through to the catch-all 500 and the client sees a
+  // generic "internal server error" — actively misleading when the payload was
+  // just malformed.
+  if (err instanceof ZodError) {
+    const issues = err.issues.map((i) => ({
+      path: i.path.join('.'),
+      message: i.message,
+      code: i.code,
+    }));
+    const firstField = issues[0]?.path ?? 'request body';
+    const body: ApiErrorResponse = {
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: `Validation failed for ${firstField}`,
+        details: issues,
+      },
+    };
+    res.status(422).json(body);
     return;
   }
 
