@@ -7,6 +7,10 @@ export interface AssetImportRow {
   rowIndex: number;
   /** Resolved product UUID (after parser maps from name/EAN/UUID/new-product spec). */
   productId: string;
+  /** Human-readable product label for UI preview. Set to the canonical product
+   * name once resolved, or the user-typed value when the row will create a new
+   * product. The bulkImport service ignores this field. */
+  productLabel?: string;
   /** Present only when the productId field above was synthesised from a row
    * that requested a new product. The bulkImport service uses this to insert
    * the product before the asset (deduped across rows by Name+Category). */
@@ -22,6 +26,9 @@ export interface AssetImportRow {
   status: 'ACTIVE' | 'IDLE' | 'IN_MAINTENANCE' | 'DISPOSED' | 'LOST' | 'BORROWED';
   condition: 'NEW' | 'GOOD' | 'FAIR' | 'POOR' | 'DAMAGED';
   locationId: string;
+  /** Human-readable location label for UI preview. Set to the canonical
+   * location name once resolved against the catalog. */
+  locationLabel?: string;
   assignedToUserId?: string;
   purchaseDate?: Date;
   purchasePrice?: number;
@@ -39,6 +46,12 @@ export interface ParseError {
   field: string;
   message: string;
   value?: unknown;
+  /** Snapshot of every recognised column's raw value for this row. Present on
+   *  row-level validation/resolution errors so the inline-repair UI can
+   *  prefill the editor without re-asking for fields the user already filled
+   *  in. Absent on errors not tied to a specific row (e.g. header / sheet
+   *  errors). */
+  rawValues?: Record<string, string>;
 }
 
 export interface ColumnDef {
@@ -82,6 +95,176 @@ const IMPORT_COLUMNS: Array<{
   { header: 'Product Model', key: 'productModel', width: 20, required: false, example: 'A2992' },
   { header: 'Product EAN', key: 'productEan', width: 18, required: false, example: '8801643734718' },
 ];
+
+// ── Column synonyms (English + Bahasa Indonesia) ─────────────────────
+// Maps canonical column key → list of acceptable header strings the user's
+// file might use instead of the template's exact header. Used by
+// detectColumnMapping when no exact match is found. All entries are
+// compared after running through `normaliseHeader`, so casing, spacing,
+// underscores, and the `*` required-marker don't have to match here.
+//
+// Keep this list reasonably tight: too many synonyms increases the risk of
+// a wrong auto-match. The mapping UI lets the user fix any auto-match they
+// disagree with.
+const COLUMN_SYNONYMS: Record<string, string[]> = {
+  productId: ['product', 'product name', 'product id', 'ean', 'nama produk', 'produk'],
+  name: ['asset name', 'asset', 'nama', 'nama aset'],
+  locationId: ['location', 'location id', 'location code', 'lokasi', 'kode lokasi'],
+  serialNumber: ['serial', 'serial no', 's/n', 'sn', 'nomor seri', 'no seri'],
+  status: ['state'],
+  condition: ['cond', 'kondisi'],
+  assignedToUserId: ['assigned to', 'assigned to user', 'assignee', 'user', 'pemegang', 'ditugaskan'],
+  purchaseDate: ['date purchased', 'tanggal beli', 'tgl beli', 'tanggal pembelian'],
+  purchasePrice: ['price', 'cost', 'harga', 'harga beli', 'harga pembelian'],
+  currency: ['ccy', 'mata uang'],
+  vendor: ['supplier', 'penyedia', 'pemasok'],
+  invoiceNumber: ['invoice', 'invoice no', 'inv', 'no invoice', 'nomor invoice'],
+  warrantyStartDate: ['warranty start', 'mulai garansi', 'awal garansi'],
+  warrantyEndDate: ['warranty end', 'akhir garansi', 'expire garansi'],
+  usefulLifeMonths: ['useful life', 'lifespan', 'umur ekonomis', 'umur'],
+  notes: ['note', 'catatan', 'remark', 'remarks', 'keterangan'],
+  productCategory: ['category', 'kategori', 'kategori produk'],
+  productBrand: ['brand', 'merk', 'merek'],
+  productModel: ['model', 'tipe'],
+  productEan: ['ean', 'ean code', 'barcode'],
+};
+
+/**
+ * Canonicalise a header for fuzzy comparison. Strips whitespace, lowercases,
+ * removes the `*` required-marker, and collapses underscores/hyphens to
+ * spaces. Two headers are considered equivalent when their normalised forms
+ * are equal.
+ */
+function normaliseHeader(value: string): string {
+  return value
+    .replace(/\*$/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+export interface ColumnMappingItem {
+  /** 1-based worksheet column number this canonical field maps to. */
+  columnNumber: number;
+  /** The raw header text found at that column. */
+  actualHeader: string;
+  /** How we arrived at this mapping. */
+  source: 'exact' | 'synonym' | 'manual';
+}
+
+export interface DetectedHeader {
+  columnNumber: number;
+  text: string;
+}
+
+export interface DetectedMapping {
+  /** Mapping per canonical key. Missing keys mean we couldn't find a column. */
+  mapping: Partial<Record<string, ColumnMappingItem>>;
+  /** All non-empty headers found in row 1, in column order. The frontend uses
+   *  this to populate the mapping-UI dropdowns. */
+  headers: DetectedHeader[];
+  /** Required columns we couldn't map. If non-empty, parsing won't produce
+   *  any rows and the frontend must prompt the user via the mapping UI. */
+  requiredMissing: string[];
+}
+
+/**
+ * Inspect a worksheet's header row and build the canonical-key → column
+ * number mapping. Order of resolution per column:
+ *   1. Explicit override (manual mapping from the user via the UI)
+ *   2. Exact match against the template's `IMPORT_COLUMNS[].header`
+ *   3. Synonym match against `COLUMN_SYNONYMS[key]`
+ *
+ * The override may reference either a column number OR a raw header string
+ * (so the frontend can persist mappings by header text and have them work
+ * across files where the column ordering differs).
+ */
+export function detectColumnMapping(
+  ws: ExcelJS.Worksheet,
+  override?: Partial<Record<string, number | string>>,
+): DetectedMapping {
+  const firstRow = ws.getRow(1);
+  const headers: DetectedHeader[] = [];
+  firstRow.eachCell((cell, colNum) => {
+    const text = stringifyCellValue(cell.value);
+    if (text) headers.push({ columnNumber: colNum, text });
+  });
+
+  const mapping: Partial<Record<string, ColumnMappingItem>> = {};
+
+  // ── Pass 1: apply explicit overrides ──────────────────────────────
+  if (override) {
+    for (const [key, value] of Object.entries(override)) {
+      if (value === undefined || value === null || value === '') continue;
+      let header: DetectedHeader | undefined;
+      if (typeof value === 'number') {
+        header = headers.find((h) => h.columnNumber === value);
+      } else {
+        // Header-text reference: find by normalised equality so trailing
+        // whitespace or case differences in the persisted name don't break
+        // the lookup.
+        const target = normaliseHeader(value);
+        header = headers.find((h) => normaliseHeader(h.text) === target);
+      }
+      if (header) {
+        mapping[key] = {
+          columnNumber: header.columnNumber,
+          actualHeader: header.text,
+          source: 'manual',
+        };
+      }
+    }
+  }
+
+  // ── Pass 2: exact match against template ──────────────────────────
+  for (const col of IMPORT_COLUMNS) {
+    if (mapping[col.key]) continue;
+    const target = normaliseHeader(col.header);
+    const exact = headers.find((h) => normaliseHeader(h.text) === target);
+    if (exact) {
+      mapping[col.key] = {
+        columnNumber: exact.columnNumber,
+        actualHeader: exact.text,
+        source: 'exact',
+      };
+    }
+  }
+
+  // ── Pass 3: synonyms ──────────────────────────────────────────────
+  for (const col of IMPORT_COLUMNS) {
+    if (mapping[col.key]) continue;
+    const synonyms = COLUMN_SYNONYMS[col.key] ?? [];
+    if (synonyms.length === 0) continue;
+    const synonymTargets = new Set(synonyms.map((s) => normaliseHeader(s)));
+    const match = headers.find((h) => synonymTargets.has(normaliseHeader(h.text)));
+    if (match) {
+      mapping[col.key] = {
+        columnNumber: match.columnNumber,
+        actualHeader: match.text,
+        source: 'synonym',
+      };
+    }
+  }
+
+  const requiredMissing = IMPORT_COLUMNS
+    .filter((c) => c.required && !mapping[c.key])
+    .map((c) => c.key);
+
+  return { mapping, headers, requiredMissing };
+}
+
+// Shared helper for normalising a cell value to a trimmed string.
+// Pulled out so detectColumnMapping and parseAssetImportSheet's getCellValue
+// agree on what "empty" means.
+function stringifyCellValue(value: ExcelJS.CellValue): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) {
+    return value.toISOString().split('T')[0] ?? '';
+  }
+  if (typeof value === 'object') return '';
+  return String(value).trim();
+}
 
 const VALID_STATUSES = ['ACTIVE', 'IDLE', 'IN_MAINTENANCE', 'DISPOSED', 'LOST', 'BORROWED'] as const;
 const VALID_CONDITIONS = ['NEW', 'GOOD', 'FAIR', 'POOR', 'DAMAGED'] as const;
@@ -326,9 +509,22 @@ function styleHeader(row: ExcelJS.Row): void {
 
 // ── parseAssetImportSheet ─────────────────────────────────────────────
 
+export interface ParseAssetImportOptions {
+  /** Override column detection with an explicit mapping. Keys are canonical
+   *  column keys (e.g. 'productId'), values are either a worksheet column
+   *  number (1-based) or the raw header text to match. Provided by the
+   *  frontend's mapping UI when the user adjusts auto-detected columns. */
+  columnMappingOverride?: Partial<Record<string, number | string>>;
+}
+
 export async function parseAssetImportSheet(
   buffer: Buffer,
-): Promise<{ rows: AssetImportRow[]; errors: ParseError[] }> {
+  options: ParseAssetImportOptions = {},
+): Promise<{
+  rows: AssetImportRow[];
+  errors: ParseError[];
+  detectedMapping: DetectedMapping;
+}> {
   const wb = new ExcelJS.Workbook();
   // ExcelJS's Buffer type is not Node's Buffer; cast required.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
@@ -339,47 +535,70 @@ export async function parseAssetImportSheet(
     return {
       rows: [],
       errors: [{ rowIndex: 0, field: 'sheet', message: 'No worksheet found in the uploaded file' }],
+      detectedMapping: { mapping: {}, headers: [], requiredMissing: [] },
+    };
+  }
+
+  const detectedMapping = detectColumnMapping(ws, options.columnMappingOverride);
+
+  // No usable mapping at all → bail with a clear top-level error. The
+  // returned `detectedMapping.headers` still lets the frontend show the
+  // mapping UI so the user can pick columns manually.
+  if (Object.keys(detectedMapping.mapping).length === 0) {
+    return {
+      rows: [],
+      errors: [{ rowIndex: 1, field: 'headers', message: 'No recognizable header row found. Use the column-mapping panel to match your file\'s columns to the system fields, or download the official template.' }],
+      detectedMapping,
+    };
+  }
+
+  // Required columns missing → cannot parse rows. Return the mapping so the
+  // frontend can render the picker.
+  if (detectedMapping.requiredMissing.length > 0) {
+    const labels = detectedMapping.requiredMissing
+      .map((key) => IMPORT_COLUMNS.find((c) => c.key === key)?.header ?? key)
+      .map((h) => h.replace(/\*$/, ''));
+    return {
+      rows: [],
+      errors: [{
+        rowIndex: 1,
+        field: 'headers',
+        message: `Missing required columns: ${labels.join(', ')}. Use the column-mapping panel to point each one at the correct column in your file.`,
+      }],
+      detectedMapping,
     };
   }
 
   const rows: AssetImportRow[] = [];
   const errors: ParseError[] = [];
 
-  // Build header map from first row
+  // Project the rich mapping down to a plain key → column-number map for
+  // the cell-reader closure. Anything not in the mapping is treated as not
+  // present in the file (returns empty string).
   const headerMap: Map<string, number> = new Map();
-  const firstRow = ws.getRow(1);
-  firstRow.eachCell((cell, colNum) => {
-    const cellVal = cell.value;
-    const raw = (cellVal === null || cellVal === undefined ? '' : typeof cellVal === 'object' ? '' : String(cellVal)).trim();
-    // Match exactly (ignoring the trailing "*" required marker) so that
-    // "Product Category" does NOT match the "Product" column. Earlier code
-    // used startsWith which broke once columns shared a prefix.
-    const normalised = raw.replace(/\*$/, '').trim().toLowerCase();
-    const col = IMPORT_COLUMNS.find(
-      (c) => c.header.replace(/\*$/, '').trim().toLowerCase() === normalised,
-    );
-    if (col) {
-      headerMap.set(col.key, colNum);
-    }
-  });
-
-  if (headerMap.size === 0) {
-    return {
-      rows: [],
-      errors: [{ rowIndex: 1, field: 'headers', message: 'No recognizable header row found. Make sure you are using the official import template.' }],
-    };
+  for (const [key, item] of Object.entries(detectedMapping.mapping)) {
+    if (item) headerMap.set(key, item.columnNumber);
   }
 
   function getCellValue(row: ExcelJS.Row, key: string): string {
     const colNum = headerMap.get(key);
     if (!colNum) return '';
     const cell = row.getCell(colNum);
-    if (cell.value === null || cell.value === undefined) return '';
-    if (cell.value instanceof Date) {
-      return cell.value.toISOString().split('T')[0] ?? '';
+    return stringifyCellValue(cell.value);
+  }
+
+  // Snapshot the raw user-typed values per row so we can attach them to
+  // any errors that come out of this row — both field-validation errors
+  // here and resolution errors later. The inline-repair UI uses these as
+  // the form's initial values.
+  const rawValuesByRow = new Map<number, Record<string, string>>();
+
+  function snapshotRow(row: ExcelJS.Row): Record<string, string> {
+    const snapshot: Record<string, string> = {};
+    for (const key of headerMap.keys()) {
+      snapshot[key] = getCellValue(row, key);
     }
-    if (typeof cell.value === 'object') return '';
-    return String(cell.value).trim();
+    return snapshot;
   }
 
   // Start from row 2 (skip header), also skip sample row if it looks like instructions
@@ -396,115 +615,21 @@ export async function parseAssetImportSheet(
     // Skip the sample/example row
     if (productId === 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx') return;
 
-    const rowErrors: ParseError[] = [];
+    const rawValues = snapshotRow(row);
+    rawValuesByRow.set(rowNum, rawValues);
 
-    // Required field validation. productId and locationId may be either
-    // a UUID or a natural key (product EAN-13 / location code) — the
-    // post-pass below resolves natural keys to UUIDs in a single query.
-    if (!productId) {
-      rowErrors.push({ rowIndex: rowNum, field: 'productId', message: 'Product ID or EAN is required', value: productId });
-    }
-
-    if (!name) {
-      rowErrors.push({ rowIndex: rowNum, field: 'name', message: 'Name is required', value: name });
-    }
-
-    if (!locationId) {
-      rowErrors.push({ rowIndex: rowNum, field: 'locationId', message: 'Location ID or code is required', value: locationId });
-    }
-
-    // Optional UUID fields
-    const assignedToUserId = getCellValue(row, 'assignedToUserId') || undefined;
-    if (assignedToUserId && !isValidUuid(assignedToUserId)) {
-      rowErrors.push({ rowIndex: rowNum, field: 'assignedToUserId', message: 'Assigned To User ID must be a valid UUID', value: assignedToUserId });
-    }
-
-    // Status
-    const statusRaw = getCellValue(row, 'status') || 'ACTIVE';
-    const status = statusRaw.toUpperCase() as ValidStatus;
-    if (!VALID_STATUSES.includes(status)) {
-      rowErrors.push({ rowIndex: rowNum, field: 'status', message: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`, value: statusRaw });
-    }
-
-    // Condition
-    const conditionRaw = getCellValue(row, 'condition') || 'NEW';
-    const condition = conditionRaw.toUpperCase() as ValidCondition;
-    if (!VALID_CONDITIONS.includes(condition)) {
-      rowErrors.push({ rowIndex: rowNum, field: 'condition', message: `Invalid condition. Must be one of: ${VALID_CONDITIONS.join(', ')}`, value: conditionRaw });
-    }
-
-    // Dates
-    const purchaseDate = parseDateCell(getCellValue(row, 'purchaseDate'));
-    const warrantyStartDate = parseDateCell(getCellValue(row, 'warrantyStartDate'));
-    const warrantyEndDate = parseDateCell(getCellValue(row, 'warrantyEndDate'));
-
-    // Purchase price
-    const purchasePriceRaw = getCellValue(row, 'purchasePrice');
-    let purchasePrice: number | undefined;
-    if (purchasePriceRaw) {
-      const parsed = parseFloat(purchasePriceRaw.replace(/[^0-9.]/g, ''));
-      if (isNaN(parsed) || parsed < 0) {
-        rowErrors.push({ rowIndex: rowNum, field: 'purchasePrice', message: 'Purchase price must be a non-negative number', value: purchasePriceRaw });
-      } else {
-        purchasePrice = parsed;
-      }
-    }
-
-    // Useful life
-    const usefulLifeRaw = getCellValue(row, 'usefulLifeMonths');
-    let usefulLifeMonths: number | undefined;
-    if (usefulLifeRaw) {
-      const parsed = parseInt(usefulLifeRaw, 10);
-      if (isNaN(parsed) || parsed <= 0) {
-        rowErrors.push({ rowIndex: rowNum, field: 'usefulLifeMonths', message: 'Useful life must be a positive integer', value: usefulLifeRaw });
-      } else {
-        usefulLifeMonths = parsed;
-      }
-    }
+    const { errors: rowErrors, row: parsedRow } = validateAssetRowFields(
+      rowNum,
+      (key) => rawValues[key] ?? '',
+    );
 
     if (rowErrors.length > 0) {
+      for (const e of rowErrors) e.rawValues = rawValues;
       errors.push(...rowErrors);
       return;
     }
 
-    // Optional product-creation hints (used by post-pass only if the
-    // product cannot be resolved against the existing catalog).
-    const productCategory = getCellValue(row, 'productCategory') || undefined;
-    const productBrand = getCellValue(row, 'productBrand') || undefined;
-    const productModel = getCellValue(row, 'productModel') || undefined;
-    const productEan = getCellValue(row, 'productEan') || undefined;
-
-    rows.push({
-      rowIndex: rowNum,
-      productId,
-      name,
-      locationId,
-      serialNumber: getCellValue(row, 'serialNumber') || undefined,
-      status,
-      condition,
-      assignedToUserId,
-      purchaseDate: purchaseDate ?? undefined,
-      purchasePrice,
-      currency: getCellValue(row, 'currency') || 'IDR',
-      vendor: getCellValue(row, 'vendor') || undefined,
-      invoiceNumber: getCellValue(row, 'invoiceNumber') || undefined,
-      warrantyStartDate: warrantyStartDate ?? undefined,
-      warrantyEndDate: warrantyEndDate ?? undefined,
-      usefulLifeMonths,
-      notes: getCellValue(row, 'notes') || undefined,
-      // Stash hints on the row for the resolver below.
-      ...(productCategory || productBrand || productModel || productEan
-        ? {
-            newProductSpec: {
-              name: productId, // user's value in column A is the new product name
-              categoryName: productCategory ?? '',
-              ...(productBrand && { brand: productBrand }),
-              ...(productModel && { model: productModel }),
-              ...(productEan && { eanCode: productEan }),
-            },
-          }
-        : {}),
-    });
+    if (parsedRow) rows.push(parsedRow);
   });
 
   // ── Resolve human-friendly references to UUIDs ──────────────────────
@@ -630,6 +755,7 @@ export async function parseAssetImportSheet(
         // Existing product found — clear any newProductSpec hint (we don't
         // want to overwrite an existing product's metadata from import hints).
         r.productId = match.unique.id;
+        r.productLabel = match.unique.name;
         delete r.newProductSpec;
       } else if (match && 'ambiguous' in match) {
         const opts = match.ambiguous
@@ -646,6 +772,7 @@ export async function parseAssetImportSheet(
         // Not in catalog but caller provided category → mark for creation.
         // productId stays the natural-key string; bulkImport resolves it.
         r.newProductSpec.name = r.productId; // ensure name matches column A
+        r.productLabel = `${r.productId} (new)`;
       } else {
         rowResolutionErrors.push({
           rowIndex: r.rowIndex,
@@ -663,6 +790,7 @@ export async function parseAssetImportSheet(
       const match = locationByKey.get(r.locationId);
       if (match && 'unique' in match) {
         r.locationId = match.unique.id;
+        r.locationLabel = match.unique.name;
       } else if (match && 'ambiguous' in match) {
         const opts = match.ambiguous
           .slice(0, 3)
@@ -687,11 +815,88 @@ export async function parseAssetImportSheet(
     if (rowResolutionErrors.length === 0) {
       resolved.push(r);
     } else {
+      const rv = rawValuesByRow.get(r.rowIndex);
+      if (rv) {
+        for (const e of rowResolutionErrors) e.rawValues = rv;
+      }
       errors.push(...rowResolutionErrors);
     }
   }
 
-  return { rows: resolved, errors };
+  return { rows: resolved, errors, detectedMapping };
+}
+
+// ── Import error report ───────────────────────────────────────────────
+// Generates an XLSX with one sheet listing every failed row's errors plus a
+// snapshot of the row's original values (when available) so the user can
+// open the file, fix issues offline, and re-upload. Used by both the sync
+// path (errors from the Result step) and the async path (errors from the
+// result file).
+
+export async function buildImportErrorReport(
+  errors: ParseError[],
+): Promise<Buffer> {
+  const wb = createWorkbook();
+  const ws = wb.addWorksheet('Errors', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+
+  // Discover every unique field name surfaced across rawValues so the
+  // report includes every column the user filled in — not just the
+  // template's canonical set. This way, even if the user uploaded with a
+  // custom mapping, the report carries their actual headers.
+  const fieldNames = new Set<string>();
+  for (const e of errors) {
+    if (e.rawValues) {
+      for (const k of Object.keys(e.rawValues)) fieldNames.add(k);
+    }
+  }
+  const fieldList = Array.from(fieldNames);
+
+  const baseColumns: ColumnDef[] = [
+    { header: 'Row', key: 'rowIndex', width: 8 },
+    { header: 'Field', key: 'field', width: 24 },
+    { header: 'Error', key: 'message', width: 60 },
+    { header: 'Value', key: 'value', width: 30 },
+  ];
+  const rawValueColumns: ColumnDef[] = fieldList.map((f) => ({
+    header: f,
+    key: `raw_${f}`,
+    width: 22,
+  }));
+
+  ws.columns = [...baseColumns, ...rawValueColumns].map((c) => ({
+    header: c.header,
+    key: c.key,
+    width: c.width ?? 20,
+  }));
+
+  // Style header row.
+  styleHeader(ws.getRow(1));
+
+  for (const e of errors) {
+    const row: Record<string, unknown> = {
+      rowIndex: e.rowIndex,
+      field: e.field || '',
+      message: e.message,
+      value:
+        e.value == null
+          ? ''
+          : typeof e.value === 'object'
+            ? JSON.stringify(e.value)
+            : String(e.value),
+    };
+    if (e.rawValues) {
+      for (const f of fieldList) {
+        row[`raw_${f}`] = e.rawValues[f] ?? '';
+      }
+    }
+    ws.addRow(row);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+  const rawBuffer = (await wb.xlsx.writeBuffer()) as unknown as Buffer;
+  return rawBuffer;
 }
 
 // ── writeRowsToWorksheet ──────────────────────────────────────────────
@@ -728,6 +933,276 @@ export function writeRowsToWorksheet(
     }
     worksheet.addRow(rowData);
   }
+}
+
+// ── Single-row field validation ───────────────────────────────────────
+// Pure, sync function. Used by parseAssetImportSheet (per Excel row) and
+// by revalidateAssetImportRow (for the inline-repair API). `getValue` is
+// a closure abstracting where the value comes from (an ExcelJS cell or a
+// plain JSON object).
+//
+// Returns either { errors: [...], row: null } (validation failed) or
+// { errors: [], row: <partially-resolved row> } (raw values pass; the
+// natural-key resolution still happens after this, in the caller).
+
+function validateAssetRowFields(
+  rowIndex: number,
+  getValue: (key: string) => string,
+): { errors: ParseError[]; row: AssetImportRow | null } {
+  const productId = getValue('productId');
+  const name = getValue('name');
+  const locationId = getValue('locationId');
+
+  const rowErrors: ParseError[] = [];
+
+  if (!productId) {
+    rowErrors.push({ rowIndex, field: 'productId', message: 'Product ID or EAN is required', value: productId });
+  }
+  if (!name) {
+    rowErrors.push({ rowIndex, field: 'name', message: 'Name is required', value: name });
+  }
+  if (!locationId) {
+    rowErrors.push({ rowIndex, field: 'locationId', message: 'Location ID or code is required', value: locationId });
+  }
+
+  // Optional UUID fields
+  const assignedToUserId = getValue('assignedToUserId') || undefined;
+  if (assignedToUserId && !isValidUuid(assignedToUserId)) {
+    rowErrors.push({ rowIndex, field: 'assignedToUserId', message: 'Assigned To User ID must be a valid UUID', value: assignedToUserId });
+  }
+
+  // Status (defaults to ACTIVE if blank)
+  const statusRaw = getValue('status') || 'ACTIVE';
+  const status = statusRaw.toUpperCase() as ValidStatus;
+  if (!VALID_STATUSES.includes(status)) {
+    rowErrors.push({ rowIndex, field: 'status', message: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`, value: statusRaw });
+  }
+
+  // Condition (defaults to NEW if blank)
+  const conditionRaw = getValue('condition') || 'NEW';
+  const condition = conditionRaw.toUpperCase() as ValidCondition;
+  if (!VALID_CONDITIONS.includes(condition)) {
+    rowErrors.push({ rowIndex, field: 'condition', message: `Invalid condition. Must be one of: ${VALID_CONDITIONS.join(', ')}`, value: conditionRaw });
+  }
+
+  // Dates
+  const purchaseDate = parseDateCell(getValue('purchaseDate'));
+  const warrantyStartDate = parseDateCell(getValue('warrantyStartDate'));
+  const warrantyEndDate = parseDateCell(getValue('warrantyEndDate'));
+
+  // Purchase price
+  const purchasePriceRaw = getValue('purchasePrice');
+  let purchasePrice: number | undefined;
+  if (purchasePriceRaw) {
+    const parsed = parseFloat(purchasePriceRaw.replace(/[^0-9.]/g, ''));
+    if (isNaN(parsed) || parsed < 0) {
+      rowErrors.push({ rowIndex, field: 'purchasePrice', message: 'Purchase price must be a non-negative number', value: purchasePriceRaw });
+    } else {
+      purchasePrice = parsed;
+    }
+  }
+
+  // Useful life
+  const usefulLifeRaw = getValue('usefulLifeMonths');
+  let usefulLifeMonths: number | undefined;
+  if (usefulLifeRaw) {
+    const parsed = parseInt(usefulLifeRaw, 10);
+    if (isNaN(parsed) || parsed <= 0) {
+      rowErrors.push({ rowIndex, field: 'usefulLifeMonths', message: 'Useful life must be a positive integer', value: usefulLifeRaw });
+    } else {
+      usefulLifeMonths = parsed;
+    }
+  }
+
+  if (rowErrors.length > 0) {
+    return { errors: rowErrors, row: null };
+  }
+
+  // Optional product-creation hints
+  const productCategory = getValue('productCategory') || undefined;
+  const productBrand = getValue('productBrand') || undefined;
+  const productModel = getValue('productModel') || undefined;
+  const productEan = getValue('productEan') || undefined;
+
+  const row: AssetImportRow = {
+    rowIndex,
+    productId,
+    productLabel: productId,
+    locationLabel: locationId,
+    name,
+    locationId,
+    serialNumber: getValue('serialNumber') || undefined,
+    status,
+    condition,
+    assignedToUserId,
+    purchaseDate: purchaseDate ?? undefined,
+    purchasePrice,
+    currency: getValue('currency') || 'IDR',
+    vendor: getValue('vendor') || undefined,
+    invoiceNumber: getValue('invoiceNumber') || undefined,
+    warrantyStartDate: warrantyStartDate ?? undefined,
+    warrantyEndDate: warrantyEndDate ?? undefined,
+    usefulLifeMonths,
+    notes: getValue('notes') || undefined,
+    ...(productCategory || productBrand || productModel || productEan
+      ? {
+          newProductSpec: {
+            name: productId,
+            categoryName: productCategory ?? '',
+            ...(productBrand && { brand: productBrand }),
+            ...(productModel && { model: productModel }),
+            ...(productEan && { eanCode: productEan }),
+          },
+        }
+      : {}),
+  };
+
+  return { errors: [], row };
+}
+
+// ── Single-row natural-key resolution ─────────────────────────────────
+// Mirrors the in-loop resolution logic used by parseAssetImportSheet but
+// runs a single round-trip per natural-key field (so a one-row import or a
+// revalidate call doesn't pay for the batched-query optimisation that only
+// matters at scale).
+
+async function resolveAssetRowReferences(
+  row: AssetImportRow,
+): Promise<{ row: AssetImportRow | null; errors: ParseError[] }> {
+  const errors: ParseError[] = [];
+
+  // ── Product ──────────────────────────────────────────────────────
+  if (row.productId && !isValidUuid(row.productId)) {
+    const key = row.productId;
+    // `take: 4` is enough to distinguish "unique", "ambiguous (2-3)", or
+    // "ambiguous (4+)". Anything past 3 we show "matches N entries" without
+    // listing them, so we don't need to fetch more.
+    const candidates = await prisma.product.findMany({
+      where: {
+        OR: [
+          { eanCode: key },
+          { name: { equals: key, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, eanCode: true, name: true, brand: true, model: true },
+      take: 4,
+    });
+
+    const ean = candidates.find((p) => p.eanCode === key);
+    if (ean) {
+      row.productId = ean.id;
+      row.productLabel = ean.name;
+      delete row.newProductSpec;
+    } else {
+      const nameMatches = candidates.filter(
+        (p) => p.name.toLowerCase() === key.toLowerCase(),
+      );
+      if (nameMatches.length === 1) {
+        row.productId = nameMatches[0]!.id;
+        row.productLabel = nameMatches[0]!.name;
+        delete row.newProductSpec;
+      } else if (nameMatches.length > 1) {
+        const opts = nameMatches
+          .slice(0, 3)
+          .map((p) => `"${p.name}${p.brand ? ` (${p.brand}${p.model ? ` ${p.model}` : ''})` : ''}" [${p.eanCode ?? 'no EAN'}]`)
+          .join(', ');
+        errors.push({
+          rowIndex: row.rowIndex,
+          field: 'productId',
+          message: `Product "${key}" matches ${nameMatches.length} entries: ${opts}. Use the EAN code or UUID to disambiguate.`,
+          value: key,
+        });
+      } else if (row.newProductSpec && row.newProductSpec.categoryName) {
+        // Not in catalog but caller provided category → mark for creation.
+        row.newProductSpec.name = key;
+        row.productLabel = `${key} (new)`;
+      } else {
+        errors.push({
+          rowIndex: row.rowIndex,
+          field: 'productId',
+          message: `Product "${key}" not found. To CREATE a new product, also fill in "Product Category" (required) and optionally Brand/Model/EAN.`,
+          value: key,
+        });
+      }
+    }
+  } else if (row.productId && isValidUuid(row.productId)) {
+    delete row.newProductSpec;
+  }
+
+  // ── Location ─────────────────────────────────────────────────────
+  if (row.locationId && !isValidUuid(row.locationId)) {
+    const key = row.locationId;
+    const candidates = await prisma.location.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { code: key },
+          { name: { equals: key, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, code: true, name: true },
+      take: 4,
+    });
+
+    const codeMatch = candidates.find((l) => l.code === key);
+    if (codeMatch) {
+      row.locationId = codeMatch.id;
+      row.locationLabel = codeMatch.name;
+    } else {
+      const nameMatches = candidates.filter(
+        (l) => l.name.toLowerCase() === key.toLowerCase(),
+      );
+      if (nameMatches.length === 1) {
+        row.locationId = nameMatches[0]!.id;
+        row.locationLabel = nameMatches[0]!.name;
+      } else if (nameMatches.length > 1) {
+        const opts = nameMatches
+          .slice(0, 3)
+          .map((l) => `"${l.name}" [code: ${l.code}]`)
+          .join(', ');
+        errors.push({
+          rowIndex: row.rowIndex,
+          field: 'locationId',
+          message: `Location "${key}" matches ${nameMatches.length} entries: ${opts}. Use the location code or UUID to disambiguate.`,
+          value: key,
+        });
+      } else {
+        errors.push({
+          rowIndex: row.rowIndex,
+          field: 'locationId',
+          message: `Location "${key}" not found. Use a Name, code, or UUID from the Locations sheet.`,
+          value: key,
+        });
+      }
+    }
+  }
+
+  return errors.length === 0 ? { row, errors: [] } : { row: null, errors };
+}
+
+// ── Public: revalidate a single edited row ────────────────────────────
+// Used by the inline-error-repair UI: after the user edits an errored row's
+// values, the frontend POSTs the raw values here. We run the same two-stage
+// validation that parseAssetImportSheet runs (field-level checks + natural-
+// key resolution) and report any remaining problems. The Excel-only quirks
+// (sample-row skip, empty-row skip) are deliberately NOT applied — the user
+// is explicitly asking us to validate THIS row.
+
+export async function revalidateAssetImportRow(
+  rowIndex: number,
+  rawValues: Record<string, string | undefined | null>,
+): Promise<{ row: AssetImportRow | null; errors: ParseError[] }> {
+  const getValue = (key: string): string => {
+    const v = rawValues[key];
+    return v == null ? '' : String(v).trim();
+  };
+
+  const { errors: fieldErrors, row: partial } = validateAssetRowFields(rowIndex, getValue);
+  if (fieldErrors.length > 0 || !partial) {
+    return { row: null, errors: fieldErrors };
+  }
+
+  return resolveAssetRowReferences(partial);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

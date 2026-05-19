@@ -13,9 +13,64 @@ export interface ImportError {
   value?: unknown;
 }
 
+export interface ImportSkip {
+  rowIndex: number;
+  /** Why this row was skipped — "duplicate_serial" today, room for more later. */
+  reason: 'duplicate_serial';
+  /** Asset that already exists (so the UI can offer a "view existing" link). */
+  existing: { id: string; assetNumber: string; name: string; serialNumber: string };
+}
+
 export interface BulkImportResult {
   created: Array<{ id: string; assetNumber: string; name: string }>;
+  /** Rows that were intentionally skipped because the asset already exists.
+   *  Treated as success, not failure — re-running the same import file is
+   *  idempotent. */
+  skipped: ImportSkip[];
   failed: ImportError[];
+}
+
+/**
+ * Pre-flight: tell the caller which of the resolved rows would be created
+ * vs skipped, without performing any inserts. Used by the preview endpoint
+ * so the user sees "3 already exist, 1 new" in the Review step instead of
+ * being surprised at the Result step.
+ */
+export async function previewImportDedup(
+  rows: AssetImportRow[],
+): Promise<{ willSkip: ImportSkip[] }> {
+  const serialNumbers = rows
+    .filter((r) => r.serialNumber)
+    .map((r) => r.serialNumber as string);
+  if (serialNumbers.length === 0) {
+    return { willSkip: [] };
+  }
+  const existing = await prisma.asset.findMany({
+    where: { serialNumber: { in: serialNumbers }, deletedAt: null },
+    select: { id: true, assetNumber: true, name: true, serialNumber: true },
+  });
+  const bySerial = new Map<string, (typeof existing)[number]>();
+  for (const a of existing) {
+    if (a.serialNumber) bySerial.set(a.serialNumber, a);
+  }
+  const willSkip: ImportSkip[] = [];
+  for (const r of rows) {
+    if (!r.serialNumber) continue;
+    const hit = bySerial.get(r.serialNumber);
+    if (hit) {
+      willSkip.push({
+        rowIndex: r.rowIndex,
+        reason: 'duplicate_serial',
+        existing: {
+          id: hit.id,
+          assetNumber: hit.assetNumber,
+          name: hit.name,
+          serialNumber: hit.serialNumber!,
+        },
+      });
+    }
+  }
+  return { willSkip };
 }
 
 // Thread-safe asset number generator (same pattern as main service)
@@ -51,37 +106,80 @@ function generateReferenceNumber(): string {
  * referenced category by name, create the products in a single
  * transaction, then patch each row's `productId` to the resulting UUID.
  */
+export interface BulkImportProgressUpdate {
+  /** Rows that have been classified (created, skipped, or failed) so far. */
+  processed: number;
+  /** Total rows the caller submitted. */
+  total: number;
+  /** Live tallies for richer progress UIs. */
+  created: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface BulkImportOptions {
+  /** Invoked at coarse-grained checkpoints during processing — once after
+   *  the new-product pre-pass and once per asset insertion. The async job
+   *  wires this to Redis so the frontend can poll progress; sync callers
+   *  typically don't pass it. Throwing here cancels the import. */
+  onProgress?: (update: BulkImportProgressUpdate) => Promise<void> | void;
+}
+
 export async function bulkImport(
   rows: AssetImportRow[],
   userId: string,
+  options: BulkImportOptions = {},
 ): Promise<BulkImportResult> {
-  if (rows.length === 0) {
-    return { created: [], failed: [] };
+  const { onProgress } = options;
+  const total = rows.length;
+  if (total === 0) {
+    return { created: [], skipped: [], failed: [] };
   }
 
-  // ── Pre-pass: materialise any new products referenced via newProductSpec
-  // before we kick off the asset-creation transaction. We dedupe by
-  // (lowercased name, lowercased category) so that 20 rows referencing
-  // "Lenovo ThinkPad X1" produce one product, not twenty.
+  // Lightweight helper so we don't repeat the same call shape. Swallows
+  // progress-callback errors — a failing UI hook must never bring down a
+  // successful import.
+  async function reportProgress(processed: number, created: number, skipped: number, failed: number) {
+    if (!onProgress) return;
+    try {
+      await onProgress({ processed, total, created, skipped, failed });
+    } catch {
+      // Intentionally ignored.
+    }
+  }
+
+  // ── Read-only pre-flight: resolve categories so we can decide which
+  //    new-product rows are creatable. The actual product INSERTS happen
+  //    inside the single asset-creation transaction below — keeping them
+  //    in the same atom prevents the previous "products committed but
+  //    asset transaction rolled back" orphan scenario.
   const earlyFailed: ImportError[] = [];
   const newProductRows = rows.filter((r) => r.newProductSpec);
+
+  type Spec = NonNullable<AssetImportRow['newProductSpec']>;
+  // bucket carries everything the transaction needs to insert the product
+  // and resolve the asset's category-code dependency.
+  const newProductBuckets = new Map<
+    string,
+    { spec: Spec; rowIndices: number[]; categoryId: string; categoryCode: string }
+  >();
+  const newProductRowKey = new Map<number, string>(); // rowIndex → dedupe-key
+
   if (newProductRows.length > 0) {
-    // Group rows by a stable dedupe key.
-    type Spec = NonNullable<AssetImportRow['newProductSpec']>;
-    const byKey = new Map<string, { spec: Spec; rowIndices: number[] }>();
+    const provisionalBuckets = new Map<string, { spec: Spec; rowIndices: number[] }>();
     for (const r of newProductRows) {
       const spec = r.newProductSpec!;
       const key = `${spec.name.toLowerCase()}|${spec.categoryName.toLowerCase()}`;
-      const bucket = byKey.get(key);
+      const bucket = provisionalBuckets.get(key);
       if (bucket) {
         bucket.rowIndices.push(r.rowIndex);
       } else {
-        byKey.set(key, { spec, rowIndices: [r.rowIndex] });
+        provisionalBuckets.set(key, { spec, rowIndices: [r.rowIndex] });
       }
+      newProductRowKey.set(r.rowIndex, key);
     }
 
-    // Resolve every referenced category by name in one query (case-insensitive).
-    const categoryNames = Array.from(new Set(Array.from(byKey.values()).map((b) => b.spec.categoryName)));
+    const categoryNames = Array.from(new Set(Array.from(provisionalBuckets.values()).map((b) => b.spec.categoryName)));
     const categories = await prisma.assetCategory.findMany({
       where: {
         OR: [
@@ -91,71 +189,68 @@ export async function bulkImport(
       },
       select: { id: true, name: true, code: true },
     });
-    const categoryByName = new Map<string, string>();
+    const categoryByName = new Map<string, { id: string; code: string }>();
     for (const c of categories) {
-      categoryByName.set(c.name.toLowerCase(), c.id);
-      categoryByName.set(c.code.toLowerCase(), c.id);
+      categoryByName.set(c.name.toLowerCase(), { id: c.id, code: c.code });
+      categoryByName.set(c.code.toLowerCase(), { id: c.id, code: c.code });
     }
 
-    // For each dedupe-bucket, either create the product or attribute the
-    // failure to every row that referenced it.
-    const productKeyToId = new Map<string, string>();
-    await prisma.$transaction(async (tx) => {
-      for (const [key, { spec, rowIndices }] of byKey) {
-        const categoryId = categoryByName.get(spec.categoryName.toLowerCase());
-        if (!categoryId) {
-          for (const idx of rowIndices) {
-            earlyFailed.push({
-              rowIndex: idx,
-              field: 'productCategory',
-              message: `Category "${spec.categoryName}" not found. See the "Categories" sheet for valid names.`,
-              value: spec.categoryName,
-            });
-          }
-          continue;
+    // Either stash for later insertion (resolved category) or attribute
+    // failure to every row that referenced it (unresolvable category).
+    for (const [key, { spec, rowIndices }] of provisionalBuckets) {
+      const category = categoryByName.get(spec.categoryName.toLowerCase());
+      if (!category) {
+        for (const idx of rowIndices) {
+          earlyFailed.push({
+            rowIndex: idx,
+            field: 'productCategory',
+            message: `Category "${spec.categoryName}" not found. See the "Categories" sheet for valid names.`,
+            value: spec.categoryName,
+          });
         }
-        const product = await tx.product.create({
-          data: {
-            name: spec.name,
-            ...(spec.brand && { brand: spec.brand }),
-            ...(spec.model && { model: spec.model }),
-            ...(spec.eanCode && { eanCode: spec.eanCode }),
-            category: { connect: { id: categoryId } },
-            source: 'MANUAL',
-          },
-        });
-        productKeyToId.set(key, product.id);
+        continue;
       }
-    });
-
-    // Patch productId on every row that requested a new product.
-    for (const r of newProductRows) {
-      const spec = r.newProductSpec!;
-      const key = `${spec.name.toLowerCase()}|${spec.categoryName.toLowerCase()}`;
-      const resolvedId = productKeyToId.get(key);
-      if (resolvedId) {
-        r.productId = resolvedId;
-        delete r.newProductSpec;
-      }
-      // else: earlyFailed already has an entry; the row will be filtered out below
+      newProductBuckets.set(key, {
+        spec,
+        rowIndices,
+        categoryId: category.id,
+        categoryCode: category.code,
+      });
     }
   }
 
-  // Filter out rows that we couldn't resolve a product for.
+  // Filter out rows that failed the new-product pre-flight.
   const failedRowIndices = new Set(earlyFailed.map((e) => e.rowIndex));
   const remainingRows = rows.filter((r) => !failedRowIndices.has(r.rowIndex));
 
+  // Checkpoint after pre-flight.
+  await reportProgress(earlyFailed.length, 0, 0, earlyFailed.length);
+
   if (remainingRows.length === 0) {
-    return { created: [], failed: earlyFailed };
+    return { created: [], skipped: [], failed: earlyFailed };
   }
 
-  // Pre-load all referenced products and locations in two queries
-  const productIds = [...new Set(remainingRows.map((r) => r.productId))];
+  // Pre-load all referenced existing products and locations. Rows that
+  // request a brand new product have a natural-key string in `productId` —
+  // they don't show up in this lookup; their category code comes from the
+  // bucket resolved above. Both lookups are read-only and safe to do
+  // outside the transaction.
+  const existingProductIds = [
+    ...new Set(
+      remainingRows
+        .filter((r) => !newProductRowKey.has(r.rowIndex))
+        .map((r) => r.productId),
+    ),
+  ];
   const locationIds = [...new Set(remainingRows.map((r) => r.locationId))];
 
+  // Note: `findMany({ where: { id: { in: [] } } })` is a no-op fast-path in
+  // Prisma — no DB round-trip when the array is empty — so unconditionally
+  // calling it keeps the return type uniform (Product & category) without
+  // adding latency for the all-new-products case.
   const [products, locations] = await Promise.all([
     prisma.product.findMany({
-      where: { id: { in: productIds } },
+      where: { id: { in: existingProductIds } },
       include: { category: { select: { code: true } } },
     }),
     prisma.location.findMany({
@@ -166,25 +261,64 @@ export async function bulkImport(
   const productMap = new Map(products.map((p) => [p.id, p]));
   const locationSet = new Set(locations.map((l) => l.id));
 
-  // Also pre-check serial number uniqueness for those rows that have them
-  const serialNumbers = remainingRows.filter((r) => r.serialNumber).map((r) => r.serialNumber as string);
-  const existingSerials = serialNumbers.length > 0
+  // Pre-fetch live assets that already hold any of the serial numbers in this
+  // import. These are NOT errors — re-running the same file should be
+  // idempotent, so we classify those rows as "skipped" and present them to the
+  // user as informational. Soft-deleted assets are excluded; their serials are
+  // also nulled out on delete (see deleteAsset), so the unique constraint
+  // does not block re-import of the same serial after disposal.
+  const serialNumbers = remainingRows
+    .filter((r) => r.serialNumber)
+    .map((r) => r.serialNumber as string);
+  const existingAssetsBySerial = serialNumbers.length > 0
     ? await prisma.asset.findMany({
-        where: { serialNumber: { in: serialNumbers } },
-        select: { serialNumber: true },
+        where: {
+          serialNumber: { in: serialNumbers },
+          deletedAt: null,
+        },
+        select: { id: true, assetNumber: true, name: true, serialNumber: true },
       })
     : [];
-  const takenSerials = new Set(existingSerials.map((a) => a.serialNumber as string));
+  const existingBySerial = new Map<string, (typeof existingAssetsBySerial)[number]>();
+  for (const a of existingAssetsBySerial) {
+    if (a.serialNumber) existingBySerial.set(a.serialNumber, a);
+  }
 
   const failed: ImportError[] = [...earlyFailed];
-  const validRows: Array<{ row: AssetImportRow; categoryCode: string }> = [];
+  const skipped: ImportSkip[] = [];
+  const validRows: Array<{ row: AssetImportRow; categoryCode: string; newProductKey?: string }> = [];
+  // Within-file dedupe: if two rows share the same serial, only the first
+  // succeeds — the second is reported as duplicate without hitting the DB.
+  const seenSerialsInFile = new Set<string>();
 
   // Validate each row against pre-loaded data
   for (const row of remainingRows) {
-    const product = productMap.get(row.productId);
-    if (!product) {
-      failed.push({ rowIndex: row.rowIndex, field: 'productId', message: `Product not found: ${row.productId}`, value: row.productId });
-      continue;
+    // Resolve the category code: existing-product rows lookup against
+    // productMap; new-product rows pull from the bucket we resolved before
+    // entering the transaction.
+    const newProductKey = newProductRowKey.get(row.rowIndex);
+    let categoryCode: string;
+    if (newProductKey) {
+      const bucket = newProductBuckets.get(newProductKey);
+      if (!bucket) {
+        // Should be unreachable — earlyFailed already covered missing
+        // categories — but defensive in case bucket logic changes.
+        failed.push({
+          rowIndex: row.rowIndex,
+          field: 'productCategory',
+          message: 'New-product spec resolution failed unexpectedly',
+          value: row.productId,
+        });
+        continue;
+      }
+      categoryCode = bucket.categoryCode;
+    } else {
+      const product = productMap.get(row.productId);
+      if (!product) {
+        failed.push({ rowIndex: row.rowIndex, field: 'productId', message: `Product not found: ${row.productId}`, value: row.productId });
+        continue;
+      }
+      categoryCode = product.category.code;
     }
 
     if (!locationSet.has(row.locationId)) {
@@ -192,84 +326,182 @@ export async function bulkImport(
       continue;
     }
 
-    if (row.serialNumber && takenSerials.has(row.serialNumber)) {
-      failed.push({ rowIndex: row.rowIndex, field: 'serialNumber', message: `Serial number already exists: ${row.serialNumber}`, value: row.serialNumber });
-      continue;
-    }
-
-    // Mark serial as taken so duplicate rows within the import file are caught
     if (row.serialNumber) {
-      takenSerials.add(row.serialNumber);
+      // Already-imported in a previous run — skip without erroring.
+      const existing = existingBySerial.get(row.serialNumber);
+      if (existing) {
+        skipped.push({
+          rowIndex: row.rowIndex,
+          reason: 'duplicate_serial',
+          existing: {
+            id: existing.id,
+            assetNumber: existing.assetNumber,
+            name: existing.name,
+            serialNumber: existing.serialNumber!,
+          },
+        });
+        continue;
+      }
+      // Duplicate serial *within this file* — still an error since both rows
+      // are claiming the same physical asset.
+      if (seenSerialsInFile.has(row.serialNumber)) {
+        failed.push({
+          rowIndex: row.rowIndex,
+          field: 'serialNumber',
+          message: `Serial number "${row.serialNumber}" appears more than once in this file.`,
+          value: row.serialNumber,
+        });
+        continue;
+      }
+      seenSerialsInFile.add(row.serialNumber);
     }
 
-    validRows.push({ row, categoryCode: product.category.code });
+    validRows.push({ row, categoryCode, ...(newProductKey && { newProductKey }) });
   }
+
+  // Checkpoint after pre-validation: skipped & failed are now final, only
+  // the actual inserts remain to be reported.
+  await reportProgress(
+    earlyFailed.length + skipped.length + (failed.length - earlyFailed.length),
+    0,
+    skipped.length,
+    failed.length,
+  );
 
   if (validRows.length === 0) {
-    return { created: [], failed };
+    return { created: [], skipped, failed };
   }
 
-  // Create all valid rows in a single transaction
+  // Single transaction: create new products, free stale serials, insert
+  // assets + initial movements, write audit log. If any step fails, ALL
+  // get rolled back — no more orphaned products from a partial import.
   const createdAssets: BulkImportResult['created'] = [];
 
-  await prisma.$transaction(async (tx) => {
-    for (const { row, categoryCode } of validRows) {
-      const assetId = randomUUID();
-      const assetNumber = await generateAssetNumber(categoryCode, tx as PrismaTransactionClient);
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Step A: materialise new products in this transaction.
+      const newProductIds = new Map<string, string>(); // bucketKey → productId
+      for (const [key, { spec, categoryId }] of newProductBuckets) {
+        const product = await tx.product.create({
+          data: {
+            name: spec.name,
+            ...(spec.brand && { brand: spec.brand }),
+            ...(spec.model && { model: spec.model }),
+            ...(spec.eanCode && { eanCode: spec.eanCode }),
+            category: { connect: { id: categoryId } },
+            source: 'MANUAL',
+          },
+        });
+        newProductIds.set(key, product.id);
+      }
 
-      const created = await repo.createInTransaction(tx as PrismaTransactionClient, {
-        id: assetId,
-        assetNumber,
-        barcodeValue: assetNumber,
-        barcodeType: 'CODE128',
-        name: row.name,
-        status: row.status ?? 'ACTIVE',
-        condition: row.condition ?? 'NEW',
-        product: { connect: { id: row.productId } },
-        location: { connect: { id: row.locationId } },
-        ...(row.assignedToUserId && { assignedTo: { connect: { id: row.assignedToUserId } } }),
-        ...(row.serialNumber && { serialNumber: row.serialNumber }),
-        purchaseDate: row.purchaseDate ?? null,
-        purchasePrice: row.purchasePrice != null ? new Prisma.Decimal(row.purchasePrice) : null,
-        currency: row.currency ?? 'IDR',
-        vendor: row.vendor ?? null,
-        invoiceNumber: row.invoiceNumber ?? null,
-        warrantyStartDate: row.warrantyStartDate ?? null,
-        warrantyEndDate: row.warrantyEndDate ?? null,
-        usefulLifeMonths: row.usefulLifeMonths ?? null,
-        notes: row.notes ?? null,
-        customFields: Prisma.JsonNull,
-        createdBy: { connect: { id: userId } },
+      // Step B: free up serial numbers held by soft-deleted assets so the
+      // new INSERTs don't collide with the column-level UNIQUE constraint.
+      const serialsToFreeUp = validRows
+        .filter((v) => v.row.serialNumber)
+        .map((v) => v.row.serialNumber as string);
+      if (serialsToFreeUp.length > 0) {
+        await tx.asset.updateMany({
+          where: {
+            serialNumber: { in: serialsToFreeUp },
+            deletedAt: { not: null },
+          },
+          data: { serialNumber: null },
+        });
+      }
+
+      // Step C: insert assets + initial movements.
+      for (const { row, categoryCode, newProductKey } of validRows) {
+        // Resolve the productId for new-product rows from the freshly
+        // inserted product. Existing-product rows already have a UUID.
+        const productId = newProductKey
+          ? newProductIds.get(newProductKey)!
+          : row.productId;
+
+        const assetId = randomUUID();
+        const assetNumber = await generateAssetNumber(categoryCode, tx as PrismaTransactionClient);
+
+        const created = await repo.createInTransaction(tx as PrismaTransactionClient, {
+          id: assetId,
+          assetNumber,
+          barcodeValue: assetNumber,
+          barcodeType: 'CODE128',
+          name: row.name,
+          status: row.status ?? 'ACTIVE',
+          condition: row.condition ?? 'NEW',
+          product: { connect: { id: productId } },
+          location: { connect: { id: row.locationId } },
+          ...(row.assignedToUserId && { assignedTo: { connect: { id: row.assignedToUserId } } }),
+          ...(row.serialNumber && { serialNumber: row.serialNumber }),
+          purchaseDate: row.purchaseDate ?? null,
+          purchasePrice: row.purchasePrice != null ? new Prisma.Decimal(row.purchasePrice) : null,
+          currency: row.currency ?? 'IDR',
+          vendor: row.vendor ?? null,
+          invoiceNumber: row.invoiceNumber ?? null,
+          warrantyStartDate: row.warrantyStartDate ?? null,
+          warrantyEndDate: row.warrantyEndDate ?? null,
+          usefulLifeMonths: row.usefulLifeMonths ?? null,
+          notes: row.notes ?? null,
+          customFields: Prisma.JsonNull,
+          createdBy: { connect: { id: userId } },
+        });
+
+        await repo.createMovementInTransaction(tx as PrismaTransactionClient, {
+          referenceNumber: generateReferenceNumber(),
+          movementType: 'INITIAL',
+          status: 'COMPLETED',
+          asset: { connect: { id: assetId } },
+          toLocation: { connect: { id: row.locationId } },
+          ...(row.assignedToUserId && { toUser: { connect: { id: row.assignedToUserId } } }),
+          performedBy: { connect: { id: userId } },
+          notes: 'Initial asset registration (import)',
+        });
+
+        createdAssets.push({ id: assetId, assetNumber, name: created.name });
+
+        // Per-row progress callback. The transaction is held open during the
+        // callback's `await`, which is fine for the Redis writes the async
+        // job performs — they're sub-millisecond and don't touch the DB.
+        await reportProgress(
+          skipped.length + failed.length + createdAssets.length,
+          createdAssets.length,
+          skipped.length,
+          failed.length,
+        );
+      }
+
+      // Step D: audit log INSIDE the transaction so the asset records and
+      // the audit trail commit/roll-back as one. Previously this lived
+      // outside the transaction and could leave assets unaudited.
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'IMPORT',
+          resourceType: 'Asset',
+          resourceId: createdAssets.map((a) => a.id).join(',') || 'bulk',
+          newValues: {
+            created: createdAssets.length,
+            skipped: skipped.length,
+            failed: failed.length,
+            assetNumbers: createdAssets.map((a) => a.assetNumber),
+          } as unknown as Prisma.InputJsonValue,
+        },
       });
-
-      await repo.createMovementInTransaction(tx as PrismaTransactionClient, {
-        referenceNumber: generateReferenceNumber(),
-        movementType: 'INITIAL',
-        status: 'COMPLETED',
-        asset: { connect: { id: assetId } },
-        toLocation: { connect: { id: row.locationId } },
-        ...(row.assignedToUserId && { toUser: { connect: { id: row.assignedToUserId } } }),
-        performedBy: { connect: { id: userId } },
-        notes: 'Initial asset registration (import)',
-      });
-
-      createdAssets.push({ id: assetId, assetNumber, name: created.name });
+    });
+  } catch (err: unknown) {
+    // Translate P2002 (concurrent serial conflict) to a clean error class.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === 'P2002' &&
+      Array.isArray(err.meta?.['target']) &&
+      (err.meta['target'] as string[]).includes('serial_number')
+    ) {
+      // Re-thrown as a generic error — the caller (import-router) will
+      // surface it; bulkImport's contract doesn't expose AppError here.
+      throw new Error('A serial number collision occurred during the import. Please retry.');
     }
-  });
-
-  // Audit log for the batch
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'IMPORT',
-      resourceType: 'Asset',
-      resourceId: createdAssets.map((a) => a.id).join(','),
-      newValues: {
-        count: createdAssets.length,
-        assetNumbers: createdAssets.map((a) => a.assetNumber),
-      } as unknown as Prisma.InputJsonValue,
-    },
-  });
+    throw err;
+  }
 
   // Generate barcode/QR images in the background — non-critical
   void Promise.allSettled(
@@ -289,5 +521,5 @@ export async function bulkImport(
     }),
   );
 
-  return { created: createdAssets, failed };
+  return { created: createdAssets, skipped, failed };
 }
