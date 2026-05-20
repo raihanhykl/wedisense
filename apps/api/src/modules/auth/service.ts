@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { AppError } from '../../middleware/error-handler.js';
 import { AUTH } from '@wedisense/shared';
@@ -142,7 +143,18 @@ export async function resolveAuthenticatedUser(userId: string): Promise<Authenti
   return { ...partial, hasIncompleteTour };
 }
 
-export async function login(input: LoginInput) {
+/**
+ * Request context captured at the router layer (IP, user-agent) and threaded
+ * into auth service calls so the resulting audit log entries record where a
+ * login/logout/password-change came from. Optional fields — the audit insert
+ * tolerates undefined for tests and edge cases (proxy not setting X-Forwarded-For).
+ */
+export interface AuthContext {
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export async function login(input: LoginInput, ctx: AuthContext = {}) {
   const user = await prisma.user.findUnique({
     where: { email: input.email, deletedAt: null },
   });
@@ -168,7 +180,50 @@ export async function login(input: LoginInput) {
   const refreshToken = signRefreshToken(user.id);
   const authenticatedUser = await resolveAuthenticatedUser(user.id);
 
+  // Audit the SUCCESSFUL login only. Failed attempts are security-log noise
+  // (and could flood the table from a credential-stuffing bot); they belong
+  // in a separate auth_attempts table if we ever add intrusion detection.
+  // We do not block the response on audit failure — wrap in try/catch and
+  // log to console. A login that succeeds at the user level should not 500
+  // because the audit insert hit a transient DB hiccup.
+  try {
+    await prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'LOGIN',
+        resourceType: 'User',
+        resourceId: user.id,
+        ...(ctx.ipAddress !== undefined && { ipAddress: ctx.ipAddress }),
+        ...(ctx.userAgent !== undefined && { userAgent: ctx.userAgent }),
+      },
+    });
+  } catch (err) {
+    console.error('[audit] LOGIN write failed', err);
+  }
+
   return { accessToken, refreshToken, user: authenticatedUser };
+}
+
+/**
+ * Logout audit. Best-effort: the logout endpoint clears the refresh-token
+ * cookie regardless — failing to write the audit row should not prevent the
+ * user from logging out. Errors are swallowed and logged.
+ */
+export async function recordLogout(userId: string, ctx: AuthContext = {}): Promise<void> {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'LOGOUT',
+        resourceType: 'User',
+        resourceId: userId,
+        ...(ctx.ipAddress !== undefined && { ipAddress: ctx.ipAddress }),
+        ...(ctx.userAgent !== undefined && { userAgent: ctx.userAgent }),
+      },
+    });
+  } catch (err) {
+    console.error('[audit] LOGOUT write failed', err);
+  }
 }
 
 export async function refreshTokens(currentRefreshToken: string) {
@@ -188,7 +243,11 @@ export async function refreshTokens(currentRefreshToken: string) {
   return { accessToken, refreshToken };
 }
 
-export async function changePassword(userId: string, input: ChangePasswordInput) {
+export async function changePassword(
+  userId: string,
+  input: ChangePasswordInput,
+  ctx: AuthContext = {},
+) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
   });
@@ -204,8 +263,26 @@ export async function changePassword(userId: string, input: ChangePasswordInput)
 
   const newHash = await bcrypt.hash(input.newPassword, AUTH.BCRYPT_ROUNDS);
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: { passwordHash: newHash },
+  // Password update + audit log are wrapped in a transaction so a partial
+  // failure can never leave a changed password with no audit trail. The
+  // audit row deliberately does NOT include the new or old password hash —
+  // we record the FACT of change with a boolean. Logging the hash would
+  // make the audit table itself a credential leak target.
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: userId },
+      data: { passwordHash: newHash },
+    });
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'UPDATE',
+        resourceType: 'User',
+        resourceId: userId,
+        newValues: { passwordChanged: true } as unknown as Prisma.InputJsonValue,
+        ...(ctx.ipAddress !== undefined && { ipAddress: ctx.ipAddress }),
+        ...(ctx.userAgent !== undefined && { userAgent: ctx.userAgent }),
+      },
+    });
   });
 }
