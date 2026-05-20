@@ -1,1 +1,118 @@
-{}
+{
+  "common": {
+    "next": "Selanjutnya",
+    "previous": "Sebelumnya",
+    "skip": "Lewati",
+    "finish": "Selesai",
+    "close": "Tutup",
+    "stepCounter": "Langkah {{current}} dari {{total}}",
+    "exitConfirm": "Keluar dari tutorial?",
+    "restartTutorial": "Mulai Ulang Tutorial",
+    "targetMissing": "Tutorial dijeda",
+    "targetMissingHint": "Target langkah ini belum siap di halaman saat ini. Anda bisa melanjutkan tutorial dari halaman profil."
+  },
+  "profile": {
+    "backToDashboard": "Dashboard",
+    "account": "Akun",
+    "employeeId": "ID Karyawan",
+    "language": "Bahasa",
+    "status": "Status",
+    "roles": "Peran",
+    "tutorials": "Tutorial",
+    "tutorialsDescription": "Putar ulang tutorial kapan pun Anda butuh penyegaran.",
+    "noTutorials": "Tidak ada tutorial untuk peran Anda.",
+    "progressCompleted": "Selesai",
+    "progressSkipped": "Dilewati",
+    "progressInProgress": "Langkah {{current}} dari {{total}}"
+  },
+  "super_admin": {
+    "dashboard": {
+      "title": "Selamat Datang di Dashboard",
+      "description": "Lihat ringkasan lengkap aset, metrik utama, dan aktivitas terkini di semua lokasi."
+    },
+    "users": {
+      "title": "Manajemen Pengguna",
+      "description": "Undang anggota tim baru, kelola akun, dan atur peran dengan pembatasan lokasi yang spesifik."
+    },
+    "roles": {
+      "title": "Manajemen Peran",
+      "description": "Buat dan konfigurasi peran kustom dengan izin yang terperinci. Perubahan otomatis disinkronkan ke panduan onboarding."
+    },
+    "assets": {
+      "title": "Manajemen Aset",
+      "description": "Lihat, buat, dan kelola semua aset di setiap lokasi. Gunakan filter dan pemindai barcode untuk akses cepat."
+    },
+    "reports": {
+      "title": "Laporan",
+      "description": "Buat laporan aset, pergerakan, pemeliharaan, penyusutan, dan audit. Jadwalkan untuk pengiriman otomatis."
+    }
+  },
+  "admin": {
+    "dashboard": {
+      "title": "Selamat Datang di Dashboard",
+      "description": "Pusat pengelolaan aset Anda — pantau total aset, peringatan, dan pergerakan terkini sekilas."
+    },
+    "users": {
+      "title": "Manajemen Pengguna",
+      "description": "Kelola pengguna dan tugaskan peran kepada anggota tim sesuai lokasi masing-masing."
+    },
+    "assets": {
+      "title": "Manajemen Aset",
+      "description": "Kendali penuh atas siklus hidup aset — buat, perbarui, pindahkan, dan hentikan penggunaan aset."
+    },
+    "reports": {
+      "title": "Laporan",
+      "description": "Buat dan lihat laporan komprehensif. Unduh dalam format Excel atau PDF, atau jadwalkan pengiriman berkala."
+    }
+  },
+  "manager": {
+    "dashboard": {
+      "title": "Selamat Datang di Dashboard",
+      "description": "Pantau aset dan aktivitas dalam lingkup tanggung jawab Anda di semua lokasi yang ditugaskan."
+    },
+    "assets": {
+      "title": "Operasional Aset",
+      "description": "Buat dan kelola aset di lokasi Anda. Gunakan impor massal untuk inventaris dalam jumlah besar."
+    },
+    "movements": {
+      "title": "Persetujuan Pergerakan",
+      "description": "Tinjau dan setujui permintaan pemindahan, penugasan, dan peminjaman aset dari tim Anda."
+    },
+    "maintenance": {
+      "title": "Pemeliharaan",
+      "description": "Jadwalkan pemeliharaan preventif dan catat pekerjaan yang telah selesai agar aset tetap prima."
+    },
+    "reports": {
+      "title": "Laporan",
+      "description": "Buat laporan inventaris, pergerakan, dan riwayat pemeliharaan untuk lokasi Anda."
+    }
+  },
+  "staff": {
+    "dashboard": {
+      "title": "Selamat Datang di Dashboard",
+      "description": "Lihat ringkasan aset yang ditugaskan kepada Anda dan tindakan yang perlu diselesaikan."
+    },
+    "assets": {
+      "title": "Aset Anda",
+      "description": "Telusuri dan cari semua aset yang tersedia untuk Anda. Pindai barcode untuk langsung membuka detail aset."
+    },
+    "movements": {
+      "title": "Ajukan Pergerakan",
+      "description": "Kirim permintaan untuk memindahkan atau meminjam aset. Manajer Anda akan meninjau dan menyetujuinya."
+    }
+  },
+  "viewer": {
+    "dashboard": {
+      "title": "Selamat Datang di Dashboard",
+      "description": "Lihat ikhtisar hanya-baca dari semua aset organisasi beserta status terkininya."
+    },
+    "assets": {
+      "title": "Telusuri Aset",
+      "description": "Lihat dan cari semua aset yang terdaftar. Gunakan filter untuk mencari berdasarkan lokasi, kategori, atau status."
+    },
+    "reports": {
+      "title": "Lihat Laporan",
+      "description": "Akses laporan dan analitik yang tersedia untuk mendapatkan wawasan tentang portofolio aset."
+    }
+  }
+}

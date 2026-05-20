@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
 import { QueryProvider } from "@/lib/query-provider";
+import TourProvider from "@/components/tour/tour-provider";
 import "./globals.css";
 
 const inter = Inter({
@@ -26,7 +27,9 @@ export default function RootLayout({
             shared caching. Toaster lives inside the provider tree so toasts
             triggered by mutation success handlers find their <Toaster /> mount. */}
         <QueryProvider>
-          {children}
+          <TourProvider>
+            {children}
+          </TourProvider>
           <Toaster position="top-right" richColors closeButton duration={5000} />
         </QueryProvider>
       </body>

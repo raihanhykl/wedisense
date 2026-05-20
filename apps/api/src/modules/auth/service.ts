@@ -5,6 +5,7 @@ import { AppError } from '../../middleware/error-handler.js';
 import { AUTH } from '@wedisense/shared';
 import type { JwtAccessPayload, JwtRefreshPayload, AuthenticatedUser } from './types.js';
 import type { LoginInput, ChangePasswordInput } from './schema.js';
+import { hasIncompleteTourForUser } from '../tours/service.js';
 
 const ACCESS_SECRET = process.env['JWT_ACCESS_SECRET'] ?? 'dev-access-secret';
 const REFRESH_SECRET = process.env['JWT_REFRESH_SECRET'] ?? 'dev-refresh-secret';
@@ -118,7 +119,7 @@ export async function resolveAuthenticatedUser(userId: string): Promise<Authenti
 
   const accessibleLocationIds = await getAccessibleLocationIds(user.userRoles);
 
-  return {
+  const partial: Omit<AuthenticatedUser, 'hasIncompleteTour'> = {
     id: user.id,
     name: user.name,
     email: user.email,
@@ -129,6 +130,16 @@ export async function resolveAuthenticatedUser(userId: string): Promise<Authenti
     permissions: Array.from(permissionSet),
     accessibleLocationIds,
   };
+
+  // Determine first-run flag. We build a partial AuthenticatedUser first so
+  // hasIncompleteTourForUser() can filter on roles and permissions without
+  // the field being set yet. The flag is informational-only (never gates access).
+  const hasIncompleteTour = await hasIncompleteTourForUser({
+    ...partial,
+    hasIncompleteTour: false,
+  });
+
+  return { ...partial, hasIncompleteTour };
 }
 
 export async function login(input: LoginInput) {

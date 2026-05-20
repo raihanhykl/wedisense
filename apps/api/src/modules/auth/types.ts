@@ -23,4 +23,5 @@ export interface AuthenticatedUser {
   }>;
   permissions: string[];
   accessibleLocationIds: string[];
+  hasIncompleteTour: boolean;
 }

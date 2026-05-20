@@ -1,0 +1,84 @@
+/*
+ * Tour styles — bridges NextStep.js defaults with the app's shadcn theme.
+ *
+ * NextStep DOM attribute names (discovered by runtime inspection):
+ *   - Overlay backdrop:   no data-attribute; Next renders a fixed div with
+ *     inline styles. We target the known class `nextstep-overlay` if present,
+ *     or rely on the backdrop-filter approach below.
+ *   - Active spotlight:   NextStep wraps the targeted element with an
+ *     absolutely-positioned ring; the element itself keeps its own classes.
+ *
+ * CSS strategy:
+ *   1. Add backdrop blur on the NextStep overlay via attribute selector.
+ *   2. Pulsing beacon on targeted elements via [data-tour] when a tour is active.
+ *   3. Reduced-motion: strip all animations, keep opacity crossfade only.
+ *
+ * NOTE: If NextStep changes its internal DOM structure, update the selectors
+ * below to match. The overlay selector is the most likely to change.
+ */
+
+/* ── Backdrop ─────────────────────────────────────────────────────── */
+/* NextStep injects a fixed overlay. We add blur so the focus stays on
+   the spotlight target while the rest of the page is still recognisable. */
+.nextstep-overlay,
+[data-nextstep-overlay],
+[class*="nextstep"][class*="overlay"] {
+  backdrop-filter: blur(2px) !important;
+}
+
+/* ── Spotlight ring ───────────────────────────────────────────────── */
+/* NextStep rounds the spotlight via the pointerRadius prop we pass (8px).
+   The ring colour picks up the primary CSS variable from the theme. */
+
+/* ── Pulsing beacon ───────────────────────────────────────────────── */
+/*
+ * Beacon on the element that the current tour step highlights.
+ * We add it on any element that carries a data-tour attribute while a tour
+ * is globally active. TourProvider adds the `data-tour-active` attribute to
+ * <body> when a tour starts and removes it on close/skip/complete, so we
+ * can scope the animation to only while a tour is running.
+ */
+@keyframes tour-beacon {
+  0% {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 8px hsl(var(--primary) / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0);
+  }
+}
+
+body[data-tour-active] [data-nextstep-target],
+body[data-tour-active] .nextstep-target {
+  animation: tour-beacon 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  border-radius: 8px;
+  outline: 2px solid hsl(var(--primary) / 0.5);
+  outline-offset: 4px;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  body[data-tour-active] [data-nextstep-target],
+  body[data-tour-active] .nextstep-target {
+    animation: none;
+    outline: 2px solid hsl(var(--primary) / 0.7);
+  }
+
+  .nextstep-overlay,
+  [data-nextstep-overlay],
+  [class*="nextstep"][class*="overlay"] {
+    backdrop-filter: none !important;
+  }
+}
+
+/* ── Mobile: ensure card doesn't overflow viewport ────────────────── */
+@media (max-width: 640px) {
+  /* NextStep positions the card via inline styles; we cap the width
+     via our own TourPopover component's max-w class. This rule is a
+     safety net for any element NextStep wraps around the card. */
+  [data-nextstep-card] {
+    max-width: calc(100vw - 2rem) !important;
+  }
+}
