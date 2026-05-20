@@ -3,8 +3,8 @@ import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import rateLimit from 'express-rate-limit';
 import { RATE_LIMIT } from '@wedisense/shared';
+import { createRateLimiter } from './lib/rate-limiter.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { authRouter } from './modules/auth/router.js';
 import { locationRouter } from './modules/locations/router.js';
@@ -34,12 +34,16 @@ app.use(cors({
 }));
 
 // ── Rate Limiting ──────────────────────────────────────────
-app.use(rateLimit({
-  windowMs: RATE_LIMIT.GENERAL.windowMs,
-  max: RATE_LIMIT.GENERAL.max,
-  standardHeaders: true,
-  legacyHeaders: false,
-}));
+// General per-IP limit covers every request. Auth endpoints layer a tighter
+// limit on top inside auth/router.ts — both share Redis so the count is
+// consistent across replicas.
+app.use(
+  createRateLimiter({
+    windowMs: RATE_LIMIT.GENERAL.windowMs,
+    max: RATE_LIMIT.GENERAL.max,
+    prefix: 'rl:general',
+  }),
+);
 
 // ── Body Parsing ───────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));

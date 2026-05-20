@@ -1,6 +1,6 @@
 import { Router, type Router as RouterType, type Request } from 'express';
-import rateLimit from 'express-rate-limit';
 import { RATE_LIMIT } from '@wedisense/shared';
+import { createRateLimiter } from '../../lib/rate-limiter.js';
 import { asyncHandler } from '../../utils/async-handler.js';
 import { sendSuccess } from '../../utils/response.js';
 import { authenticate } from '../../middleware/authenticate.js';
@@ -23,11 +23,14 @@ function auditContextFrom(req: Request): AuthContext {
 
 const router: RouterType = Router();
 
-const authRateLimit = rateLimit({
+// Tighter limiter for credential-touching endpoints (login + refresh). The
+// general limiter in app.ts still applies; this one tightens the cap from
+// 100/min to 10/min for the same IP. Both share Redis via the factory so
+// the count is consistent across replicas in production.
+const authRateLimit = createRateLimiter({
   windowMs: RATE_LIMIT.AUTH.windowMs,
   max: RATE_LIMIT.AUTH.max,
-  standardHeaders: true,
-  legacyHeaders: false,
+  prefix: 'rl:auth',
 });
 
 // POST /api/auth/login
@@ -71,6 +74,7 @@ router.post(
 // POST /api/auth/refresh
 router.post(
   '/refresh',
+  authRateLimit,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies?.['refreshToken'] as string | undefined;
 
