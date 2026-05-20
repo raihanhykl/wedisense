@@ -139,17 +139,20 @@ export async function softDelete(id: string, tx?: PrismaTransactionClient) {
   });
 }
 
+/**
+ * Replace the role set on a user atomically. Accepts an optional `tx` so
+ * the service-layer caller can stitch this into a larger transaction
+ * with the matching audit-log insert (Phase 16 Tier 8 review fix).
+ */
 export async function replaceUserRoles(
   userId: string,
   roles: Array<{ roleId: string; locationId?: string | null }>,
+  tx?: PrismaTransactionClient,
 ) {
-  return prisma.$transaction(async (tx) => {
-    // Delete existing roles
-    await tx.userRole.deleteMany({ where: { userId } });
-
-    // Create new roles
+  const run = async (client: PrismaTransactionClient) => {
+    await client.userRole.deleteMany({ where: { userId } });
     if (roles.length > 0) {
-      await tx.userRole.createMany({
+      await client.userRole.createMany({
         data: roles.map((r) => ({
           userId,
           roleId: r.roleId,
@@ -157,13 +160,13 @@ export async function replaceUserRoles(
         })),
       });
     }
-
-    return tx.userRole.findMany({
+    return client.userRole.findMany({
       where: { userId },
       include: {
         role: { select: { id: true, name: true } },
         location: { select: { id: true, name: true } },
       },
     });
-  });
+  };
+  return tx ? run(tx) : prisma.$transaction(run);
 }

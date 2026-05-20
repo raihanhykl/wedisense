@@ -48,6 +48,19 @@ const app: Express = express();
 //    embedded resource (Next.js images via /api/uploads, third-party fonts)
 //    to also declare COEP — instant breakage for negligible benefit.
 const isProduction = process.env['NODE_ENV'] === 'production';
+// Build connect-src directive. In dev we explicitly whitelist the local
+// frontend so error pages can call back to themselves. In production the
+// fallback to `http://localhost:3000` would be sloppy — it doesn't open
+// an attack vector (no real browser resolves localhost cross-origin) but
+// a strict CSP audit would flag it. If CORS_ORIGIN is set, use it;
+// otherwise fall back to localhost ONLY in non-production.
+const corsOrigin = process.env['CORS_ORIGIN'];
+const connectSrc: string[] = ["'self'"];
+if (corsOrigin) {
+  connectSrc.push(corsOrigin);
+} else if (!isProduction) {
+  connectSrc.push('http://localhost:3000');
+}
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -57,7 +70,7 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         imgSrc: ["'self'", 'data:', 'blob:'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-        connectSrc: ["'self'", process.env['CORS_ORIGIN'] ?? 'http://localhost:3000'],
+        connectSrc,
         frameAncestors: ["'none'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],

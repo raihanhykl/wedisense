@@ -61,26 +61,36 @@ export async function getPermissions(roleId: string) {
   });
 }
 
-export async function replacePermissions(roleId: string, permissionIds: string[]) {
-  return prisma.$transaction(async (tx) => {
-    // Delete all existing permissions for this role
-    await tx.rolePermission.deleteMany({ where: { roleId } });
-
-    // Create new permissions
+/**
+ * Replace the permission set on a role atomically.
+ *
+ * Accepts an optional `tx` so callers can compose this into a larger
+ * transaction (e.g. service-layer audit + permission replace in one
+ * boundary). When `tx` is passed, we run the three statements inside it
+ * directly. When it isn't, we spin up our own $transaction so the helper
+ * stays atomic on its own.
+ */
+export async function replacePermissions(
+  roleId: string,
+  permissionIds: string[],
+  tx?: PrismaTransactionClient,
+) {
+  const run = async (client: PrismaTransactionClient) => {
+    await client.rolePermission.deleteMany({ where: { roleId } });
     if (permissionIds.length > 0) {
-      await tx.rolePermission.createMany({
+      await client.rolePermission.createMany({
         data: permissionIds.map((permissionId) => ({
           roleId,
           permissionId,
         })),
       });
     }
-
-    return tx.rolePermission.findMany({
+    return client.rolePermission.findMany({
       where: { roleId },
       include: { permission: true },
     });
-  });
+  };
+  return tx ? run(tx) : prisma.$transaction(run);
 }
 
 export async function hasUsers(id: string): Promise<boolean> {

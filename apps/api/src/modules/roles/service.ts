@@ -137,21 +137,31 @@ export async function setRolePermissions(
   }
 
   const oldPermissions = role.rolePermissions;
-  const newPermissions = await roleRepo.replacePermissions(roleId, input.permissionIds);
 
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'UPDATE',
-      resourceType: 'RolePermission',
-      resourceId: roleId,
-      oldValues: oldPermissions as unknown as Prisma.InputJsonValue,
-      newValues: newPermissions as unknown as Prisma.InputJsonValue,
-    },
+  // Permission replace + audit must commit atomically — Phase 16 Tier 8
+  // review caught the previous version writing the audit log AFTER
+  // replacePermissions's internal transaction had already committed, so
+  // a crash between the two left permission changes with no audit trail.
+  // The repo accepts an optional `tx` now so we can stitch them together.
+  const newPermissions = await prisma.$transaction(async (tx) => {
+    const next = await roleRepo.replacePermissions(roleId, input.permissionIds, tx);
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'UPDATE',
+        resourceType: 'RolePermission',
+        resourceId: roleId,
+        oldValues: oldPermissions as unknown as Prisma.InputJsonValue,
+        newValues: next as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return next;
   });
 
-  // Queue tour_sync job to update onboarding tour steps for this role
+  // Tour-sync queue add stays OUTSIDE the transaction. BullMQ writes to
+  // Redis (a separate system), so it can't share our Postgres tx anyway.
+  // A failed enqueue is recoverable by manually re-running tour-sync from
+  // /admin/tours; it's not worth rolling back the permission change.
   await tourSyncQueue.add(
     'sync',
     { roleId },

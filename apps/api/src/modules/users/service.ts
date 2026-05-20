@@ -148,19 +148,22 @@ export async function assignRoles(userId: string, input: AssignRolesInput, actor
   }
 
   const oldRoles = user.userRoles;
-  const newRoles = await userRepo.replaceUserRoles(userId, input.roles);
 
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'UPDATE',
-      resourceType: 'UserRole',
-      resourceId: userId,
-      oldValues: oldRoles as unknown as Prisma.InputJsonValue,
-      newValues: newRoles as unknown as Prisma.InputJsonValue,
-    },
+  // Role replace + audit must commit atomically. The repo's
+  // replaceUserRoles now accepts an optional `tx` so we can stitch the
+  // two writes into one transaction (Phase 16 Tier 8 review fix).
+  return prisma.$transaction(async (tx) => {
+    const newRoles = await userRepo.replaceUserRoles(userId, input.roles, tx);
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'UPDATE',
+        resourceType: 'UserRole',
+        resourceId: userId,
+        oldValues: oldRoles as unknown as Prisma.InputJsonValue,
+        newValues: newRoles as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return newRoles;
   });
-
-  return newRoles;
 }
