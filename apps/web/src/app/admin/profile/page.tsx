@@ -43,12 +43,12 @@ export default function ProfilePage() {
     progress: NonNullable<typeof tours[number]["progress"]>,
     totalSteps: number,
   ): string => {
-    if (progress.isCompleted) return lang === "en" ? "Completed" : "Selesai";
-    if (progress.isSkipped) return lang === "en" ? "Skipped" : "Dilewati";
-    const step = progress.lastStepIndex + 1;
-    return lang === "en"
-      ? `Step ${step} of ${totalSteps}`
-      : `Langkah ${step} dari ${totalSteps}`;
+    if (progress.isCompleted) return tTour(lang, "profile.progressCompleted");
+    if (progress.isSkipped) return tTour(lang, "profile.progressSkipped");
+    return tTour(lang, "profile.progressInProgress", {
+      current: progress.lastStepIndex + 1,
+      total: totalSteps,
+    });
   };
 
   return (
@@ -58,7 +58,7 @@ export default function ProfilePage() {
         className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" />
-        Dashboard
+        {tTour(lang, "profile.backToDashboard")}
       </Link>
 
       <header className="mb-8 flex items-center gap-4">
@@ -73,21 +73,23 @@ export default function ProfilePage() {
 
       <section className="mb-6 rounded-lg border bg-card p-5">
         <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {lang === "en" ? "Account" : "Akun"}
+          {tTour(lang, "profile.account")}
         </h2>
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 text-sm">
           <dt className="text-muted-foreground">
-            {lang === "en" ? "Employee ID" : "ID Karyawan"}
+            {tTour(lang, "profile.employeeId")}
           </dt>
           <dd>{user.employeeId || "—"}</dd>
           <dt className="text-muted-foreground">
-            {lang === "en" ? "Language" : "Bahasa"}
+            {tTour(lang, "profile.language")}
           </dt>
           <dd className="uppercase">{user.preferredLanguage}</dd>
-          <dt className="text-muted-foreground">Status</dt>
+          <dt className="text-muted-foreground">
+            {tTour(lang, "profile.status")}
+          </dt>
           <dd>{user.status}</dd>
           <dt className="text-muted-foreground">
-            {lang === "en" ? "Roles" : "Peran"}
+            {tTour(lang, "profile.roles")}
           </dt>
           <dd>{user.roles.map((r) => r.name).join(", ") || "—"}</dd>
         </dl>
@@ -95,18 +97,14 @@ export default function ProfilePage() {
 
       <section className="rounded-lg border bg-card p-5">
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {lang === "en" ? "Tutorials" : "Tutorial"}
+          {tTour(lang, "profile.tutorials")}
         </h2>
         <p className="mb-4 text-sm text-muted-foreground">
-          {lang === "en"
-            ? "Replay the walkthrough whenever you need a refresher."
-            : "Putar ulang tutorial kapan pun Anda butuh penyegaran."}
+          {tTour(lang, "profile.tutorialsDescription")}
         </p>
         {tours.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {lang === "en"
-              ? "No tutorials available for your role."
-              : "Tidak ada tutorial untuk peran Anda."}
+            {tTour(lang, "profile.noTutorials")}
           </p>
         ) : (
           <ul className="space-y-2">

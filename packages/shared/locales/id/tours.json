@@ -11,6 +11,20 @@
     "targetMissing": "Tutorial dijeda",
     "targetMissingHint": "Target langkah ini belum siap di halaman saat ini. Anda bisa melanjutkan tutorial dari halaman profil."
   },
+  "profile": {
+    "backToDashboard": "Dashboard",
+    "account": "Akun",
+    "employeeId": "ID Karyawan",
+    "language": "Bahasa",
+    "status": "Status",
+    "roles": "Peran",
+    "tutorials": "Tutorial",
+    "tutorialsDescription": "Putar ulang tutorial kapan pun Anda butuh penyegaran.",
+    "noTutorials": "Tidak ada tutorial untuk peran Anda.",
+    "progressCompleted": "Selesai",
+    "progressSkipped": "Dilewati",
+    "progressInProgress": "Langkah {{current}} dari {{total}}"
+  },
   "super_admin": {
     "dashboard": {
       "title": "Selamat Datang di Dashboard",

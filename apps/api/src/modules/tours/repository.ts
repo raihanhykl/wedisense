@@ -1,6 +1,14 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 
+// Subset of the Prisma client surface exposed inside a $transaction callback —
+// used by repo functions that accept an optional tx so callers (notably
+// service.ts) can stitch them into larger atomic operations.
+type PrismaTransactionClient = Omit<
+  typeof prisma,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
 // ── Tours ────────────────────────────────────────────────────────────────────
 
 export async function findToursForUser(userRoleIds: string[]) {
@@ -84,8 +92,10 @@ export async function upsertProgress(
     isSkipped: boolean;
     lastSeenAt: Date;
   },
+  tx?: PrismaTransactionClient,
 ) {
-  return prisma.userTourProgress.upsert({
+  const client = (tx ?? prisma) as typeof prisma;
+  return client.userTourProgress.upsert({
     where: { userId_tourId: { userId, tourId } },
     create: { userId, tourId, ...data },
     update: data,

@@ -350,7 +350,7 @@ describe('updateProgress()', () => {
 describe('restartTour()', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('resets completedSteps, isCompleted, isSkipped to initial state', async () => {
+  it('resets completedSteps, isCompleted, isSkipped + writes audit log inside a transaction', async () => {
     mockFindTourById.mockResolvedValue(makeDbTour());
     const resetProgress = makeDbProgress({
       completedSteps: [],
@@ -358,6 +358,7 @@ describe('restartTour()', () => {
       isSkipped: false,
     });
     mockUpsertProgress.mockResolvedValue(resetProgress);
+    const tx = mockTxThatRuns();
 
     const result = await restartTour(makeUser(), TOUR_ID);
 
@@ -371,6 +372,15 @@ describe('restartTour()', () => {
     expect(call[2].isSkipped).toBe(false);
     expect(result.completedSteps).toEqual([]);
     expect(result.isCompleted).toBe(false);
+
+    // Audit log is written inside the same transaction so a partial failure
+    // can't leave a reset tour with no audit trail.
+    expect(mockTransaction).toHaveBeenCalledOnce();
+    const auditCreate = tx.auditLog.create as ReturnType<typeof vi.fn>;
+    expect(auditCreate).toHaveBeenCalledOnce();
+    const auditCall = auditCreate.mock.calls[0]?.[0] as { data: { resourceType: string; action: string } };
+    expect(auditCall.data.resourceType).toBe('UserTourProgress');
+    expect(auditCall.data.action).toBe('UPDATE');
   });
 
   it('throws 404 when tour does not belong to user role', async () => {

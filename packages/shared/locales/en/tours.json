@@ -11,6 +11,20 @@
     "targetMissing": "Tour paused",
     "targetMissingHint": "This step's target isn't ready on the current page. You can resume the tutorial from your profile."
   },
+  "profile": {
+    "backToDashboard": "Dashboard",
+    "account": "Account",
+    "employeeId": "Employee ID",
+    "language": "Language",
+    "status": "Status",
+    "roles": "Roles",
+    "tutorials": "Tutorials",
+    "tutorialsDescription": "Replay the walkthrough whenever you need a refresher.",
+    "noTutorials": "No tutorials available for your role.",
+    "progressCompleted": "Completed",
+    "progressSkipped": "Skipped",
+    "progressInProgress": "Step {{current}} of {{total}}"
+  },
   "super_admin": {
     "dashboard": {
       "title": "Welcome to Dashboard",

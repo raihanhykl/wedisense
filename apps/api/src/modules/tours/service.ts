@@ -398,11 +398,32 @@ export async function restartTour(
     throw new AppError(404, 'TOUR_NOT_FOUND', 'Tour not found');
   }
 
-  const saved = await repo.upsertProgress(user.id, tourId, {
-    completedSteps: [] as unknown as Prisma.InputJsonValue,
-    isCompleted: false,
-    isSkipped: false,
-    lastSeenAt: new Date(),
+  // Wrap the progress reset + audit write in a transaction so a partial
+  // failure can never leave a reset tour with no audit trail. Tour-progress
+  // resets are deliberate user actions worth tracking — unlike per-step
+  // PATCHes which are high-frequency and intentionally not audited.
+  const saved = await prisma.$transaction(async (tx) => {
+    const result = await repo.upsertProgress(
+      user.id,
+      tourId,
+      {
+        completedSteps: [] as unknown as Prisma.InputJsonValue,
+        isCompleted: false,
+        isSkipped: false,
+        lastSeenAt: new Date(),
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'UPDATE',
+        resourceType: 'UserTourProgress',
+        resourceId: tourId,
+        newValues: { restarted: true, tourId } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return result;
   });
 
   return buildProgressDto(saved);
@@ -414,10 +435,11 @@ export async function triggerSync(tourId: string, actorUserId: string): Promise<
   const tour = await repo.findTourById(tourId);
   if (!tour) throw new AppError(404, 'TOUR_NOT_FOUND', 'Tour not found');
 
-  await tourSyncQueue.add('tour-sync', { roleId: tour.roleId }, {
-    jobId: `tour-sync-${tour.roleId}`,
-  });
-
+  // Write the audit log BEFORE enqueuing — the queue write is best-effort
+  // and outside our DB transaction (BullMQ talks to Redis, not Postgres).
+  // If we enqueued first and then crashed before audit, the job would run
+  // with no record. Writing audit first means the failure mode is "audit
+  // exists but job not enqueued" — recoverable by retrying the sync.
   await prisma.auditLog.create({
     data: {
       userId: actorUserId,
@@ -426,5 +448,9 @@ export async function triggerSync(tourId: string, actorUserId: string): Promise<
       resourceId: tourId,
       newValues: { syncTriggered: true, roleId: tour.roleId } as unknown as Prisma.InputJsonValue,
     },
+  });
+
+  await tourSyncQueue.add('tour-sync', { roleId: tour.roleId }, {
+    jobId: `tour-sync-${tour.roleId}`,
   });
 }
