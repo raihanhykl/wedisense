@@ -57,6 +57,10 @@ const ROUTER_MOUNTS: Record<string, { mount: string; file: string }> = {
   reports: { mount: '/api/reports', file: 'reports/router.ts' },
   tours: { mount: '/api/tours', file: 'tours/router.ts' },
   'saved-views': { mount: '/api/saved-views', file: 'saved-views/router.ts' },
+  // Audit module exposes GET-only endpoints (list/detail/export). It still
+  // belongs in the scan: if a future change introduces a mutating endpoint
+  // here, the completeness check forces an inventory entry.
+  audit: { mount: '/api/audit-logs', file: 'audit/router.ts' },
 };
 
 interface DiscoveredRoute {

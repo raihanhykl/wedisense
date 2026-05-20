@@ -28,6 +28,7 @@ const navItems: NavItem[] = [
   { label: "Tours", href: "/admin/tours", permission: "tours:manage" },
   { label: "Users", href: "/admin/users", permission: "users:manage" },
   { label: "Roles", href: "/admin/roles", permission: "roles:manage" },
+  { label: "Audit", href: "/admin/audit", permission: "audit:read" },
 ];
 
 function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
