@@ -16,6 +16,7 @@ import { asyncHandler } from '../../utils/async-handler.js';
 import { sendSuccess } from '../../utils/response.js';
 import { authorize } from '../../middleware/authorize.js';
 import { AppError } from '../../middleware/error-handler.js';
+import { validateUploadedFile } from '../../lib/upload-validator.js';
 import {
   buildAssetImportTemplate,
   buildImportErrorReport,
@@ -181,6 +182,20 @@ router.post(
         400,
         'NO_FILE',
         'No file uploaded. Use multipart/form-data with field name "file"',
+      );
+    }
+
+    // Magic-byte verification — the multer fileFilter above only checks the
+    // extension and the client-declared MIME header, both of which are easy
+    // to spoof (rename `evil.exe` to `report.xlsx`, multer accepts). This
+    // step inspects the actual first bytes of the buffer; the multer pass
+    // becomes a cheap pre-filter rather than the security boundary.
+    const validation = validateUploadedFile(req.file.buffer, req.file.mimetype);
+    if (!validation.valid) {
+      throw new AppError(
+        415,
+        'INVALID_FILE_CONTENT',
+        validation.reason ?? 'File content does not match an allowed type',
       );
     }
 

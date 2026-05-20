@@ -37,26 +37,33 @@ export async function createLocation(input: CreateLocationInput, userId: string)
     }
   }
 
-  const location = await locationRepo.create({
-    name: input.name,
-    code: input.code,
-    address: input.address ?? null,
-    city: input.city ?? null,
-    province: input.province ?? null,
-    type: input.type,
-    isActive: input.isActive ?? true,
-    ...(input.parentId && { parent: { connect: { id: input.parentId } } }),
-  });
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'CREATE',
-      resourceType: 'Location',
-      resourceId: location.id,
-      newValues: location as unknown as Prisma.InputJsonValue,
-    },
+  // Wrap the create + audit in a single transaction so a crash between the
+  // two awaits can't leave an unaudited location row. Phase 16 Tier 6 audit
+  // catch — see docs/conventions/audit-pattern.md §3a for the pattern.
+  const location = await prisma.$transaction(async (tx) => {
+    const created = await locationRepo.create(
+      {
+        name: input.name,
+        code: input.code,
+        address: input.address ?? null,
+        city: input.city ?? null,
+        province: input.province ?? null,
+        type: input.type,
+        isActive: input.isActive ?? true,
+        ...(input.parentId && { parent: { connect: { id: input.parentId } } }),
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'CREATE',
+        resourceType: 'Location',
+        resourceId: created.id,
+        newValues: created as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return created;
   });
 
   return location;
@@ -103,18 +110,19 @@ export async function updateLocation(id: string, input: UpdateLocationInput, use
       : { disconnect: true };
   }
 
-  const updated = await locationRepo.update(id, updateData);
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'UPDATE',
-      resourceType: 'Location',
-      resourceId: id,
-      oldValues: existing as unknown as Prisma.InputJsonValue,
-      newValues: updated as unknown as Prisma.InputJsonValue,
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const next = await locationRepo.update(id, updateData, tx);
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'UPDATE',
+        resourceType: 'Location',
+        resourceId: id,
+        oldValues: existing as unknown as Prisma.InputJsonValue,
+        newValues: next as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return next;
   });
 
   return updated;
@@ -135,17 +143,17 @@ export async function deleteLocation(id: string, userId: string) {
     );
   }
 
-  await locationRepo.softDelete(id);
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'DELETE',
-      resourceType: 'Location',
-      resourceId: id,
-      oldValues: existing as unknown as Prisma.InputJsonValue,
-    },
+  await prisma.$transaction(async (tx) => {
+    await locationRepo.softDelete(id, tx);
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'DELETE',
+        resourceType: 'Location',
+        resourceId: id,
+        oldValues: existing as unknown as Prisma.InputJsonValue,
+      },
+    });
   });
 }
 

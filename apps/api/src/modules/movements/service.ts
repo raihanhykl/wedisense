@@ -763,7 +763,7 @@ export async function approveMovement(id: string, approvedByUserId: string) {
   }
 
   await prisma.$transaction(async (tx) => {
-    await repo.updateMovementStatus(id, 'APPROVED', approvedByUserId);
+    await repo.updateMovementStatus(tx, id, 'APPROVED', approvedByUserId);
     await tx.auditLog.create({
       data: {
         userId: approvedByUserId,
@@ -790,7 +790,7 @@ export async function rejectMovement(id: string, rejectedByUserId: string) {
   }
 
   await prisma.$transaction(async (tx) => {
-    await repo.updateMovementStatus(id, 'REJECTED');
+    await repo.updateMovementStatus(tx, id, 'REJECTED');
     await tx.auditLog.create({
       data: {
         userId: rejectedByUserId,
@@ -817,7 +817,7 @@ export async function completeMovement(id: string, userId: string) {
   }
 
   await prisma.$transaction(async (tx) => {
-    await repo.updateMovementStatus(id, 'COMPLETED');
+    await repo.updateMovementStatus(tx, id, 'COMPLETED');
     await tx.auditLog.create({
       data: {
         userId,

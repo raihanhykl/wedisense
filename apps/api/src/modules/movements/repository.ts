@@ -125,21 +125,28 @@ export function updateUserInTransaction(
 }
 
 // ── Status transition (using raw SQL since AssetMovement has no updatedAt) ────
-
+//
+// CRITICAL: takes a `tx` client. Earlier versions called the top-level
+// `prisma.$executeRaw` even when invoked inside a $transaction block, which
+// meant the raw UPDATE ran on a separate connection OUTSIDE the transaction
+// — so a failure in the same block's audit-log insert wouldn't roll the
+// status back. The Phase 16 Tier 6 transaction audit caught this. Always
+// pass the `tx` from the surrounding $transaction callback.
 export function updateMovementStatus(
+  tx: PrismaTransactionClient,
   id: string,
   status: string,
   approvedByUserId?: string,
 ) {
   if (approvedByUserId) {
-    return prisma.$executeRaw`
+    return tx.$executeRaw`
       UPDATE asset_movements
       SET status = ${status}::"MovementStatus",
           approved_by_user_id = ${approvedByUserId}::uuid
       WHERE id = ${id}::uuid
     `;
   }
-  return prisma.$executeRaw`
+  return tx.$executeRaw`
     UPDATE asset_movements
     SET status = ${status}::"MovementStatus"
     WHERE id = ${id}::uuid

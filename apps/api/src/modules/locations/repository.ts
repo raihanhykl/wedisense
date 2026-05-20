@@ -2,6 +2,14 @@ import { prisma } from '../../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import type { LocationListFilters } from './types.js';
 
+// Subset of the Prisma client surface exposed inside a $transaction callback.
+// Letting create/update/softDelete accept this so service-layer atomic writes
+// can stitch them together with the matching audit-log insert.
+type PrismaTransactionClient = Omit<
+  typeof prisma,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
 function buildWhereClause(filters: LocationListFilters): Prisma.LocationWhereInput {
   const where: Prisma.LocationWhereInput = { deletedAt: null };
 
@@ -53,16 +61,23 @@ export async function findById(id: string) {
   });
 }
 
-export async function create(data: Prisma.LocationCreateInput) {
-  return prisma.location.create({ data });
+export async function create(
+  data: Prisma.LocationCreateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).location.create({ data });
 }
 
-export async function update(id: string, data: Prisma.LocationUpdateInput) {
-  return prisma.location.update({ where: { id }, data });
+export async function update(
+  id: string,
+  data: Prisma.LocationUpdateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).location.update({ where: { id }, data });
 }
 
-export async function softDelete(id: string) {
-  return prisma.location.update({
+export async function softDelete(id: string, tx?: PrismaTransactionClient) {
+  return (tx ?? prisma).location.update({
     where: { id },
     data: { deletedAt: new Date() },
   });

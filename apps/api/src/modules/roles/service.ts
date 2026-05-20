@@ -24,24 +24,26 @@ export async function createRole(input: CreateRoleInput, actorId: string) {
     throw new AppError(409, 'DUPLICATE_ROLE_NAME', `Role name "${input.name}" already exists`);
   }
 
-  const role = await roleRepo.create({
-    name: input.name,
-    description: input.description ?? null,
-    isSystem: false,
+  return prisma.$transaction(async (tx) => {
+    const role = await roleRepo.create(
+      {
+        name: input.name,
+        description: input.description ?? null,
+        isSystem: false,
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'CREATE',
+        resourceType: 'Role',
+        resourceId: role.id,
+        newValues: role as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return role;
   });
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'CREATE',
-      resourceType: 'Role',
-      resourceId: role.id,
-      newValues: role as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  return role;
 }
 
 export async function updateRole(id: string, input: UpdateRoleInput, actorId: string) {
@@ -63,24 +65,27 @@ export async function updateRole(id: string, input: UpdateRoleInput, actorId: st
     }
   }
 
-  const updated = await roleRepo.update(id, {
-    ...(input.name !== undefined && { name: input.name }),
-    ...(input.description !== undefined && { description: input.description }),
+  return prisma.$transaction(async (tx) => {
+    const updated = await roleRepo.update(
+      id,
+      {
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.description !== undefined && { description: input.description }),
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'UPDATE',
+        resourceType: 'Role',
+        resourceId: id,
+        oldValues: existing as unknown as Prisma.InputJsonValue,
+        newValues: updated as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return updated;
   });
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'UPDATE',
-      resourceType: 'Role',
-      resourceId: id,
-      oldValues: existing as unknown as Prisma.InputJsonValue,
-      newValues: updated as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  return updated;
 }
 
 export async function deleteRole(id: string, actorId: string) {
@@ -98,17 +103,17 @@ export async function deleteRole(id: string, actorId: string) {
     throw new AppError(409, 'ROLE_HAS_USERS', 'Cannot delete a role that is assigned to users');
   }
 
-  await roleRepo.deleteRole(id);
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'DELETE',
-      resourceType: 'Role',
-      resourceId: id,
-      oldValues: existing as unknown as Prisma.InputJsonValue,
-    },
+  await prisma.$transaction(async (tx) => {
+    await roleRepo.deleteRole(id, tx);
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'DELETE',
+        resourceType: 'Role',
+        resourceId: id,
+        oldValues: existing as unknown as Prisma.InputJsonValue,
+      },
+    });
   });
 }
 
@@ -132,21 +137,31 @@ export async function setRolePermissions(
   }
 
   const oldPermissions = role.rolePermissions;
-  const newPermissions = await roleRepo.replacePermissions(roleId, input.permissionIds);
 
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'UPDATE',
-      resourceType: 'RolePermission',
-      resourceId: roleId,
-      oldValues: oldPermissions as unknown as Prisma.InputJsonValue,
-      newValues: newPermissions as unknown as Prisma.InputJsonValue,
-    },
+  // Permission replace + audit must commit atomically — Phase 16 Tier 8
+  // review caught the previous version writing the audit log AFTER
+  // replacePermissions's internal transaction had already committed, so
+  // a crash between the two left permission changes with no audit trail.
+  // The repo accepts an optional `tx` now so we can stitch them together.
+  const newPermissions = await prisma.$transaction(async (tx) => {
+    const next = await roleRepo.replacePermissions(roleId, input.permissionIds, tx);
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'UPDATE',
+        resourceType: 'RolePermission',
+        resourceId: roleId,
+        oldValues: oldPermissions as unknown as Prisma.InputJsonValue,
+        newValues: next as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return next;
   });
 
-  // Queue tour_sync job to update onboarding tour steps for this role
+  // Tour-sync queue add stays OUTSIDE the transaction. BullMQ writes to
+  // Redis (a separate system), so it can't share our Postgres tx anyway.
+  // A failed enqueue is recoverable by manually re-running tour-sync from
+  // /admin/tours; it's not worth rolling back the permission change.
   await tourSyncQueue.add(
     'sync',
     { roleId },

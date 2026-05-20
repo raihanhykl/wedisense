@@ -527,6 +527,46 @@ export interface PrintJobItem {
   labelTemplate: { id: string; name: string };
 }
 
+// ── Audit Log types ───────────────────────────────────────────────────
+
+export type AuditAction =
+  | 'CREATE'
+  | 'UPDATE'
+  | 'DELETE'
+  | 'LOGIN'
+  | 'LOGOUT'
+  | 'EXPORT'
+  | 'IMPORT'
+  | 'PRINT'
+  | 'APPROVE'
+  | 'REJECT';
+
+export interface AuditLogDto {
+  id: string;
+  userId: string | null;
+  user: { id: string; name: string; email: string } | null;
+  action: AuditAction;
+  resourceType: string;
+  resourceId: string;
+  /** null in list response; populated in detail (/api/audit-logs/:id) */
+  oldValues: unknown | null;
+  /** null in list response; populated in detail (/api/audit-logs/:id) */
+  newValues: unknown | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string; // ISO string
+}
+
+export interface AuditLogFilters {
+  search: string;
+  action: string;
+  resourceType: string;
+  resourceTypeCustom: string;
+  userId: string;
+  dateFrom: string;
+  dateTo: string;
+}
+
 // ── Tour types ────────────────────────────────────────────────────────
 export type TourStepPosition = 'top' | 'bottom' | 'left' | 'right' | 'auto';
 export type TourProgressAction = 'next' | 'prev' | 'skip' | 'complete';

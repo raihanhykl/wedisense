@@ -1,19 +1,36 @@
-import { Router, type Router as RouterType } from 'express';
-import rateLimit from 'express-rate-limit';
+import { Router, type Router as RouterType, type Request } from 'express';
 import { RATE_LIMIT } from '@wedisense/shared';
+import { createRateLimiter } from '../../lib/rate-limiter.js';
 import { asyncHandler } from '../../utils/async-handler.js';
 import { sendSuccess } from '../../utils/response.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { loginSchema, changePasswordSchema } from './schema.js';
 import * as authService from './service.js';
+import type { AuthContext } from './service.js';
+
+/**
+ * Capture audit context (IP + user-agent) from the incoming request.
+ * Express's `req.ip` honours `trust proxy` config; in dev mode without a
+ * proxy this returns ::ffff:127.0.0.1, which is fine — the value is
+ * informational, not a security boundary.
+ */
+function auditContextFrom(req: Request): AuthContext {
+  return {
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'] ?? undefined,
+  };
+}
 
 const router: RouterType = Router();
 
-const authRateLimit = rateLimit({
+// Tighter limiter for credential-touching endpoints (login + refresh). The
+// general limiter in app.ts still applies; this one tightens the cap from
+// 100/min to 10/min for the same IP. Both share Redis via the factory so
+// the count is consistent across replicas in production.
+const authRateLimit = createRateLimiter({
   windowMs: RATE_LIMIT.AUTH.windowMs,
   max: RATE_LIMIT.AUTH.max,
-  standardHeaders: true,
-  legacyHeaders: false,
+  prefix: 'rl:auth',
 });
 
 // POST /api/auth/login
@@ -22,7 +39,7 @@ router.post(
   authRateLimit,
   asyncHandler(async (req, res) => {
     const input = loginSchema.parse(req.body);
-    const result = await authService.login(input);
+    const result = await authService.login(input, auditContextFrom(req));
 
     // Set refresh token as httpOnly cookie
     res.cookie('refreshToken', result.refreshToken, {
@@ -44,7 +61,11 @@ router.post(
 router.post(
   '/logout',
   authenticate,
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    // Record audit BEFORE clearing the cookie so we still have req.user.id
+    // in case the audit write touches anything contextual. Failure here is
+    // swallowed by the service — we always proceed to cookie clearing.
+    await authService.recordLogout(req.user!.id, auditContextFrom(req));
     res.clearCookie('refreshToken', { path: '/api/auth' });
     sendSuccess(res, { message: 'Logged out successfully' });
   }),
@@ -53,6 +74,7 @@ router.post(
 // POST /api/auth/refresh
 router.post(
   '/refresh',
+  authRateLimit,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies?.['refreshToken'] as string | undefined;
 
@@ -93,7 +115,7 @@ router.put(
   authenticate,
   asyncHandler(async (req, res) => {
     const input = changePasswordSchema.parse(req.body);
-    await authService.changePassword(req.user!.id, input);
+    await authService.changePassword(req.user!.id, input, auditContextFrom(req));
     sendSuccess(res, { message: 'Password changed successfully' });
   }),
 );

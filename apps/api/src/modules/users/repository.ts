@@ -2,6 +2,12 @@ import { prisma } from '../../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import type { UserListFilters } from './types.js';
 
+// Tx-client subset for service-layer atomic writes (Phase 16 Tier 6).
+type PrismaTransactionClient = Omit<
+  typeof prisma,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
 const userSelectFields = {
   id: true,
   name: true,
@@ -104,39 +110,49 @@ export async function findByEmployeeId(employeeId: string, excludeId?: string) {
   return prisma.user.findFirst({ where });
 }
 
-export async function create(data: Prisma.UserCreateInput) {
-  return prisma.user.create({
+export async function create(
+  data: Prisma.UserCreateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).user.create({
     data,
     select: userSelectFields,
   });
 }
 
-export async function update(id: string, data: Prisma.UserUpdateInput) {
-  return prisma.user.update({
+export async function update(
+  id: string,
+  data: Prisma.UserUpdateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).user.update({
     where: { id },
     data,
     select: userSelectFields,
   });
 }
 
-export async function softDelete(id: string) {
-  return prisma.user.update({
+export async function softDelete(id: string, tx?: PrismaTransactionClient) {
+  return (tx ?? prisma).user.update({
     where: { id },
     data: { deletedAt: new Date(), status: 'RESIGNED' },
   });
 }
 
+/**
+ * Replace the role set on a user atomically. Accepts an optional `tx` so
+ * the service-layer caller can stitch this into a larger transaction
+ * with the matching audit-log insert (Phase 16 Tier 8 review fix).
+ */
 export async function replaceUserRoles(
   userId: string,
   roles: Array<{ roleId: string; locationId?: string | null }>,
+  tx?: PrismaTransactionClient,
 ) {
-  return prisma.$transaction(async (tx) => {
-    // Delete existing roles
-    await tx.userRole.deleteMany({ where: { userId } });
-
-    // Create new roles
+  const run = async (client: PrismaTransactionClient) => {
+    await client.userRole.deleteMany({ where: { userId } });
     if (roles.length > 0) {
-      await tx.userRole.createMany({
+      await client.userRole.createMany({
         data: roles.map((r) => ({
           userId,
           roleId: r.roleId,
@@ -144,13 +160,13 @@ export async function replaceUserRoles(
         })),
       });
     }
-
-    return tx.userRole.findMany({
+    return client.userRole.findMany({
       where: { userId },
       include: {
         role: { select: { id: true, name: true } },
         location: { select: { id: true, name: true } },
       },
     });
-  });
+  };
+  return tx ? run(tx) : prisma.$transaction(run);
 }

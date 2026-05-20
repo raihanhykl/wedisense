@@ -1,6 +1,12 @@
 import { prisma } from '../../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 
+// Tx-client subset for service-layer atomic writes (Phase 16 Tier 6).
+type PrismaTransactionClient = Omit<
+  typeof prisma,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
 export async function findMany() {
   return prisma.role.findMany({
     orderBy: { name: 'asc' },
@@ -29,16 +35,23 @@ export async function findByName(name: string, excludeId?: string) {
   return prisma.role.findFirst({ where });
 }
 
-export async function create(data: Prisma.RoleCreateInput) {
-  return prisma.role.create({ data });
+export async function create(
+  data: Prisma.RoleCreateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).role.create({ data });
 }
 
-export async function update(id: string, data: Prisma.RoleUpdateInput) {
-  return prisma.role.update({ where: { id }, data });
+export async function update(
+  id: string,
+  data: Prisma.RoleUpdateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).role.update({ where: { id }, data });
 }
 
-export async function deleteRole(id: string) {
-  return prisma.role.delete({ where: { id } });
+export async function deleteRole(id: string, tx?: PrismaTransactionClient) {
+  return (tx ?? prisma).role.delete({ where: { id } });
 }
 
 export async function getPermissions(roleId: string) {
@@ -48,26 +61,36 @@ export async function getPermissions(roleId: string) {
   });
 }
 
-export async function replacePermissions(roleId: string, permissionIds: string[]) {
-  return prisma.$transaction(async (tx) => {
-    // Delete all existing permissions for this role
-    await tx.rolePermission.deleteMany({ where: { roleId } });
-
-    // Create new permissions
+/**
+ * Replace the permission set on a role atomically.
+ *
+ * Accepts an optional `tx` so callers can compose this into a larger
+ * transaction (e.g. service-layer audit + permission replace in one
+ * boundary). When `tx` is passed, we run the three statements inside it
+ * directly. When it isn't, we spin up our own $transaction so the helper
+ * stays atomic on its own.
+ */
+export async function replacePermissions(
+  roleId: string,
+  permissionIds: string[],
+  tx?: PrismaTransactionClient,
+) {
+  const run = async (client: PrismaTransactionClient) => {
+    await client.rolePermission.deleteMany({ where: { roleId } });
     if (permissionIds.length > 0) {
-      await tx.rolePermission.createMany({
+      await client.rolePermission.createMany({
         data: permissionIds.map((permissionId) => ({
           roleId,
           permissionId,
         })),
       });
     }
-
-    return tx.rolePermission.findMany({
+    return client.rolePermission.findMany({
       where: { roleId },
       include: { permission: true },
     });
-  });
+  };
+  return tx ? run(tx) : prisma.$transaction(run);
 }
 
 export async function hasUsers(id: string): Promise<boolean> {
