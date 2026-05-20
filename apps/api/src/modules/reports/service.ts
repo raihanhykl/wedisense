@@ -59,26 +59,31 @@ export async function getReport(id: string, userId: string, isAdmin: boolean) {
 // ── Create report ─────────────────────────────────────────────────────
 
 export async function createReport(input: CreateReportInput, userId: string) {
-  const report = await repo.create({
-    name: input.name,
-    type: input.type,
-    parameters: (input.parameters ?? {}) as unknown as Prisma.InputJsonValue,
-    schedule: input.schedule ?? null,
-    status: 'PENDING',
-    createdBy: { connect: { id: userId } },
+  // Atomic create + audit so a crash between commits can't leave a report
+  // row with no audit entry (Phase 16 Tier 6).
+  return prisma.$transaction(async (tx) => {
+    const report = await repo.create(
+      {
+        name: input.name,
+        type: input.type,
+        parameters: (input.parameters ?? {}) as unknown as Prisma.InputJsonValue,
+        schedule: input.schedule ?? null,
+        status: 'PENDING',
+        createdBy: { connect: { id: userId } },
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'CREATE',
+        resourceType: 'Report',
+        resourceId: report.id,
+        newValues: { name: input.name, type: input.type } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return report;
   });
-
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'CREATE',
-      resourceType: 'Report',
-      resourceId: report.id,
-      newValues: { name: input.name, type: input.type } as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  return report;
 }
 
 // ── Update report ─────────────────────────────────────────────────────
@@ -97,20 +102,20 @@ export async function updateReport(
   if (input.parameters !== undefined) data.parameters = input.parameters as unknown as Prisma.InputJsonValue;
   if (input.schedule !== undefined) data.schedule = input.schedule ?? null;
 
-  const updated = await repo.update(id, data);
-
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'UPDATE',
-      resourceType: 'Report',
-      resourceId: id,
-      oldValues: { name: existing.name, type: existing.type } as unknown as Prisma.InputJsonValue,
-      newValues: { name: updated.name, type: updated.type } as unknown as Prisma.InputJsonValue,
-    },
+  return prisma.$transaction(async (tx) => {
+    const updated = await repo.update(id, data, tx);
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'UPDATE',
+        resourceType: 'Report',
+        resourceId: id,
+        oldValues: { name: existing.name, type: existing.type } as unknown as Prisma.InputJsonValue,
+        newValues: { name: updated.name, type: updated.type } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return updated;
   });
-
-  return updated;
 }
 
 // ── Delete report ─────────────────────────────────────────────────────
@@ -126,16 +131,17 @@ export async function deleteReport(id: string, userId: string, isAdmin: boolean)
     });
   }
 
-  await repo.remove(id);
-
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'DELETE',
-      resourceType: 'Report',
-      resourceId: id,
-      oldValues: { name: existing.name, type: existing.type } as unknown as Prisma.InputJsonValue,
-    },
+  await prisma.$transaction(async (tx) => {
+    await repo.remove(id, tx);
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'DELETE',
+        resourceType: 'Report',
+        resourceId: id,
+        oldValues: { name: existing.name, type: existing.type } as unknown as Prisma.InputJsonValue,
+      },
+    });
   });
 }
 

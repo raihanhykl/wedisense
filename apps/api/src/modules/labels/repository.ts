@@ -1,6 +1,12 @@
 import { prisma } from '../../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 
+// Tx-client subset for service-layer atomic writes (Phase 16 Tier 6).
+type PrismaTransactionClient = Omit<
+  typeof prisma,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
 // ── Template queries ───────────────────────────────────────────
 
 const templateListInclude = {
@@ -21,23 +27,30 @@ export function findTemplateById(id: string) {
   });
 }
 
-export function createTemplate(data: Prisma.LabelTemplateCreateInput) {
-  return prisma.labelTemplate.create({
+export function createTemplate(
+  data: Prisma.LabelTemplateCreateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).labelTemplate.create({
     data,
     include: templateListInclude,
   });
 }
 
-export function updateTemplate(id: string, data: Prisma.LabelTemplateUpdateInput) {
-  return prisma.labelTemplate.update({
+export function updateTemplate(
+  id: string,
+  data: Prisma.LabelTemplateUpdateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).labelTemplate.update({
     where: { id },
     data,
     include: templateListInclude,
   });
 }
 
-export function deleteTemplate(id: string) {
-  return prisma.labelTemplate.delete({ where: { id } });
+export function deleteTemplate(id: string, tx?: PrismaTransactionClient) {
+  return (tx ?? prisma).labelTemplate.delete({ where: { id } });
 }
 
 // ── Print Job queries ──────────────────────────────────────────

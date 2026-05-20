@@ -24,24 +24,26 @@ export async function createRole(input: CreateRoleInput, actorId: string) {
     throw new AppError(409, 'DUPLICATE_ROLE_NAME', `Role name "${input.name}" already exists`);
   }
 
-  const role = await roleRepo.create({
-    name: input.name,
-    description: input.description ?? null,
-    isSystem: false,
+  return prisma.$transaction(async (tx) => {
+    const role = await roleRepo.create(
+      {
+        name: input.name,
+        description: input.description ?? null,
+        isSystem: false,
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'CREATE',
+        resourceType: 'Role',
+        resourceId: role.id,
+        newValues: role as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return role;
   });
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'CREATE',
-      resourceType: 'Role',
-      resourceId: role.id,
-      newValues: role as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  return role;
 }
 
 export async function updateRole(id: string, input: UpdateRoleInput, actorId: string) {
@@ -63,24 +65,27 @@ export async function updateRole(id: string, input: UpdateRoleInput, actorId: st
     }
   }
 
-  const updated = await roleRepo.update(id, {
-    ...(input.name !== undefined && { name: input.name }),
-    ...(input.description !== undefined && { description: input.description }),
+  return prisma.$transaction(async (tx) => {
+    const updated = await roleRepo.update(
+      id,
+      {
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.description !== undefined && { description: input.description }),
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'UPDATE',
+        resourceType: 'Role',
+        resourceId: id,
+        oldValues: existing as unknown as Prisma.InputJsonValue,
+        newValues: updated as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return updated;
   });
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'UPDATE',
-      resourceType: 'Role',
-      resourceId: id,
-      oldValues: existing as unknown as Prisma.InputJsonValue,
-      newValues: updated as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  return updated;
 }
 
 export async function deleteRole(id: string, actorId: string) {
@@ -98,17 +103,17 @@ export async function deleteRole(id: string, actorId: string) {
     throw new AppError(409, 'ROLE_HAS_USERS', 'Cannot delete a role that is assigned to users');
   }
 
-  await roleRepo.deleteRole(id);
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'DELETE',
-      resourceType: 'Role',
-      resourceId: id,
-      oldValues: existing as unknown as Prisma.InputJsonValue,
-    },
+  await prisma.$transaction(async (tx) => {
+    await roleRepo.deleteRole(id, tx);
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'DELETE',
+        resourceType: 'Role',
+        resourceId: id,
+        oldValues: existing as unknown as Prisma.InputJsonValue,
+      },
+    });
   });
 }
 

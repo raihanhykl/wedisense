@@ -25,27 +25,31 @@ export async function getTemplate(id: string) {
 // ── Create Template ────────────────────────────────────────────
 
 export async function createTemplate(input: CreateTemplateInput, userId: string) {
-  const template = await repo.createTemplate({
-    name: input.name,
-    description: input.description ?? null,
-    paperWidthMm: input.paperWidthMm,
-    paperHeightMm: input.paperHeightMm,
-    isDefault: input.isDefault,
-    fields: input.fields as unknown as Prisma.InputJsonValue,
-    createdBy: { connect: { id: userId } },
+  // Atomic create + audit (Phase 16 Tier 6).
+  return prisma.$transaction(async (tx) => {
+    const template = await repo.createTemplate(
+      {
+        name: input.name,
+        description: input.description ?? null,
+        paperWidthMm: input.paperWidthMm,
+        paperHeightMm: input.paperHeightMm,
+        isDefault: input.isDefault,
+        fields: input.fields as unknown as Prisma.InputJsonValue,
+        createdBy: { connect: { id: userId } },
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'CREATE',
+        resourceType: 'LabelTemplate',
+        resourceId: template.id,
+        newValues: { name: input.name },
+      },
+    });
+    return template;
   });
-
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'CREATE',
-      resourceType: 'LabelTemplate',
-      resourceId: template.id,
-      newValues: { name: input.name },
-    },
-  });
-
-  return template;
 }
 
 // ── Update Template ────────────────────────────────────────────
@@ -65,19 +69,19 @@ export async function updateTemplate(id: string, input: UpdateTemplateInput, use
   if (input.isDefault !== undefined) data.isDefault = input.isDefault;
   if (input.fields !== undefined) data.fields = input.fields as unknown as Prisma.InputJsonValue;
 
-  const template = await repo.updateTemplate(id, data);
-
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'UPDATE',
-      resourceType: 'LabelTemplate',
-      resourceId: id,
-      newValues: input as unknown as Prisma.InputJsonValue,
-    },
+  return prisma.$transaction(async (tx) => {
+    const template = await repo.updateTemplate(id, data, tx);
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'UPDATE',
+        resourceType: 'LabelTemplate',
+        resourceId: id,
+        newValues: input as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return template;
   });
-
-  return template;
 }
 
 // ── Delete Template ────────────────────────────────────────────
@@ -88,16 +92,17 @@ export async function deleteTemplate(id: string, userId: string) {
     throw new AppError(404, 'TEMPLATE_NOT_FOUND', 'Label template not found');
   }
 
-  await repo.deleteTemplate(id);
-
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'DELETE',
-      resourceType: 'LabelTemplate',
-      resourceId: id,
-      newValues: { name: existing.name },
-    },
+  await prisma.$transaction(async (tx) => {
+    await repo.deleteTemplate(id, tx);
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'DELETE',
+        resourceType: 'LabelTemplate',
+        resourceId: id,
+        newValues: { name: existing.name },
+      },
+    });
   });
 }
 

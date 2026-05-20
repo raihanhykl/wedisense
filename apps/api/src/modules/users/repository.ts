@@ -2,6 +2,12 @@ import { prisma } from '../../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import type { UserListFilters } from './types.js';
 
+// Tx-client subset for service-layer atomic writes (Phase 16 Tier 6).
+type PrismaTransactionClient = Omit<
+  typeof prisma,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
 const userSelectFields = {
   id: true,
   name: true,
@@ -104,23 +110,30 @@ export async function findByEmployeeId(employeeId: string, excludeId?: string) {
   return prisma.user.findFirst({ where });
 }
 
-export async function create(data: Prisma.UserCreateInput) {
-  return prisma.user.create({
+export async function create(
+  data: Prisma.UserCreateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).user.create({
     data,
     select: userSelectFields,
   });
 }
 
-export async function update(id: string, data: Prisma.UserUpdateInput) {
-  return prisma.user.update({
+export async function update(
+  id: string,
+  data: Prisma.UserUpdateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).user.update({
     where: { id },
     data,
     select: userSelectFields,
   });
 }
 
-export async function softDelete(id: string) {
-  return prisma.user.update({
+export async function softDelete(id: string, tx?: PrismaTransactionClient) {
+  return (tx ?? prisma).user.update({
     where: { id },
     data: { deletedAt: new Date(), status: 'RESIGNED' },
   });

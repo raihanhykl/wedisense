@@ -39,29 +39,34 @@ export async function createUser(input: CreateUserInput, actorId: string) {
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
 
-  const user = await userRepo.create({
-    name: input.name,
-    email: input.email,
-    passwordHash,
-    employeeId: input.employeeId,
-    phone: input.phone ?? null,
-    avatarUrl: input.avatarUrl ?? null,
-    preferredLanguage: input.preferredLanguage ?? 'id',
-    status: input.status ?? 'ACTIVE',
+  return prisma.$transaction(async (tx) => {
+    const user = await userRepo.create(
+      {
+        name: input.name,
+        email: input.email,
+        passwordHash,
+        employeeId: input.employeeId,
+        phone: input.phone ?? null,
+        avatarUrl: input.avatarUrl ?? null,
+        preferredLanguage: input.preferredLanguage ?? 'id',
+        status: input.status ?? 'ACTIVE',
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'CREATE',
+        resourceType: 'User',
+        resourceId: user.id,
+        // Defensive: passwordHash is in the select set; spreading would
+        // leak the hash into the audit JSON. The bcrypt cost makes this
+        // a slow-but-feasible offline crack target; never log it.
+        newValues: { ...user, passwordHash: '[REDACTED]' } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return user;
   });
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'CREATE',
-      resourceType: 'User',
-      resourceId: user.id,
-      newValues: { ...user, passwordHash: '[REDACTED]' } as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  return user;
 }
 
 export async function updateUser(id: string, input: UpdateUserInput, actorId: string) {
@@ -86,29 +91,34 @@ export async function updateUser(id: string, input: UpdateUserInput, actorId: st
     }
   }
 
-  const updated = await userRepo.update(id, {
-    ...(input.name !== undefined && { name: input.name }),
-    ...(input.email !== undefined && { email: input.email }),
-    ...(input.employeeId !== undefined && { employeeId: input.employeeId }),
-    ...(input.phone !== undefined && { phone: input.phone }),
-    ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
-    ...(input.preferredLanguage !== undefined && { preferredLanguage: input.preferredLanguage }),
-    ...(input.status !== undefined && { status: input.status }),
+  return prisma.$transaction(async (tx) => {
+    const updated = await userRepo.update(
+      id,
+      {
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.email !== undefined && { email: input.email }),
+        ...(input.employeeId !== undefined && { employeeId: input.employeeId }),
+        ...(input.phone !== undefined && { phone: input.phone }),
+        ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+        ...(input.preferredLanguage !== undefined && {
+          preferredLanguage: input.preferredLanguage,
+        }),
+        ...(input.status !== undefined && { status: input.status }),
+      },
+      tx,
+    );
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'UPDATE',
+        resourceType: 'User',
+        resourceId: id,
+        oldValues: existing as unknown as Prisma.InputJsonValue,
+        newValues: updated as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return updated;
   });
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'UPDATE',
-      resourceType: 'User',
-      resourceId: id,
-      oldValues: existing as unknown as Prisma.InputJsonValue,
-      newValues: updated as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  return updated;
 }
 
 export async function deleteUser(id: string, actorId: string) {
@@ -117,17 +127,17 @@ export async function deleteUser(id: string, actorId: string) {
     throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
   }
 
-  await userRepo.softDelete(id);
-
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId: actorId,
-      action: 'DELETE',
-      resourceType: 'User',
-      resourceId: id,
-      oldValues: existing as unknown as Prisma.InputJsonValue,
-    },
+  await prisma.$transaction(async (tx) => {
+    await userRepo.softDelete(id, tx);
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'DELETE',
+        resourceType: 'User',
+        resourceId: id,
+        oldValues: existing as unknown as Prisma.InputJsonValue,
+      },
+    });
   });
 }
 

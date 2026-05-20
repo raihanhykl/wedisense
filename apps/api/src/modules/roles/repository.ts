@@ -1,6 +1,12 @@
 import { prisma } from '../../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 
+// Tx-client subset for service-layer atomic writes (Phase 16 Tier 6).
+type PrismaTransactionClient = Omit<
+  typeof prisma,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
 export async function findMany() {
   return prisma.role.findMany({
     orderBy: { name: 'asc' },
@@ -29,16 +35,23 @@ export async function findByName(name: string, excludeId?: string) {
   return prisma.role.findFirst({ where });
 }
 
-export async function create(data: Prisma.RoleCreateInput) {
-  return prisma.role.create({ data });
+export async function create(
+  data: Prisma.RoleCreateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).role.create({ data });
 }
 
-export async function update(id: string, data: Prisma.RoleUpdateInput) {
-  return prisma.role.update({ where: { id }, data });
+export async function update(
+  id: string,
+  data: Prisma.RoleUpdateInput,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).role.update({ where: { id }, data });
 }
 
-export async function deleteRole(id: string) {
-  return prisma.role.delete({ where: { id } });
+export async function deleteRole(id: string, tx?: PrismaTransactionClient) {
+  return (tx ?? prisma).role.delete({ where: { id } });
 }
 
 export async function getPermissions(roleId: string) {
