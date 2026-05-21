@@ -1,0 +1,52 @@
+{
+  "page": {
+    "title": "Barcode Scanner",
+    "subtitle": "Scan an asset barcode or product EAN to quickly find or register items.",
+    "tapToScan": "Tap to Scan",
+    "lookingUp": "Looking up {value}…"
+  },
+  "scanner": {
+    "close": "Close scanner",
+    "torch": "Toggle flashlight",
+    "switchCamera": "Switch camera",
+    "zoom": "Zoom",
+    "starting": "Starting camera…",
+    "modeSingle": "Single",
+    "modeBatch": "Batch",
+    "batchCart": "{count} scanned",
+    "batchCommit": "Process batch"
+  },
+  "manual": {
+    "openButton": "Enter barcode manually",
+    "label": "Barcode value",
+    "placeholder": "Type or paste barcode value…",
+    "submit": "Look up",
+    "cancel": "Cancel"
+  },
+  "result": {
+    "productFound": "Product Found",
+    "productNotFound": "Product Not Found",
+    "productNotFoundDescription": "No product information was found for this EAN code.",
+    "barcodeNotRecognized": "Barcode Not Recognized",
+    "barcodeNotRecognizedDescription": "This barcode does not match any known asset or product format.",
+    "error": "Error",
+    "name": "Name",
+    "brand": "Brand",
+    "category": "Category"
+  },
+  "actions": {
+    "createAsset": "Create Asset",
+    "createAssetManually": "Create Asset Manually",
+    "createNewAsset": "Create new asset",
+    "searchManually": "Search manually",
+    "cancel": "Cancel",
+    "dismiss": "Dismiss"
+  },
+  "errors": {
+    "generic": "An error occurred while processing the barcode.",
+    "cameraDenied": "Camera permission denied. Enable it in your browser settings.",
+    "cameraNotFound": "No camera was detected on this device.",
+    "cameraInUse": "The camera is in use by another tab or application.",
+    "cameraUnavailable": "Camera unavailable. Try the manual entry instead."
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "page": {
+    "title": "Pemindai Barcode",
+    "subtitle": "Pindai barcode aset atau EAN produk untuk mencari atau mendaftarkan item.",
+    "tapToScan": "Ketuk untuk Memindai",
+    "lookingUp": "Mencari {value}…"
+  },
+  "scanner": {
+    "close": "Tutup pemindai",
+    "torch": "Alihkan senter",
+    "switchCamera": "Ganti kamera",
+    "zoom": "Zoom",
+    "starting": "Menyalakan kamera…",
+    "modeSingle": "Tunggal",
+    "modeBatch": "Batch",
+    "batchCart": "{count} dipindai",
+    "batchCommit": "Proses batch"
+  },
+  "manual": {
+    "openButton": "Masukkan barcode manual",
+    "label": "Nilai barcode",
+    "placeholder": "Ketik atau tempel nilai barcode…",
+    "submit": "Cari",
+    "cancel": "Batal"
+  },
+  "result": {
+    "productFound": "Produk Ditemukan",
+    "productNotFound": "Produk Tidak Ditemukan",
+    "productNotFoundDescription": "Tidak ada informasi produk untuk kode EAN ini.",
+    "barcodeNotRecognized": "Barcode Tidak Dikenali",
+    "barcodeNotRecognizedDescription": "Barcode ini tidak cocok dengan format aset atau produk yang dikenal.",
+    "error": "Error",
+    "name": "Nama",
+    "brand": "Merek",
+    "category": "Kategori"
+  },
+  "actions": {
+    "createAsset": "Buat Aset",
+    "createAssetManually": "Buat Aset Manual",
+    "createNewAsset": "Buat aset baru",
+    "searchManually": "Cari manual",
+    "cancel": "Batal",
+    "dismiss": "Tutup"
+  },
+  "errors": {
+    "generic": "Terjadi kesalahan saat memproses barcode.",
+    "cameraDenied": "Izin kamera ditolak. Aktifkan di pengaturan browser.",
+    "cameraNotFound": "Tidak ada kamera terdeteksi di perangkat ini.",
+    "cameraInUse": "Kamera sedang digunakan tab atau aplikasi lain.",
+    "cameraUnavailable": "Kamera tidak tersedia. Coba masukkan manual."
+  }
+}
