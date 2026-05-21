@@ -147,7 +147,7 @@ export default function PurchaseOrdersPage() {
         vendor: debouncedVendor,
       };
       const { data, meta: nextMeta } = await apiGetPaginated<PurchaseOrderListItem[]>(
-        "/purchase-orders",
+        "/api/purchase-orders",
         buildParams(effectiveFilters, page, limit),
       );
       setRows(data);

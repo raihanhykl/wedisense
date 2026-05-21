@@ -23,6 +23,16 @@ const navItems: NavItem[] = [
   { label: "Scan", href: "/scan" },
   { label: "Dashboard", href: "/dashboard" },
   { label: "Assets", href: "/admin/assets" },
+  // Phase 17 — Procurement section (Purchase Orders + Procurement Batches).
+  // Placed directly under Assets because the batch flow is the natural
+  // entry-point for new-asset registration, and the user flow runs
+  // Procurement → Batch → Assets.
+  {
+    label: "Purchase Orders",
+    href: "/admin/purchase-orders",
+    permission: "purchase-orders:read",
+  },
+  { label: "Procurement", href: "/admin/procurement", permission: "procurement:read" },
   { label: "Movements", href: "/admin/movements" },
   { label: "Maintenance", href: "/admin/maintenance" },
   { label: "Print", href: "/admin/print" },

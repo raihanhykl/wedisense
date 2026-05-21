@@ -107,7 +107,7 @@ export default function NewPurchaseOrderPage() {
         ...(values.notes && { notes: values.notes }),
       };
       const created = await apiPost<PurchaseOrderDetail>(
-        "/purchase-orders",
+        "/api/purchase-orders",
         payload,
       );
       router.push(`/admin/purchase-orders/${created.id}`);

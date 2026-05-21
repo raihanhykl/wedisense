@@ -197,7 +197,7 @@ function EditDialog({ open, po, onClose, onSaved }: EditDialogProps) {
           : null,
       };
       const updated = await apiPut<PurchaseOrderDetail>(
-        `/purchase-orders/${po.id}`,
+        `/api/purchase-orders/${po.id}`,
         payload,
       );
       onSaved(updated);
@@ -374,7 +374,7 @@ export default function PurchaseOrderDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<PurchaseOrderDetail>(`/purchase-orders/${id}`);
+      const data = await apiGet<PurchaseOrderDetail>(`/api/purchase-orders/${id}`);
       setPo(data);
     } catch (err) {
       setError(getApiErrorMessage(err, "Failed to load purchase order"));
@@ -393,7 +393,7 @@ export default function PurchaseOrderDetailPage() {
     setActionError(null);
     try {
       const updated = await apiPut<PurchaseOrderDetail>(
-        `/purchase-orders/${po.id}/close`,
+        `/api/purchase-orders/${po.id}/close`,
         {},
       );
       setPo({ ...po, ...updated });
@@ -410,7 +410,7 @@ export default function PurchaseOrderDetailPage() {
     setActionError(null);
     try {
       const updated = await apiPut<PurchaseOrderDetail>(
-        `/purchase-orders/${po.id}/cancel`,
+        `/api/purchase-orders/${po.id}/cancel`,
         { reason },
       );
       setPo({ ...po, ...updated });
@@ -431,7 +431,7 @@ export default function PurchaseOrderDetailPage() {
     setBusyAction("delete");
     setActionError(null);
     try {
-      await apiDelete(`/purchase-orders/${po.id}`);
+      await apiDelete(`/api/purchase-orders/${po.id}`);
       router.push("/admin/purchase-orders");
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Failed to delete PO"));

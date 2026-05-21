@@ -193,7 +193,7 @@ function ReceiveDialog({
         receivedByPosition: form.receivedByPosition.trim() || null,
       };
       const updated = await apiPut<ProcurementBatchDetail>(
-        `/procurement-batches/${batch.id}/receive`,
+        `/api/procurement-batches/${batch.id}/receive`,
         payload,
       );
       onDone(updated);
@@ -384,7 +384,7 @@ function CompleteDialog({
         ...(form.totalAmount && { totalAmount: Number(form.totalAmount) }),
       };
       const updated = await apiPut<ProcurementBatchDetail>(
-        `/procurement-batches/${batch.id}/complete`,
+        `/api/procurement-batches/${batch.id}/complete`,
         payload,
       );
       onDone(updated);
@@ -588,7 +588,7 @@ function EditDialog({
         notes: form.notes || null,
       };
       const updated = await apiPut<ProcurementBatchDetail>(
-        `/procurement-batches/${batch.id}`,
+        `/api/procurement-batches/${batch.id}`,
         payload,
       );
       onSaved(updated);
@@ -684,7 +684,7 @@ export default function ProcurementBatchDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<ProcurementBatchDetail>(`/procurement-batches/${id}`);
+      const data = await apiGet<ProcurementBatchDetail>(`/api/procurement-batches/${id}`);
       setBatch(data);
     } catch (err) {
       setError(getApiErrorMessage(err, "Failed to load batch"));
@@ -698,7 +698,7 @@ export default function ProcurementBatchDetailPage() {
     setAuditLoading(true);
     try {
       const rows = await apiGet<BatchAuditEntry[]>(
-        `/procurement-batches/${id}/audit`,
+        `/api/procurement-batches/${id}/audit`,
       );
       setAudit(rows);
     } catch {
@@ -722,7 +722,7 @@ export default function ProcurementBatchDetailPage() {
     (async () => {
       try {
         const rows = await apiGet<Array<{ id: string; name: string; status: string }>>(
-          "/users",
+          "/api/users",
           { limit: 200 },
         );
         if (!cancelled) {
@@ -747,7 +747,7 @@ export default function ProcurementBatchDetailPage() {
     setActionError(null);
     try {
       const updated = await apiPut<ProcurementBatchDetail>(
-        `/procurement-batches/${batch.id}/submit`,
+        `/api/procurement-batches/${batch.id}/submit`,
         {},
       );
       setBatch({ ...batch, ...updated });
@@ -765,7 +765,7 @@ export default function ProcurementBatchDetailPage() {
     setActionError(null);
     try {
       const updated = await apiPut<ProcurementBatchDetail>(
-        `/procurement-batches/${batch.id}/cancel`,
+        `/api/procurement-batches/${batch.id}/cancel`,
         { reason },
       );
       setBatch({ ...batch, ...updated });
@@ -786,7 +786,7 @@ export default function ProcurementBatchDetailPage() {
     setBusyAction("delete");
     setActionError(null);
     try {
-      await apiDelete(`/procurement-batches/${batch.id}`);
+      await apiDelete(`/api/procurement-batches/${batch.id}`);
       router.push("/admin/procurement");
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Failed to delete batch"));

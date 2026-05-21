@@ -100,11 +100,11 @@ export default function NewProcurementBatchPage() {
         // accept multi-value status on this endpoint yet, so we fetch
         // both buckets and concatenate.
         const [open, partial] = await Promise.all([
-          apiGet<PurchaseOrderListItem[]>("/purchase-orders", {
+          apiGet<PurchaseOrderListItem[]>("/api/purchase-orders", {
             status: "OPEN",
             limit: 100,
           }),
-          apiGet<PurchaseOrderListItem[]>("/purchase-orders", {
+          apiGet<PurchaseOrderListItem[]>("/api/purchase-orders", {
             status: "PARTIALLY_RECEIVED",
             limit: 100,
           }),
@@ -129,8 +129,8 @@ export default function NewProcurementBatchPage() {
     (async () => {
       try {
         const [locs, cats] = await Promise.all([
-          apiGet<LocationOption[]>("/locations", { limit: 200 }),
-          apiGet<CategoryOption[]>("/asset-categories", { limit: 100 }),
+          apiGet<LocationOption[]>("/api/locations", { limit: 200 }),
+          apiGet<CategoryOption[]>("/api/asset-categories", { limit: 100 }),
         ]);
         if (!cancelled) {
           setLocations(locs);
@@ -184,7 +184,7 @@ export default function NewProcurementBatchPage() {
         ...(values.notes && { notes: values.notes }),
       };
       const created = await apiPost<ProcurementBatchDetail>(
-        "/procurement-batches",
+        "/api/procurement-batches",
         payload,
       );
       router.push(`/admin/procurement/${created.id}`);

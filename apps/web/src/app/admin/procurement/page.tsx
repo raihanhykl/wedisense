@@ -170,7 +170,7 @@ export default function ProcurementBatchesPage() {
       };
       const { data, meta: nextMeta } = await apiGetPaginated<
         ProcurementBatchListItem[]
-      >("/procurement-batches", buildParams(effectiveFilters, page, limit));
+      >("/api/procurement-batches", buildParams(effectiveFilters, page, limit));
       setRows(data);
       setMeta(nextMeta);
     } catch (err) {
