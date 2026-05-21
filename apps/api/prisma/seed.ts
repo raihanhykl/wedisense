@@ -28,6 +28,21 @@ async function main() {
     { resource: 'labels', action: 'manage' },
     { resource: 'tours', action: 'manage' },
     { resource: 'categories', action: 'manage' },
+    // Phase 17 — procurement batch tracking. Separate resource for
+    // PurchaseOrder (commercial layer) and ProcurementBatch (receipt
+    // layer) so location-scoped roles can be granted one without the
+    // other if needed later.
+    { resource: 'purchase-orders', action: 'read' },
+    { resource: 'purchase-orders', action: 'create' },
+    { resource: 'purchase-orders', action: 'update' },
+    { resource: 'purchase-orders', action: 'close' },
+    { resource: 'purchase-orders', action: 'cancel' },
+    { resource: 'procurement', action: 'read' },
+    { resource: 'procurement', action: 'create' },
+    { resource: 'procurement', action: 'update' },
+    { resource: 'procurement', action: 'complete' },
+    { resource: 'procurement', action: 'cancel' },
+    { resource: 'procurement', action: 'export' },
   ]
 
   const permissions: Record<string, string> = {}
@@ -85,15 +100,22 @@ async function main() {
       'movements:create', 'movements:approve',
       'maintenance:manage',
       'reports:view', 'reports:generate',
+      // Phase 17 procurement: MANAGER drives day-to-day pengadaan but
+      // cannot cancel a PO (that's a financial/admin call).
+      'purchase-orders:read', 'purchase-orders:create', 'purchase-orders:update',
+      'procurement:read', 'procurement:create', 'procurement:update',
+      'procurement:complete', 'procurement:export',
     ],
     STAFF: [
       'assets:read', 'assets:print',
       'movements:create',
       'reports:view',
+      'purchase-orders:read', 'procurement:read',
     ],
     VIEWER: [
       'assets:read',
       'reports:view',
+      'purchase-orders:read', 'procurement:read',
     ],
   }
 

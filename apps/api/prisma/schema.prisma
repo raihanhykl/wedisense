@@ -146,40 +146,76 @@ enum ReportSchedule {
   MONTHLY
 }
 
+// Procurement lifecycle.
+//
+// A PurchaseOrder is the commercial commitment to a vendor. Status walks
+// forward as goods arrive: OPEN → PARTIALLY_RECEIVED (≥1 child batch
+// received) → FULLY_RECEIVED (all batches received) → CLOSED (admin
+// finalises). CANCELLED is terminal and reachable only from OPEN or
+// PARTIALLY_RECEIVED — once any item is RECEIVED the batch stays on the
+// books even if the rest of the PO is voided.
+enum PurchaseOrderStatus {
+  OPEN
+  PARTIALLY_RECEIVED
+  FULLY_RECEIVED
+  CLOSED
+  CANCELLED
+}
+
+// One ProcurementBatch == one BAST event == one physical hand-over.
+// DRAFT  : header created, no assets yet
+// ITEMS_PENDING : assets created and linked, awaiting physical receipt
+// RECEIVED      : BAST signed + items physically received
+// COMPLETED     : invoice + tax invoice in, batch locked (immutable)
+// CANCELLED     : only reachable from DRAFT / ITEMS_PENDING (never after
+//                 RECEIVED — assets are already live by then)
+enum ProcurementBatchStatus {
+  DRAFT
+  ITEMS_PENDING
+  RECEIVED
+  COMPLETED
+  CANCELLED
+}
+
 // ─── Models ─────────────────────────────────────────────────────────────────────
 
 model User {
-  id                 String    @id @default(uuid()) @db.Uuid
-  name               String    @map("name")
-  email              String    @unique @map("email")
-  passwordHash       String    @map("password_hash")
-  employeeId         String    @map("employee_id")
-  phone              String?   @map("phone")
-  avatarUrl          String?   @map("avatar_url")
-  preferredLanguage  String    @default("id") @map("preferred_language")
-  status             UserStatus @default(ACTIVE) @map("status")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-  deletedAt          DateTime? @map("deleted_at")
+  id                String     @id @default(uuid()) @db.Uuid
+  name              String     @map("name")
+  email             String     @unique @map("email")
+  passwordHash      String     @map("password_hash")
+  employeeId        String     @map("employee_id")
+  phone             String?    @map("phone")
+  avatarUrl         String?    @map("avatar_url")
+  preferredLanguage String     @default("id") @map("preferred_language")
+  status            UserStatus @default(ACTIVE) @map("status")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+  deletedAt         DateTime?  @map("deleted_at")
 
   // Relations
-  userRoles              UserRole[]
-  assignedAssets         Asset[]              @relation("AssetAssignedTo")
-  performedMovements     AssetMovement[]      @relation("MovementPerformedBy")
-  approvedMovements      AssetMovement[]      @relation("MovementApprovedBy")
-  movementsAsFromUser    AssetMovement[]      @relation("MovementFromUser")
-  movementsAsToUser      AssetMovement[]      @relation("MovementToUser")
-  maintenanceSchedules   MaintenanceSchedule[] @relation("MaintenanceAssignedTo")
-  maintenanceLogs        MaintenanceLog[]     @relation("MaintenancePerformedBy")
-  notifications          Notification[]
-  auditLogs              AuditLog[]
-  createdAssets          Asset[]              @relation("AssetCreatedBy")
-  reports                Report[]
-  printJobs              PrintJob[]
-  labelTemplates         LabelTemplate[]
-  tourProgress           UserTourProgress[]
-  savedViews             UserSavedView[]
-  locationsAsContact     Location[]           @relation("LocationContact")
+  userRoles                   UserRole[]
+  assignedAssets              Asset[]               @relation("AssetAssignedTo")
+  performedMovements          AssetMovement[]       @relation("MovementPerformedBy")
+  approvedMovements           AssetMovement[]       @relation("MovementApprovedBy")
+  movementsAsFromUser         AssetMovement[]       @relation("MovementFromUser")
+  movementsAsToUser           AssetMovement[]       @relation("MovementToUser")
+  maintenanceSchedules        MaintenanceSchedule[] @relation("MaintenanceAssignedTo")
+  maintenanceLogs             MaintenanceLog[]      @relation("MaintenancePerformedBy")
+  notifications               Notification[]
+  auditLogs                   AuditLog[]
+  createdAssets               Asset[]               @relation("AssetCreatedBy")
+  reports                     Report[]
+  printJobs                   PrintJob[]
+  labelTemplates              LabelTemplate[]
+  tourProgress                UserTourProgress[]
+  savedViews                  UserSavedView[]
+  locationsAsContact          Location[]            @relation("LocationContact")
+  createdPurchaseOrders       PurchaseOrder[]       @relation("PurchaseOrderCreatedBy")
+  closedPurchaseOrders        PurchaseOrder[]       @relation("PurchaseOrderClosedBy")
+  createdProcurementBatches   ProcurementBatch[]    @relation("ProcurementBatchCreatedBy")
+  receivedProcurementBatches  ProcurementBatch[]    @relation("ProcurementBatchReceivedBy")
+  completedProcurementBatches ProcurementBatch[]    @relation("ProcurementBatchCompletedBy")
 
   @@index([status])
   @@index([deletedAt])
@@ -240,8 +276,8 @@ model Permission {
 }
 
 model RolePermission {
-  roleId       String     @map("role_id") @db.Uuid
-  permissionId String     @map("permission_id") @db.Uuid
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
 
   role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
@@ -269,20 +305,20 @@ model UserRole {
 }
 
 model Location {
-  id        String       @id @default(uuid()) @db.Uuid
-  name      String       @map("name")
-  code      String       @unique @map("code")
-  address   String?      @map("address")
-  city      String?      @map("city")
-  province  String?      @map("province")
-  type      LocationType @map("type")
-  parentId  String?      @map("parent_id") @db.Uuid
-  isActive  Boolean      @default(true) @map("is_active")
+  id       String       @id @default(uuid()) @db.Uuid
+  name     String       @map("name")
+  code     String       @unique @map("code")
+  address  String?      @map("address")
+  city     String?      @map("city")
+  province String?      @map("province")
+  type     LocationType @map("type")
+  parentId String?      @map("parent_id") @db.Uuid
+  isActive Boolean      @default(true) @map("is_active")
 
   // Geographic coordinates (decimal degrees, WGS84). Decimal(10,7) ≈ 1cm
   // precision — adequate for site-level pins on Leaflet/OpenStreetMap.
-  latitude  Decimal?     @map("latitude")  @db.Decimal(10, 7)
-  longitude Decimal?     @map("longitude") @db.Decimal(11, 7)
+  latitude  Decimal? @map("latitude") @db.Decimal(10, 7)
+  longitude Decimal? @map("longitude") @db.Decimal(11, 7)
 
   // Single primary photo. Multi-photo gallery would land as a separate
   // LocationAttachment table; not modelled here until that need is real.
@@ -309,18 +345,19 @@ model Location {
   // truly extensible across future location types.
   customFields Json? @map("custom_fields")
 
-  createdAt DateTime     @default(now()) @map("created_at")
-  updatedAt DateTime     @updatedAt @map("updated_at")
-  deletedAt DateTime?    @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  parent   Location?  @relation("LocationTree", fields: [parentId], references: [id], onDelete: SetNull)
-  children Location[] @relation("LocationTree")
-  contactUser User? @relation("LocationContact", fields: [contactUserId], references: [id], onDelete: SetNull)
-  assets   Asset[]
-  userRoles UserRole[]
-  movementsFrom AssetMovement[] @relation("MovementFromLocation")
-  movementsTo   AssetMovement[] @relation("MovementToLocation")
+  parent                      Location?          @relation("LocationTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children                    Location[]         @relation("LocationTree")
+  contactUser                 User?              @relation("LocationContact", fields: [contactUserId], references: [id], onDelete: SetNull)
+  assets                      Asset[]
+  userRoles                   UserRole[]
+  movementsFrom               AssetMovement[]    @relation("MovementFromLocation")
+  movementsTo                 AssetMovement[]    @relation("MovementToLocation")
+  procurementBatchesAsDefault ProcurementBatch[] @relation("ProcurementBatchDefaultLocation")
 
   @@index([parentId])
   @@index([type])
@@ -331,24 +368,25 @@ model Location {
 }
 
 model AssetCategory {
-  id                       String              @id @default(uuid()) @db.Uuid
-  name                     String              @map("name")
-  code                     String              @unique @map("code")
-  description              String?             @map("description")
-  parentId                 String?             @map("parent_id") @db.Uuid
-  depreciationMethod       DepreciationMethod  @default(NONE) @map("depreciation_method")
-  defaultDepreciationRate  Float?              @map("default_depreciation_rate")
-  defaultUsefulLifeMonths  Int?                @map("default_useful_life_months")
-  icon                     String?             @map("icon")
-  color                    String?             @map("color")
-  createdAt                DateTime            @default(now()) @map("created_at")
-  updatedAt                DateTime            @updatedAt @map("updated_at")
-  deletedAt                DateTime?           @map("deleted_at")
+  id                      String             @id @default(uuid()) @db.Uuid
+  name                    String             @map("name")
+  code                    String             @unique @map("code")
+  description             String?            @map("description")
+  parentId                String?            @map("parent_id") @db.Uuid
+  depreciationMethod      DepreciationMethod @default(NONE) @map("depreciation_method")
+  defaultDepreciationRate Float?             @map("default_depreciation_rate")
+  defaultUsefulLifeMonths Int?               @map("default_useful_life_months")
+  icon                    String?            @map("icon")
+  color                   String?            @map("color")
+  createdAt               DateTime           @default(now()) @map("created_at")
+  updatedAt               DateTime           @updatedAt @map("updated_at")
+  deletedAt               DateTime?          @map("deleted_at")
 
   // Relations
-  parent   AssetCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
-  children AssetCategory[] @relation("CategoryTree")
-  products Product[]
+  parent                      AssetCategory?     @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children                    AssetCategory[]    @relation("CategoryTree")
+  products                    Product[]
+  procurementBatchesAsDefault ProcurementBatch[] @relation("ProcurementBatchDefaultCategory")
 
   @@index([parentId])
   @@index([deletedAt])
@@ -414,15 +452,23 @@ model Asset {
   notes             String?        @map("notes")
   customFields      Json?          @map("custom_fields")
   createdByUserId   String         @map("created_by_user_id") @db.Uuid
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
-  deletedAt         DateTime?      @map("deleted_at")
+
+  // Nullable: keeps existing rows valid (legacy assets carry no batch),
+  // and single-asset create flows (manual entry, EAN scan) may skip the
+  // batch link. Service-layer enforces non-null only on the bulk-import
+  // path so a procurement audit can land on a single batch row.
+  procurementBatchId String? @map("procurement_batch_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  product              Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
-  location             Location             @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  assignedTo           User?                @relation("AssetAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  createdBy            User                 @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  product              Product               @relation(fields: [productId], references: [id], onDelete: Restrict)
+  location             Location              @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  assignedTo           User?                 @relation("AssetAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  createdBy            User                  @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  procurementBatch     ProcurementBatch?     @relation(fields: [procurementBatchId], references: [id], onDelete: SetNull)
   movements            AssetMovement[]
   maintenanceSchedules MaintenanceSchedule[]
   maintenanceLogs      MaintenanceLog[]
@@ -437,6 +483,7 @@ model Asset {
   @@index([condition])
   @@index([warrantyEndDate])
   @@index([createdByUserId])
+  @@index([procurementBatchId])
   @@index([deletedAt])
   @@map("assets")
 }
@@ -460,13 +507,13 @@ model AssetMovement {
   createdAt          DateTime       @default(now()) @map("created_at")
 
   // Relations
-  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
-  fromUser    User?     @relation("MovementFromUser", fields: [fromUserId], references: [id], onDelete: SetNull)
-  toUser      User?     @relation("MovementToUser", fields: [toUserId], references: [id], onDelete: SetNull)
+  asset        Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  fromUser     User?     @relation("MovementFromUser", fields: [fromUserId], references: [id], onDelete: SetNull)
+  toUser       User?     @relation("MovementToUser", fields: [toUserId], references: [id], onDelete: SetNull)
   fromLocation Location? @relation("MovementFromLocation", fields: [fromLocationId], references: [id], onDelete: SetNull)
-  toLocation  Location? @relation("MovementToLocation", fields: [toLocationId], references: [id], onDelete: SetNull)
-  performedBy User      @relation("MovementPerformedBy", fields: [performedByUserId], references: [id], onDelete: Restrict)
-  approvedBy  User?     @relation("MovementApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  toLocation   Location? @relation("MovementToLocation", fields: [toLocationId], references: [id], onDelete: SetNull)
+  performedBy  User      @relation("MovementPerformedBy", fields: [performedByUserId], references: [id], onDelete: Restrict)
+  approvedBy   User?     @relation("MovementApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
   @@index([assetId])
   @@index([movementType])
@@ -496,8 +543,8 @@ model MaintenanceSchedule {
   updatedAt        DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  asset      Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  assignedTo User?  @relation("MaintenanceAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  asset      Asset            @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assignedTo User?            @relation("MaintenanceAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
   logs       MaintenanceLog[]
 
   @@index([assetId])
@@ -682,4 +729,177 @@ model UserTourProgress {
   @@index([userId])
   @@index([tourId])
   @@map("user_tour_progress")
+}
+
+// PurchaseOrder is the commercial commitment layer — what was agreed
+// with the vendor. ProcurementBatch sits below it as the receipt event
+// (BAST). One PO may have many batches (partial delivery), or zero (we
+// also support direct-purchase batches with purchaseOrderId = null).
+model PurchaseOrder {
+  id String @id @default(uuid()) @db.Uuid
+
+  // SP-YYYY-NNNN — generated server-side in the service layer using
+  // PurchaseOrderSequence for thread-safety. Unique constraint guards
+  // against any race that slipped past the sequence row lock.
+  poNumber    String              @unique @map("po_number")
+  name        String?             @map("name")
+  description String?             @map("description")
+  status      PurchaseOrderStatus @default(OPEN) @map("status")
+
+  // Vendor identity. Free-text for now — graduating to a Vendor table is
+  // a separate phase; doing it now would balloon the schema and the
+  // procurement audit story works fine with the denormalised string.
+  vendor        String  @map("vendor")
+  vendorContact String? @map("vendor_contact")
+
+  poDate               DateTime  @map("po_date")
+  expectedDeliveryDate DateTime? @map("expected_delivery_date")
+  poUrl                String?   @map("po_url")
+
+  currency    String   @default("IDR") @map("currency")
+  totalAmount Decimal? @map("total_amount") @db.Decimal(15, 2)
+
+  // Denormalised counters maintained inside the same $transaction that
+  // mutates batches/assets. Cheap to keep correct, expensive to compute
+  // on every list render.
+  batchCount Int @default(0) @map("batch_count")
+  assetCount Int @default(0) @map("asset_count")
+
+  notes        String? @map("notes")
+  attachments  Json?   @map("attachments")
+  customFields Json?   @map("custom_fields")
+
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  closedByUserId  String?   @map("closed_by_user_id") @db.Uuid
+  closedAt        DateTime? @map("closed_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  createdBy User               @relation("PurchaseOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  closedBy  User?              @relation("PurchaseOrderClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  batches   ProcurementBatch[]
+
+  @@index([poNumber])
+  @@index([status])
+  @@index([vendor])
+  @@index([poDate])
+  @@index([createdByUserId])
+  @@index([deletedAt])
+  @@map("purchase_orders")
+}
+
+// One row = one physical receipt event = one BAST. Carries the
+// document chain (BAST, supplier invoice, faktur pajak) and the
+// signatory in a HYBRID shape: receivedByUserId for internal staff,
+// receivedByName/receivedByPosition for external (vendor) signers.
+model ProcurementBatch {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Optional FK to PurchaseOrder. Nullable so a quick direct-purchase
+  // batch (no formal PO) can still flow through the same UI.
+  purchaseOrderId String? @map("purchase_order_id") @db.Uuid
+
+  // BATCH-YYYYMM-NNNN — generated server-side via ProcurementBatchSequence.
+  batchNumber String                 @unique @map("batch_number")
+  name        String?                @map("name")
+  status      ProcurementBatchStatus @default(DRAFT) @map("status")
+
+  // ── Dokumen 1: BAST (Berita Acara Serah Terima) — the primary
+  // hand-over document under Indonesian procurement standards.
+  bastNumber String?   @map("bast_number")
+  bastDate   DateTime? @map("bast_date")
+  bastUrl    String?   @map("bast_url")
+
+  // ── Dokumen 2: supplier invoice.
+  invoiceNumber String?   @map("invoice_number")
+  invoiceDate   DateTime? @map("invoice_date")
+  invoiceUrl    String?   @map("invoice_url")
+
+  // ── Dokumen 3: Faktur Pajak (DJP eFaktur). Free-text for Phase 1 —
+  // DJP format validation deferred until we wire the eFaktur integration.
+  taxInvoiceNumber String?   @map("tax_invoice_number")
+  taxInvoiceDate   DateTime? @map("tax_invoice_date")
+
+  // Dates: purchaseDate inherits from PO at create time, but can be
+  // overridden (e.g. when the PO covers items priced as of a different
+  // date). receivedDate is usually the BAST date.
+  purchaseDate DateTime  @map("purchase_date")
+  receivedDate DateTime? @map("received_date")
+
+  currency    String   @default("IDR") @map("currency")
+  totalAmount Decimal? @map("total_amount") @db.Decimal(15, 2)
+
+  // Defaults applied to assets at import time. Each asset row may
+  // override these — the batch values are only the starting point.
+  defaultLocationId String? @map("default_location_id") @db.Uuid
+  defaultCategoryId String? @map("default_category_id") @db.Uuid
+
+  // Hybrid signatory model. receivedByUserId carries the internal-staff
+  // case; receivedByName/Position carry the external case (vendor PIC,
+  // building manager, etc.). Service layer enforces "at least one of"
+  // when batch transitions to RECEIVED.
+  receivedByUserId   String? @map("received_by_user_id") @db.Uuid
+  receivedByName     String? @map("received_by_name")
+  receivedByPosition String? @map("received_by_position")
+
+  assetCount Int @default(0) @map("asset_count")
+
+  notes        String? @map("notes")
+  attachments  Json?   @map("attachments")
+  customFields Json?   @map("custom_fields")
+
+  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  completedByUserId String?   @map("completed_by_user_id") @db.Uuid
+  completedAt       DateTime? @map("completed_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  defaultLocation Location?      @relation("ProcurementBatchDefaultLocation", fields: [defaultLocationId], references: [id], onDelete: SetNull)
+  defaultCategory AssetCategory? @relation("ProcurementBatchDefaultCategory", fields: [defaultCategoryId], references: [id], onDelete: SetNull)
+  receivedBy      User?          @relation("ProcurementBatchReceivedBy", fields: [receivedByUserId], references: [id], onDelete: SetNull)
+  createdBy       User           @relation("ProcurementBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  completedBy     User?          @relation("ProcurementBatchCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  assets          Asset[]
+
+  @@index([purchaseOrderId])
+  @@index([batchNumber])
+  @@index([status])
+  @@index([bastNumber])
+  @@index([invoiceNumber])
+  @@index([purchaseDate])
+  @@index([receivedDate])
+  @@index([defaultLocationId])
+  @@index([defaultCategoryId])
+  @@index([receivedByUserId])
+  @@index([createdByUserId])
+  @@index([deletedAt])
+  @@map("procurement_batches")
+}
+
+// Mirrors AssetNumberSequence: per-year row for PO, per-yearMonth row
+// for batch. Service-layer SELECT … FOR UPDATE bumps the counter inside
+// the create transaction so concurrent imports never collide.
+model PurchaseOrderSequence {
+  id              String @id @default(uuid()) @db.Uuid
+  year            Int    @unique @map("year")
+  currentSequence Int    @default(0) @map("current_sequence")
+
+  @@map("purchase_order_sequences")
+}
+
+model ProcurementBatchSequence {
+  id              String @id @default(uuid()) @db.Uuid
+  // YYYYMM packed as integer (e.g. 202605) so the @unique row lookup is
+  // a single int comparison rather than string parsing.
+  yearMonth       Int    @unique @map("year_month")
+  currentSequence Int    @default(0) @map("current_sequence")
+
+  @@map("procurement_batch_sequences")
 }
