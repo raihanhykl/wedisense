@@ -371,8 +371,12 @@ export async function runImportJob(payload: {
    *  the job so the worker resolves columns the same way the user confirmed
    *  in the wizard, even if the worker runs minutes later. */
   columnMapping?: Partial<Record<string, number | string>>;
+  /** Phase 17: optional procurement batch link applied to every imported
+   *  row. The async path has no preview/confirm step, so the batch
+   *  must be decided at upload time and ride along on the job payload. */
+  procurementBatchId?: string;
 }): Promise<void> {
-  const { importId, userId, filePath, columnMapping } = payload;
+  const { importId, userId, filePath, columnMapping, procurementBatchId } = payload;
 
   const { parseAssetImportSheet } = await import('../../lib/excel.js');
   const { bulkImport } = await import('../assets/import-service.js');
@@ -411,6 +415,7 @@ export async function runImportJob(payload: {
 
     if (rows.length > 0) {
       const result = await bulkImport(rows, userId, {
+        ...(procurementBatchId && { procurementBatchId }),
         onProgress: async (update) => {
           // Combine bulkImport's per-row progress with parse-level failures
           // (which it doesn't know about). `update.failed` is just bulkImport's

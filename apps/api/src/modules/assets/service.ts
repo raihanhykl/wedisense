@@ -5,6 +5,10 @@ import { parsePagination, buildPaginationMeta } from '../../utils/pagination.js'
 import { generateBarcode, generateQrCode } from '../../lib/barcode.js';
 import { generateMovementRef } from '../../utils/movement-ref.js';
 import * as repo from './repository.js';
+import {
+  assertBatchAcceptsAssets,
+  bumpBatchAssetCountWithCascade,
+} from '../procurement-batches/service.js';
 import type { CreateAssetInput, UpdateAssetInput } from './schema.js';
 import type { AssetListFilters, AssetSortField, PrismaTransactionClient } from './types.js';
 import type { PaginationQuery } from '@wedisense/shared';
@@ -242,6 +246,12 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
       const assetNumber = await generateAssetNumber(categoryCode, tx);
       const assetId = randomUUID();
 
+      // Phase 17: validate batch link inside the same transaction so a
+      // rejection rolls back the asset-number sequence bump too.
+      if (input.procurementBatchId) {
+        await assertBatchAcceptsAssets(input.procurementBatchId, tx);
+      }
+
       const created = await repo.createInTransaction(tx, {
         id: assetId,
         assetNumber,
@@ -254,6 +264,9 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
         location: { connect: { id: input.locationId } },
         ...(input.assignedToUserId && { assignedTo: { connect: { id: input.assignedToUserId } } }),
         ...(input.serialNumber && { serialNumber: input.serialNumber }),
+        ...(input.procurementBatchId && {
+          procurementBatch: { connect: { id: input.procurementBatchId } },
+        }),
         purchaseDate: input.purchaseDate ?? null,
         purchasePrice: input.purchasePrice != null ? new Prisma.Decimal(input.purchasePrice) : null,
         currency: input.currency ?? 'IDR',
@@ -282,6 +295,11 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
         notes: 'Initial asset registration',
       });
 
+      // Bump batch + parent-PO asset counts atomically with the create.
+      if (input.procurementBatchId) {
+        await bumpBatchAssetCountWithCascade(input.procurementBatchId, 1, tx);
+      }
+
       // Audit log INSIDE the transaction so the asset and its trail commit
       // (or roll back) atomically. Previously this was after the transaction
       // — a crash between commit and audit-write left an unaudited asset.
@@ -291,7 +309,13 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
           action: 'CREATE',
           resourceType: 'Asset',
           resourceId: created.id,
-          newValues: { assetNumber: created.assetNumber, name: created.name },
+          newValues: {
+            assetNumber: created.assetNumber,
+            name: created.name,
+            ...(input.procurementBatchId && {
+              procurementBatchId: input.procurementBatchId,
+            }),
+          },
         },
       });
 
@@ -364,12 +388,31 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
     }
   }
 
+  // Phase 17: tally per-batch counts upfront so the post-create cascade
+  // calls bumpBatchAssetCountWithCascade ONCE per batch with the correct
+  // delta, rather than calling it N times. Rows are allowed to mix
+  // batches in a single bulk call.
+  const batchDeltas = new Map<string, number>();
+  for (const input of inputs) {
+    if (!input.procurementBatchId) continue;
+    batchDeltas.set(
+      input.procurementBatchId,
+      (batchDeltas.get(input.procurementBatchId) ?? 0) + 1,
+    );
+  }
+
   // Inside-transaction serial uniqueness check + cleanup + audit log,
   // mirroring the createAsset hardening. P2002 from a concurrent insert is
   // translated to a clean 409 after the transaction by the catch below.
   let assets;
   try {
     assets = await prisma.$transaction(async (tx) => {
+      // Phase 17: validate each distinct batch ID once inside the tx so
+      // a rejection rolls back any asset-number sequence bumps below.
+      for (const batchId of batchDeltas.keys()) {
+        await assertBatchAcceptsAssets(batchId, tx);
+      }
+
       const serialsRequested = inputs
         .map((i) => i.serialNumber)
         .filter((s): s is string => typeof s === 'string' && s.length > 0);
@@ -423,6 +466,9 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
           location: { connect: { id: input.locationId } },
           ...(input.assignedToUserId && { assignedTo: { connect: { id: input.assignedToUserId } } }),
           ...(input.serialNumber && { serialNumber: input.serialNumber }),
+          ...(input.procurementBatchId && {
+            procurementBatch: { connect: { id: input.procurementBatchId } },
+          }),
           purchaseDate: input.purchaseDate ?? null,
           purchasePrice: input.purchasePrice != null ? new Prisma.Decimal(input.purchasePrice) : null,
           currency: input.currency ?? 'IDR',
@@ -452,6 +498,12 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
         });
 
         createdAssets.push(created);
+      }
+
+      // Phase 17: bump batch + parent-PO counts once per batch with the
+      // tallied delta.
+      for (const [batchId, delta] of batchDeltas) {
+        await bumpBatchAssetCountWithCascade(batchId, delta, tx);
       }
 
       // Audit log INSIDE the transaction — see createAsset for rationale.
@@ -803,6 +855,14 @@ export async function deleteAsset(id: string, userId: string) {
       where: { id },
       data: { deletedAt: new Date(), serialNumber: null },
     });
+    // Phase 17: if the asset was linked to a batch, decrement the batch
+    // and parent-PO assetCount in the same tx. We DON'T null out
+    // procurementBatchId — the linkage stays for audit/reporting (so the
+    // batch detail page can still show "1 deleted asset"); the count
+    // simply tracks live assets.
+    if (existing.procurementBatchId) {
+      await bumpBatchAssetCountWithCascade(existing.procurementBatchId, -1, tx);
+    }
     await tx.auditLog.create({
       data: {
         userId,
@@ -813,6 +873,9 @@ export async function deleteAsset(id: string, userId: string) {
           assetNumber: existing.assetNumber,
           name: existing.name,
           serialNumber: existing.serialNumber,
+          ...(existing.procurementBatchId && {
+            procurementBatchId: existing.procurementBatchId,
+          }),
         },
       },
     });

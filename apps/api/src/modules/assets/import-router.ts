@@ -87,6 +87,12 @@ const importRowSchema = z.object({
 
 const confirmBodySchema = z.object({
   validatedRows: z.array(importRowSchema).min(1),
+  // Phase 17: optional procurement batch link. When set, every asset
+  // created from this import is attached to the batch and the batch +
+  // parent-PO assetCount counters bump by `validatedRows.length`. Batch
+  // must be in DRAFT or ITEMS_PENDING; the service rejects locked
+  // batches with BATCH_NOT_ACCEPTING_ASSETS.
+  procurementBatchId: z.string().uuid().nullable().optional(),
 });
 
 const router: RouterType = Router();
@@ -203,6 +209,18 @@ router.post(
       (req.body as { columnMapping?: unknown }).columnMapping,
     );
 
+    // Phase 17: optional batch link applied to every imported row. Parsed
+    // out of the multipart body separately from the file. Async-path
+    // imports (≥5000 rows) MUST decide the batch up-front because the
+    // worker has no preview/confirm step; sync-path can also accept it
+    // here as a convenience, but the more usual flow is to pass batchId
+    // at /confirm time.
+    const rawBatchId = (req.body as { procurementBatchId?: unknown }).procurementBatchId;
+    const procurementBatchId =
+      typeof rawBatchId === 'string' && /^[0-9a-f-]{36}$/i.test(rawBatchId)
+        ? rawBatchId
+        : undefined;
+
     const { rows, errors, detectedMapping } = await parseAssetImportSheet(
       req.file.buffer,
       columnMappingOverride ? { columnMappingOverride } : {},
@@ -269,6 +287,8 @@ router.post(
           // Persist mapping with the job so the worker uses the same column
           // resolution the user confirmed at upload time.
           ...(columnMappingOverride && { columnMapping: columnMappingOverride }),
+          // Persist the batch link too — worker has no UI to ask for it.
+          ...(procurementBatchId && { procurementBatchId }),
         },
         {
           jobId: `import-${importId}`,
@@ -400,7 +420,7 @@ router.post(
     // Zod parse — throws AppError(422) via the project's standard error
     // handler if the body shape is wrong or any row contains an invalid
     // enum, malformed UUID, etc.
-    const { validatedRows } = confirmBodySchema.parse(req.body);
+    const { validatedRows, procurementBatchId } = confirmBodySchema.parse(req.body);
 
     if (validatedRows.length >= ASYNC_ROW_THRESHOLD) {
       throw new AppError(
@@ -410,7 +430,9 @@ router.post(
       );
     }
 
-    const result = await bulkImport(validatedRows, req.user!.id);
+    const result = await bulkImport(validatedRows, req.user!.id, {
+      ...(procurementBatchId && { procurementBatchId }),
+    });
 
     sendSuccess(
       res,

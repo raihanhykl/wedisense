@@ -7,6 +7,12 @@ interface ImportProcessPayload {
   importId: string;
   userId: string;
   filePath: string;
+  /** Optional column-mapping override (Phase 12). */
+  columnMapping?: Partial<Record<string, number | string>>;
+  /** Optional procurement batch link (Phase 17). When set, every asset
+   *  created by this import is attached to the batch and its assetCount
+   *  bumps by the number of created rows. */
+  procurementBatchId?: string;
 }
 
 const QUEUE_NAME = 'import-process';

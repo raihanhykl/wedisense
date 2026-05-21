@@ -3,6 +3,10 @@ import { randomUUID } from 'crypto';
 import { prisma } from '../../lib/prisma.js';
 import { generateBarcode, generateQrCode } from '../../lib/barcode.js';
 import * as repo from './repository.js';
+import {
+  assertBatchAcceptsAssets,
+  bumpBatchAssetCountWithCascade,
+} from '../procurement-batches/service.js';
 import type { AssetImportRow } from '../../lib/excel.js';
 import type { PrismaTransactionClient } from './types.js';
 
@@ -123,6 +127,11 @@ export interface BulkImportOptions {
    *  wires this to Redis so the frontend can poll progress; sync callers
    *  typically don't pass it. Throwing here cancels the import. */
   onProgress?: (update: BulkImportProgressUpdate) => Promise<void> | void;
+  /** Phase 17: optional procurement batch to link every created asset to.
+   *  The batch is validated inside the same transaction that inserts the
+   *  assets, and its assetCount counter (plus the parent PO's, if any)
+   *  bumps by the number of created assets atomically with the inserts. */
+  procurementBatchId?: string;
 }
 
 export async function bulkImport(
@@ -130,7 +139,7 @@ export async function bulkImport(
   userId: string,
   options: BulkImportOptions = {},
 ): Promise<BulkImportResult> {
-  const { onProgress } = options;
+  const { onProgress, procurementBatchId } = options;
   const total = rows.length;
   if (total === 0) {
     return { created: [], skipped: [], failed: [] };
@@ -379,6 +388,13 @@ export async function bulkImport(
 
   try {
     await prisma.$transaction(async (tx) => {
+      // Phase 17: validate batch acceptance up-front, inside the tx, so
+      // a rejection rolls back any sequence bumps below. One round-trip
+      // for the whole import — much better than per-row.
+      if (procurementBatchId) {
+        await assertBatchAcceptsAssets(procurementBatchId, tx as PrismaTransactionClient);
+      }
+
       // Step A: materialise new products in this transaction.
       const newProductIds = new Map<string, string>(); // bucketKey → productId
       for (const [key, { spec, categoryId }] of newProductBuckets) {
@@ -433,6 +449,9 @@ export async function bulkImport(
           location: { connect: { id: row.locationId } },
           ...(row.assignedToUserId && { assignedTo: { connect: { id: row.assignedToUserId } } }),
           ...(row.serialNumber && { serialNumber: row.serialNumber }),
+          ...(procurementBatchId && {
+            procurementBatch: { connect: { id: procurementBatchId } },
+          }),
           purchaseDate: row.purchaseDate ?? null,
           purchasePrice: row.purchasePrice != null ? new Prisma.Decimal(row.purchasePrice) : null,
           currency: row.currency ?? 'IDR',
@@ -470,6 +489,18 @@ export async function bulkImport(
         );
       }
 
+      // Phase 17: cascade asset count to the batch + parent PO in one
+      // shot — bulkImport ships rows by the hundred, so a per-row bump
+      // would issue hundreds of UPDATEs. Single increment with the final
+      // delta keeps the tx tight.
+      if (procurementBatchId && createdAssets.length > 0) {
+        await bumpBatchAssetCountWithCascade(
+          procurementBatchId,
+          createdAssets.length,
+          tx as PrismaTransactionClient,
+        );
+      }
+
       // Step D: audit log INSIDE the transaction so the asset records and
       // the audit trail commit/roll-back as one. Previously this lived
       // outside the transaction and could leave assets unaudited.
@@ -484,6 +515,7 @@ export async function bulkImport(
             skipped: skipped.length,
             failed: failed.length,
             assetNumbers: createdAssets.map((a) => a.assetNumber),
+            ...(procurementBatchId && { procurementBatchId }),
           } as unknown as Prisma.InputJsonValue,
         },
       });

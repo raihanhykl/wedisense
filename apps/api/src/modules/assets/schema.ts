@@ -19,6 +19,12 @@ export const createAssetSchema = z.object({
   usefulLifeMonths: z.number().int().positive().nullable().optional(),
   notes: z.string().nullable().optional(),
   customFields: z.record(z.unknown()).nullable().optional(),
+  // Optional FK to a procurement batch (Phase 17). When set, the asset
+  // is linked to the batch and the batch + parent-PO assetCount counters
+  // bump atomically inside the same transaction that creates the row.
+  // The batch must exist and be in DRAFT or ITEMS_PENDING (RECEIVED+ /
+  // COMPLETED / CANCELLED are rejected by the service).
+  procurementBatchId: z.string().uuid().nullable().optional(),
 });
 
 export const updateAssetSchema = z.object({

@@ -1,12 +1,15 @@
 import { AppError } from '../../middleware/error-handler.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
+import type { ProcurementBatchStatus } from '@prisma/client';
 import * as batchRepo from './repository.js';
 import {
   recomputePurchaseOrderStatus,
   incrementBatchCount,
   decrementBatchCount,
+  bumpAssetCount as bumpPoAssetCount,
 } from '../purchase-orders/service.js';
+import type { PrismaTransactionClient } from './types.js';
 import type {
   CreateProcurementBatchInput,
   UpdateProcurementBatchInput,
@@ -39,6 +42,77 @@ export async function listProcurementBatches(
   take: number,
 ) {
   return batchRepo.findMany(filters, skip, take);
+}
+
+// ── Cross-module helpers (called from assets service / import service) ─────
+//
+// These let the assets module link/unlink an asset against a batch
+// without re-implementing the validation + denormalised-count plumbing.
+
+/**
+ * Validate that a batch can accept new (or returning) asset links.
+ * Returns the minimal batch summary the caller needs to make further
+ * decisions; throws AppError on any rejection.
+ *
+ * Acceptance rules:
+ *  - batch must exist and not be soft-deleted
+ *  - status must be DRAFT or ITEMS_PENDING
+ *    (RECEIVED+ means BAST signed — no new items expected;
+ *     COMPLETED / CANCELLED are locked)
+ *
+ * Returns purchaseOrderId so the caller doesn't need a follow-up query
+ * to know if it should cascade counts into the parent PO.
+ */
+export async function assertBatchAcceptsAssets(
+  batchId: string,
+  tx: PrismaTransactionClient,
+): Promise<{ id: string; purchaseOrderId: string | null; status: ProcurementBatchStatus }> {
+  const batch = await tx.procurementBatch.findFirst({
+    where: { id: batchId, deletedAt: null },
+    select: { id: true, status: true, purchaseOrderId: true },
+  });
+  if (!batch) {
+    throw new AppError(
+      404,
+      'PROCUREMENT_BATCH_NOT_FOUND',
+      `Procurement batch ${batchId} not found`,
+    );
+  }
+  if (batch.status !== 'DRAFT' && batch.status !== 'ITEMS_PENDING') {
+    throw new AppError(
+      409,
+      'BATCH_NOT_ACCEPTING_ASSETS',
+      `Batch is in status ${batch.status} — only DRAFT or ITEMS_PENDING accept new asset links`,
+    );
+  }
+  return batch;
+}
+
+/**
+ * Apply a signed delta to a batch's denormalised assetCount AND cascade
+ * the same delta to its parent PO (if any). Called from the assets
+ * module after a successful create / bulk-create / bulk-import or after
+ * a soft-delete. Must run inside the same $transaction that mutates
+ * the asset row(s) so the count stays consistent with reality.
+ *
+ * The parent-PO lookup is a single FK read; we accept the extra
+ * round-trip rather than threading purchaseOrderId through every call
+ * site.
+ */
+export async function bumpBatchAssetCountWithCascade(
+  batchId: string,
+  delta: number,
+  tx: PrismaTransactionClient,
+): Promise<void> {
+  if (delta === 0) return;
+  await batchRepo.bumpAssetCount(batchId, delta, tx);
+  const batch = await tx.procurementBatch.findUnique({
+    where: { id: batchId },
+    select: { purchaseOrderId: true },
+  });
+  if (batch?.purchaseOrderId) {
+    await bumpPoAssetCount(batch.purchaseOrderId, delta, tx);
+  }
 }
 
 export async function getProcurementBatch(id: string) {
