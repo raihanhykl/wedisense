@@ -99,6 +99,10 @@ function buildWhereClause(
     where.assignedToUserId = filters.assignedToUserId;
   }
 
+  if (filters.procurementBatchId) {
+    where.procurementBatchId = filters.procurementBatchId;
+  }
+
   if (filters.purchaseDateFrom || filters.purchaseDateTo) {
     where.purchaseDate = {
       ...(filters.purchaseDateFrom && { gte: filters.purchaseDateFrom }),

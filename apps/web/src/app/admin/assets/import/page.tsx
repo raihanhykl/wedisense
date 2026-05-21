@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
@@ -336,7 +336,16 @@ function StepIndicator({ current }: { current: Step }) {
 // ── Page ────────────────────────────────────────────────────────────
 export default function AssetImportPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const canImport = usePermission("assets:import");
+
+  // Phase 17: optional procurement batch context. When the user arrives
+  // from /admin/procurement/[id] via "Import assets", the batchId query
+  // param is set. Every asset created by this import will be linked to
+  // that batch (validated server-side; locked batches reject with a
+  // clear error code). We don't fetch the batch's metadata here — the
+  // ID is sufficient and the backend re-validates anyway.
+  const batchId = searchParams?.get("batchId") ?? null;
 
   const [step, setStep] = useState<Step>(1);
 
@@ -493,6 +502,14 @@ export default function AssetImportPage() {
       if (mappingOverride && Object.keys(mappingOverride).length > 0) {
         formData.append("columnMapping", JSON.stringify(mappingOverride));
       }
+      // Phase 17: propagate batch link with the upload. Async path needs
+      // it baked into the job payload since the worker has no
+      // preview/confirm step. Sync path also gets it here so /confirm
+      // doesn't have to re-attach it (though /confirm still accepts it
+      // as a convenience).
+      if (batchId) {
+        formData.append("procurementBatchId", batchId);
+      }
 
       const response = await api.post<{
         success: boolean;
@@ -630,7 +647,12 @@ export default function AssetImportPage() {
       const response = await api.post<{
         success: boolean;
         data: AssetImportConfirmResponse;
-      }>("/api/assets/import/confirm", { validatedRows: rowsToImport });
+      }>("/api/assets/import/confirm", {
+        validatedRows: rowsToImport,
+        // Phase 17: ride the batch link through /confirm too so the
+        // bulkImport path picks it up. Backend ignores when null.
+        ...(batchId && { procurementBatchId: batchId }),
+      });
 
       // Persist the column mapping that produced this successful import so
       // the next file with similar headers comes pre-mapped. Only save on
@@ -708,6 +730,33 @@ export default function AssetImportPage() {
           Back to Assets
         </Link>
       </div>
+
+      {/* Phase 17: batch context banner. Shows up when this wizard was
+          entered via /admin/procurement/[id] "Import assets" — gives the
+          user a clear "you're importing into batch X" cue and a one-click
+          escape if they meant a free-form import. */}
+      {batchId && (
+        <div className="mb-4 flex items-center justify-between rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">Linking to procurement batch.</span>
+            <Link
+              href={`/admin/procurement/${batchId}`}
+              className="underline hover:no-underline"
+            >
+              View batch
+            </Link>
+            <span className="text-blue-700">
+              · Every imported asset will be attached to this batch.
+            </span>
+          </div>
+          <Link
+            href="/admin/assets/import"
+            className="ml-3 rounded border border-blue-300 px-2 py-0.5 text-xs hover:bg-white"
+          >
+            Remove link
+          </Link>
+        </div>
+      )}
 
       {/* Step indicator */}
       <StepIndicator current={step} />

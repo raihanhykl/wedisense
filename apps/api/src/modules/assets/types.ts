@@ -23,6 +23,9 @@ export interface AssetListFilters {
   categoryId?: string;
   locationId?: string;
   assignedToUserId?: string;
+  /** Phase 17: filter by procurement batch. The frontend uses this to
+   *  power the "see all assets in batch" link on the batch detail page. */
+  procurementBatchId?: string;
   purchaseDateFrom?: Date;
   purchaseDateTo?: Date;
   sort?: string;

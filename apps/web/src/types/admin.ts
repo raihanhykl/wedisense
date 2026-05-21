@@ -700,3 +700,88 @@ export interface PurchaseOrderDetail extends PurchaseOrderListItem {
   closedBy: { id: string; name: string; email: string } | null;
   batches: PurchaseOrderBatchSummary[];
 }
+
+export interface ProcurementBatchListItem {
+  id: string;
+  purchaseOrderId: string | null;
+  batchNumber: string;
+  name: string | null;
+  status: ProcurementBatchStatus;
+  bastNumber: string | null;
+  bastDate: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  purchaseDate: string;
+  receivedDate: string | null;
+  currency: string;
+  totalAmount: string | null;
+  assetCount: number;
+  receivedByUserId: string | null;
+  receivedByName: string | null;
+  createdByUserId: string;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  purchaseOrder: {
+    id: string;
+    poNumber: string;
+    vendor: string;
+    status: PurchaseOrderStatus;
+  } | null;
+}
+
+export interface ProcurementBatchAssetEntry {
+  id: string;
+  assetNumber: string;
+  name: string;
+  serialNumber: string | null;
+  status: 'ACTIVE' | 'IDLE' | 'IN_MAINTENANCE' | 'DISPOSED' | 'LOST' | 'BORROWED';
+  condition: 'NEW' | 'GOOD' | 'FAIR' | 'POOR' | 'DAMAGED';
+  locationId: string;
+  assignedToUserId: string | null;
+  createdAt: string;
+}
+
+export interface ProcurementBatchDetail extends Omit<ProcurementBatchListItem, "purchaseOrder"> {
+  bastUrl: string | null;
+  invoiceUrl: string | null;
+  taxInvoiceNumber: string | null;
+  taxInvoiceDate: string | null;
+  defaultLocationId: string | null;
+  defaultCategoryId: string | null;
+  receivedByPosition: string | null;
+  notes: string | null;
+  attachments: Array<{
+    filename: string;
+    url: string;
+    contentType?: string;
+    uploadedAt?: string;
+  }> | null;
+  customFields: Record<string, unknown> | null;
+  purchaseOrder: {
+    id: string;
+    poNumber: string;
+    vendor: string;
+    status: PurchaseOrderStatus;
+    poDate: string;
+  } | null;
+  defaultLocation: { id: string; name: string; code: string } | null;
+  defaultCategory: { id: string; name: string; code: string } | null;
+  createdBy: { id: string; name: string; email: string };
+  receivedBy: { id: string; name: string; email: string } | null;
+  completedBy: { id: string; name: string; email: string } | null;
+  assets: ProcurementBatchAssetEntry[];
+}
+
+export interface BatchAuditEntry {
+  id: string;
+  user_id: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  old_values: unknown;
+  new_values: unknown;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
