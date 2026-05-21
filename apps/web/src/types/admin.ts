@@ -635,3 +635,68 @@ export interface TourDto {
   steps: TourStepDto[];
   progress: TourProgressDto | null;
 }
+
+// ── Procurement (Phase 17) ────────────────────────────────────────────
+
+export type PurchaseOrderStatus =
+  | "OPEN"
+  | "PARTIALLY_RECEIVED"
+  | "FULLY_RECEIVED"
+  | "CLOSED"
+  | "CANCELLED";
+
+export type ProcurementBatchStatus =
+  | "DRAFT"
+  | "ITEMS_PENDING"
+  | "RECEIVED"
+  | "COMPLETED"
+  | "CANCELLED";
+
+export interface PurchaseOrderListItem {
+  id: string;
+  poNumber: string;
+  name: string | null;
+  status: PurchaseOrderStatus;
+  vendor: string;
+  poDate: string;
+  expectedDeliveryDate: string | null;
+  currency: string;
+  totalAmount: string | null;
+  batchCount: number;
+  assetCount: number;
+  createdByUserId: string;
+  closedByUserId: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PurchaseOrderBatchSummary {
+  id: string;
+  batchNumber: string;
+  name: string | null;
+  status: ProcurementBatchStatus;
+  bastNumber: string | null;
+  bastDate: string | null;
+  receivedDate: string | null;
+  assetCount: number;
+  totalAmount: string | null;
+  createdAt: string;
+}
+
+export interface PurchaseOrderDetail extends PurchaseOrderListItem {
+  description: string | null;
+  vendorContact: string | null;
+  poUrl: string | null;
+  notes: string | null;
+  attachments: Array<{
+    filename: string;
+    url: string;
+    contentType?: string;
+    uploadedAt?: string;
+  }> | null;
+  customFields: Record<string, unknown> | null;
+  createdBy: { id: string; name: string; email: string };
+  closedBy: { id: string; name: string; email: string } | null;
+  batches: PurchaseOrderBatchSummary[];
+}
