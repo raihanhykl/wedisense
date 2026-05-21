@@ -10,6 +10,7 @@ node_modules/
 CLAUDE.local.md
 .claude/settings.local.json
 .claude/session-state.md
+.claude/scheduled_tasks.lock
 
 # OS
 .DS_Store

@@ -4,11 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3000",
+    "prebuild": "pnpm tour:check",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf .next out"
+    "clean": "rm -rf .next out",
+    "tour:codegen": "node scripts/codegen-tour-targets.mjs",
+    "tour:codegen:check": "node scripts/codegen-tour-targets.mjs --check",
+    "tour:i18n:check": "node scripts/check-tours-i18n.mjs",
+    "tour:check": "pnpm tour:codegen:check && pnpm tour:i18n:check"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth.store";
 import { useTour } from "@/hooks/use-tour";
 import { tTour } from "@/lib/tour-i18n";
+import { TOURS_ENABLED } from "@/lib/feature-flags";
 
 /**
  * Profile page — minimal Tier 6 scope.
@@ -95,6 +96,12 @@ export default function ProfilePage() {
         </dl>
       </section>
 
+      {/* Tutorial section gated by the TOURS_ENABLED feature flag — when
+          off, in-app tours are dormant and the restart UI would point at
+          a feature the user can't reach via the sidebar anyway. The hook
+          calls above stay so flipping the flag back on requires zero
+          edits here. */}
+      {TOURS_ENABLED && (
       <section className="rounded-lg border bg-card p-5">
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {tTour(lang, "profile.tutorials")}
@@ -144,6 +151,7 @@ export default function ProfilePage() {
           </ul>
         )}
       </section>
+      )}
     </div>
   );
 }

@@ -9,7 +9,10 @@
     "exitConfirm": "Exit tutorial?",
     "restartTutorial": "Restart Tutorial",
     "targetMissing": "Tour paused",
-    "targetMissingHint": "This step's target isn't ready on the current page. You can resume the tutorial from your profile."
+    "targetMissingHint": "This step's target isn't ready on the current page. You can resume the tutorial from your profile.",
+    "tourComplete": "You're all set!",
+    "tourCompleteHint": "Tutorial finished. You can restart it any time from your profile.",
+    "progressLabel": "Tour progress"
   },
   "profile": {
     "backToDashboard": "Dashboard",

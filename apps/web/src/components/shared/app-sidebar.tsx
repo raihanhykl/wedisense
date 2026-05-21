@@ -7,11 +7,16 @@ import { X } from "lucide-react";
 import { useAuthStore } from "@/stores/auth.store";
 import { usePermission } from "@/hooks/use-permission";
 import { cn } from "@/lib/utils";
+import { TOURS_ENABLED } from "@/lib/feature-flags";
 
 interface NavItem {
   label: string;
   href: string;
   permission?: string;
+  /** Optional build-time gate. When falsy, the item is filtered before
+   *  render. Used to hide entry-points for dormant features without
+   *  ripping their code out. */
+  enabled?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -25,7 +30,7 @@ const navItems: NavItem[] = [
   { label: "Notifications", href: "/admin/notifications" },
   { label: "Locations", href: "/admin/locations" },
   { label: "Categories", href: "/admin/asset-categories", permission: "categories:manage" },
-  { label: "Tours", href: "/admin/tours", permission: "tours:manage" },
+  { label: "Tours", href: "/admin/tours", permission: "tours:manage", enabled: TOURS_ENABLED },
   { label: "Users", href: "/admin/users", permission: "users:manage" },
   { label: "Roles", href: "/admin/roles", permission: "roles:manage" },
   { label: "Audit", href: "/admin/audit", permission: "audit:read" },
@@ -35,6 +40,13 @@ function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void 
   const pathname = usePathname();
   const hasPermission = usePermission(item.permission ?? "");
   const isActive = pathname === item.href;
+
+  // Build-time gate (dormant features) — checked before permissions so
+  // a dormant link doesn't even appear for users who would otherwise be
+  // entitled to it.
+  if (item.enabled === false) {
+    return null;
+  }
 
   // If a permission is required and the user doesn't have it, hide the link
   if (item.permission && !hasPermission) {

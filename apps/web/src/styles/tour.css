@@ -33,10 +33,12 @@
 /* ── Pulsing beacon ───────────────────────────────────────────────── */
 /*
  * Beacon on the element that the current tour step highlights.
- * We add it on any element that carries a data-tour attribute while a tour
- * is globally active. TourProvider adds the `data-tour-active` attribute to
- * <body> when a tour starts and removes it on close/skip/complete, so we
- * can scope the animation to only while a tour is running.
+ *
+ * Source of truth: TourProvider applies `data-tour-beacon="true"` to the
+ * resolved target element when a step becomes active and removes it on
+ * step change / tour close. This keeps us independent of NextStep's
+ * internal DOM marker (which has changed across minor versions and isn't
+ * part of the public API). Exactly one element pulses at a time.
  */
 @keyframes tour-beacon {
   0% {
@@ -50,8 +52,7 @@
   }
 }
 
-body[data-tour-active] [data-nextstep-target],
-body[data-tour-active] .nextstep-target {
+[data-tour-beacon="true"] {
   animation: tour-beacon 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   border-radius: 8px;
   outline: 2px solid hsl(var(--primary) / 0.5);
@@ -60,8 +61,7 @@ body[data-tour-active] .nextstep-target {
 
 /* ── Reduced motion ───────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  body[data-tour-active] [data-nextstep-target],
-  body[data-tour-active] .nextstep-target {
+  [data-tour-beacon="true"] {
     animation: none;
     outline: 2px solid hsl(var(--primary) / 0.7);
   }

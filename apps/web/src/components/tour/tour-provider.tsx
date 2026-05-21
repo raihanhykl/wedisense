@@ -20,6 +20,7 @@ import { useAuthStore } from "@/stores/auth.store";
 import { useTourStore } from "@/stores/tour.store";
 import { apiGet, apiPut } from "@/lib/api";
 import { tTour } from "@/lib/tour-i18n";
+import { TOURS_ENABLED } from "@/lib/feature-flags";
 import TourPopover from "./tour-popover";
 import TourLiveRegion from "./tour-live-region";
 import type { TourDto } from "@/types/admin";
@@ -63,7 +64,14 @@ function TourEngine({ children }: { children: React.ReactNode }) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Fetch tours on auth ready ──────────────────────────────────────
+  // Skipped entirely when the feature flag is off — the engine stays
+  // mounted (its children render regardless), but we save the network
+  // round-trip and prevent the store from ever leaving 'idle'. That
+  // implicitly disables every effect below (autostart, beacon, target
+  // guard) since they all gate on `status === "ready"` or a non-null
+  // `currentTour`.
   useEffect(() => {
+    if (!TOURS_ENABLED) return;
     if (!isAuthenticated || !accessToken || status !== "idle") return;
 
     setStatus("loading");
@@ -193,6 +201,31 @@ function TourEngine({ children }: { children: React.ReactNode }) {
     setPendingStart,
   ]);
 
+  // ── Active-step beacon attribute ──────────────────────────────────
+  // We can't rely on NextStep's internal DOM markers (the CSS used to
+  // target `[data-nextstep-target]` / `.nextstep-target`, but those are
+  // version-specific guesses). Instead we own the marker: while a step is
+  // active, we stamp `data-tour-beacon="true"` on the resolved target
+  // element. The CSS in tour.css attaches the pulse only to that
+  // attribute, guaranteeing exactly one element pulses at a time —
+  // regardless of NextStep's internals.
+  useEffect(() => {
+    if (!currentTour || currentStep < 0) return;
+    const tour = tours.find((t) => t.id === currentTour);
+    const step = tour?.steps[currentStep];
+    if (!step) return;
+
+    const el = document.querySelector(step.targetElement);
+    if (!el) return; // target-presence guard below will surface a toast
+
+    el.setAttribute("data-tour-beacon", "true");
+    return () => {
+      // Remove on step change / tour close so the previous step's beacon
+      // doesn't linger after navigation.
+      el.removeAttribute("data-tour-beacon");
+    };
+  }, [currentTour, currentStep, tours]);
+
   // ── Target-presence guard for cross-page steps ─────────────────────
   // NextStep handles nextRoute/prevRoute navigation, but if the target
   // element never materialises on the destination page (DOM refactor,
@@ -284,12 +317,20 @@ function TourEngine({ children }: { children: React.ReactNode }) {
       if (!lastStep) return;
 
       setActiveTour(null);
+      // Brief celebratory toast so the user gets explicit confirmation the
+      // tutorial wrapped — without it the popover just vanishes, which
+      // feels abrupt and makes restart discovery harder. Hint nudges users
+      // toward the profile page (where the restart UI lives) if they want
+      // to revisit the tour.
+      toast.success(tTour(lang, "common.tourComplete"), {
+        description: tTour(lang, "common.tourCompleteHint"),
+      });
       apiPut(`/api/tours/${tourId}/progress`, {
         stepIndex: lastStep.stepIndex,
         action: "complete",
       }).catch(() => {});
     },
-    [tours, setActiveTour],
+    [tours, setActiveTour, lang],
   );
 
   const handleSkip = useCallback(

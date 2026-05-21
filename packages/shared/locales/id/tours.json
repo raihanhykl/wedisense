@@ -9,7 +9,10 @@
     "exitConfirm": "Keluar dari tutorial?",
     "restartTutorial": "Mulai Ulang Tutorial",
     "targetMissing": "Tutorial dijeda",
-    "targetMissingHint": "Target langkah ini belum siap di halaman saat ini. Anda bisa melanjutkan tutorial dari halaman profil."
+    "targetMissingHint": "Target langkah ini belum siap di halaman saat ini. Anda bisa melanjutkan tutorial dari halaman profil.",
+    "tourComplete": "Selesai!",
+    "tourCompleteHint": "Tutorial selesai. Anda bisa memulai ulang kapan saja dari halaman profil.",
+    "progressLabel": "Progress tutorial"
   },
   "profile": {
     "backToDashboard": "Dashboard",
