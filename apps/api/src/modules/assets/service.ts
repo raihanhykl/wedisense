@@ -158,9 +158,15 @@ export async function listAssets(
 
 // ── Get Asset ────────────────────────────────────────────────────────
 
-export async function getAsset(id: string) {
+export async function getAsset(id: string, accessibleLocationIds: string[]) {
   const asset = await repo.findById(id);
   if (!asset) {
+    throw new AppError(404, 'ASSET_NOT_FOUND', 'Asset not found');
+  }
+  // RBAC scope: assets outside the caller's accessible location subtree
+  // must be invisible. We return 404 rather than 403 to avoid leaking the
+  // existence of an out-of-scope asset to someone guessing UUIDs.
+  if (!accessibleLocationIds.includes(asset.locationId)) {
     throw new AppError(404, 'ASSET_NOT_FOUND', 'Asset not found');
   }
   return asset;
@@ -168,9 +174,17 @@ export async function getAsset(id: string) {
 
 // ── Get Asset by Barcode ─────────────────────────────────────────────
 
-export async function getAssetByBarcode(barcodeValue: string) {
+export async function getAssetByBarcode(
+  barcodeValue: string,
+  accessibleLocationIds: string[],
+) {
   const asset = await repo.findByBarcodeValue(barcodeValue);
   if (!asset) {
+    throw new AppError(404, 'ASSET_NOT_FOUND', 'Asset not found for the given barcode');
+  }
+  // Same scope guard as getAsset — barcode lookup is the most likely path
+  // for a leak because users can guess/scan codes outside their scope.
+  if (!accessibleLocationIds.includes(asset.locationId)) {
     throw new AppError(404, 'ASSET_NOT_FOUND', 'Asset not found for the given barcode');
   }
   return asset;

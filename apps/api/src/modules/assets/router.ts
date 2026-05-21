@@ -237,7 +237,10 @@ router.get(
   '/barcode/:value',
   asyncHandler(async (req, res) => {
     const value = req.params['value'] as string;
-    const asset = await assetService.getAssetByBarcode(value);
+    const asset = await assetService.getAssetByBarcode(
+      value,
+      req.user!.accessibleLocationIds,
+    );
     sendSuccess(res, asset);
   }),
 );
@@ -258,7 +261,7 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const id = req.params['id'] as string;
-    const asset = await assetService.getAsset(id);
+    const asset = await assetService.getAsset(id, req.user!.accessibleLocationIds);
     sendSuccess(res, asset);
   }),
 );

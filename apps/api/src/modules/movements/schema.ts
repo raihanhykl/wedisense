@@ -44,6 +44,11 @@ export const movementListFilterSchema = z.object({
   dateFrom: z.coerce.date().optional(),
   dateTo: z.coerce.date().optional(),
   performedByUserId: z.string().uuid().optional(),
+  // Narrow results to movements involving a specific location (as the
+  // source or destination of the transfer). Used by the location detail
+  // page's Activity tab. RBAC scope is applied on top regardless of this
+  // explicit filter.
+  locationId: z.string().uuid().optional(),
 });
 
 export type CreateMovementInput = z.infer<typeof createMovementSchema>;

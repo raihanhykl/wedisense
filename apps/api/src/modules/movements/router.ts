@@ -15,10 +15,10 @@ router.get(
     const pagination = paginationSchema.parse(req.query);
     const filters = movementListFilterSchema.parse(req.query);
 
-    const { movements, meta } = await movementService.listMovements({
-      ...pagination,
-      ...filters,
-    });
+    const { movements, meta } = await movementService.listMovements(
+      { ...pagination, ...filters },
+      req.user!.accessibleLocationIds,
+    );
     sendSuccess(res, movements, 200, meta);
   }),
 );
@@ -28,7 +28,10 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const id = req.params['id'] as string;
-    const movement = await movementService.getMovement(id);
+    const movement = await movementService.getMovement(
+      id,
+      req.user!.accessibleLocationIds,
+    );
     sendSuccess(res, movement);
   }),
 );

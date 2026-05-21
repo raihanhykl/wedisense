@@ -11,35 +11,86 @@ import { notifyRole } from '../notifications/index.js';
 
 // ── Build where clause ───────────────────────────────────────────────
 
+/**
+ * Build the Prisma WHERE for a movement list query. Combines:
+ *   - direct field filters (assetId, type, status, etc.) → AND-ed together
+ *   - explicit locationId filter → matches from/to involvement
+ *   - RBAC scope guard → movements whose from/to/asset.location is in
+ *     the caller's accessible subtree
+ *
+ * The conditions are collected as an AND list so the OR sub-clauses
+ * (locationId + RBAC) don't accidentally fold into each other.
+ */
 function buildWhereClause(
   filters: MovementListFilters,
+  accessibleLocationIds: string[],
 ): Prisma.AssetMovementWhereInput {
-  const where: Prisma.AssetMovementWhereInput = {};
+  const conditions: Prisma.AssetMovementWhereInput[] = [];
 
   if (filters.assetId) {
-    where.assetId = filters.assetId;
+    conditions.push({ assetId: filters.assetId });
   }
-
   if (filters.movementType) {
-    where.movementType = filters.movementType as Prisma.EnumMovementTypeFilter;
+    conditions.push({
+      movementType: filters.movementType as Prisma.EnumMovementTypeFilter,
+    });
   }
-
   if (filters.status) {
-    where.status = filters.status as Prisma.EnumMovementStatusFilter;
+    conditions.push({
+      status: filters.status as Prisma.EnumMovementStatusFilter,
+    });
   }
-
   if (filters.performedByUserId) {
-    where.performedByUserId = filters.performedByUserId;
+    conditions.push({ performedByUserId: filters.performedByUserId });
   }
-
   if (filters.dateFrom || filters.dateTo) {
-    where.createdAt = {
-      ...(filters.dateFrom && { gte: filters.dateFrom }),
-      ...(filters.dateTo && { lte: filters.dateTo }),
-    };
+    conditions.push({
+      createdAt: {
+        ...(filters.dateFrom && { gte: filters.dateFrom }),
+        ...(filters.dateTo && { lte: filters.dateTo }),
+      },
+    });
   }
 
-  return where;
+  if (filters.locationId) {
+    conditions.push({
+      OR: [
+        { fromLocationId: filters.locationId },
+        { toLocationId: filters.locationId },
+      ],
+    });
+  }
+
+  // RBAC enforcement. A movement is "in scope" if any of its location
+  // references (from, to, or the asset's current location) sits in the
+  // caller's accessible subtree. Tie-breaker for movements that don't
+  // change location (e.g. simple assignments): we still allow visibility
+  // when the asset itself is in scope.
+  conditions.push({
+    OR: [
+      { fromLocationId: { in: accessibleLocationIds } },
+      { toLocationId: { in: accessibleLocationIds } },
+      { asset: { locationId: { in: accessibleLocationIds } } },
+    ],
+  });
+
+  return conditions.length === 1 ? conditions[0]! : { AND: conditions };
+}
+
+/**
+ * Whether the given movement is visible to the caller under the RBAC
+ * subtree rules. Mirrors the OR-of-three logic in buildWhereClause but
+ * runs against an already-fetched row.
+ */
+function isMovementInScope(
+  movement: { fromLocationId: string | null; toLocationId: string | null; asset: { locationId: string } },
+  accessibleLocationIds: string[],
+): boolean {
+  const set = new Set(accessibleLocationIds);
+  if (movement.fromLocationId && set.has(movement.fromLocationId)) return true;
+  if (movement.toLocationId && set.has(movement.toLocationId)) return true;
+  if (set.has(movement.asset.locationId)) return true;
+  return false;
 }
 
 function buildOrderBy(sort?: string, order?: 'asc' | 'desc'): Prisma.AssetMovementOrderByWithRelationInput {
@@ -61,9 +112,10 @@ function buildOrderBy(sort?: string, order?: 'asc' | 'desc'): Prisma.AssetMoveme
 
 export async function listMovements(
   query: PaginationQuery & MovementListFilters,
+  accessibleLocationIds: string[],
 ) {
   const { skip, take, page, limit } = parsePagination(query);
-  const where = buildWhereClause(query);
+  const where = buildWhereClause(query, accessibleLocationIds);
   const orderBy = buildOrderBy(query.sort, query.order);
 
   const [movements, total] = await Promise.all([
@@ -76,9 +128,14 @@ export async function listMovements(
 
 // ── Get Movement ────────────────────────────────────────────────────
 
-export async function getMovement(id: string) {
+export async function getMovement(id: string, accessibleLocationIds: string[]) {
   const movement = await repo.findById(id);
   if (!movement) {
+    throw new AppError(404, 'MOVEMENT_NOT_FOUND', 'Movement not found');
+  }
+  // RBAC: return 404 (not 403) for out-of-scope movements so a guessable
+  // UUID doesn't confirm existence.
+  if (!isMovementInScope(movement, accessibleLocationIds)) {
     throw new AppError(404, 'MOVEMENT_NOT_FOUND', 'Movement not found');
   }
   return movement;

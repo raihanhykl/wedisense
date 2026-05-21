@@ -14,6 +14,8 @@ export interface MovementListFilters {
   dateFrom?: Date;
   dateTo?: Date;
   performedByUserId?: string;
+  /** Explicit location filter: from/to involves this location id. */
+  locationId?: string;
   sort?: string;
   order?: 'asc' | 'desc';
 }

@@ -15,7 +15,19 @@ const listInclude = {
 } as const;
 
 const detailInclude = {
-  asset: { select: { id: true, name: true, assetNumber: true, status: true, condition: true } },
+  // locationId is needed for the service-layer RBAC check (a movement is
+  // visible when the asset itself sits in an accessible location, even if
+  // the movement didn't change location). Other fields are for the UI.
+  asset: {
+    select: {
+      id: true,
+      name: true,
+      assetNumber: true,
+      status: true,
+      condition: true,
+      locationId: true,
+    },
+  },
   fromUser: { select: { id: true, name: true, email: true, employeeId: true } },
   toUser: { select: { id: true, name: true, email: true, employeeId: true } },
   fromLocation: { select: { id: true, name: true, code: true, type: true } },

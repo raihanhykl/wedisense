@@ -218,15 +218,29 @@ export default function MultiAssetCreateForm({
   });
 
   const selectedProductId = watch("productId");
+  // Live derivation from the current products fetch — used to render the
+  // selected-product label and to drive the auto-fill effect below.
   const selectedProduct = useMemo(
     () => products.find((p) => p.id === selectedProductId) ?? null,
     [products, selectedProductId],
   );
 
+  // Sticky cache of the most recently selected product. Necessary because
+  // `selectedProduct` above goes null whenever the products query refetches
+  // with a search that doesn't match the picked item — which happens right
+  // after picking (the productSearch effect below sets the search to
+  // "Name (Brand)" and the backend's partial-match may exclude it).
+  // The cache survives those refetches so `handleAddRow` and any other
+  // downstream consumer can still read the picked product's name.
+  const [pickedProduct, setPickedProduct] = useState<ProductOption | null>(null);
+
   // ── Auto-suffix Name when product changes ─────────────────────────
   // We only fill empty rows so we never overwrite user-typed names.
   useEffect(() => {
     if (!selectedProduct) return;
+    // Promote the live selection into the sticky cache. Once stored, it
+    // outlives transient `selectedProduct === null` windows during refetch.
+    setPickedProduct(selectedProduct);
     const rows = getValues("rows");
     rows.forEach((row, i) => {
       if (!row.name.trim()) {
@@ -280,7 +294,10 @@ export default function MultiAssetCreateForm({
       );
       return;
     }
-    const productName = selectedProduct?.name ?? "";
+    // Prefer the live selection but fall back to the sticky cache so a
+    // newly-appended row still gets "<Product> - Unit N" even when the
+    // products query is mid-refetch and `selectedProduct` is null.
+    const productName = selectedProduct?.name ?? pickedProduct?.name ?? "";
     const nextIndex = fields.length; // before append, index will equal current length
     append({
       name: productName ? `${productName} - Unit ${nextIndex + 1}` : "",
@@ -303,22 +320,16 @@ export default function MultiAssetCreateForm({
   //         scan data prefilled so the user just picks a category.
   //      c) neither set → show an error toast.
   //  - serial: just paste the scanned value into the row's serial field.
-  const handleScanResult = useCallback(
-    async (value: string) => {
-      if (!scannerTarget) return;
-      if (scannerTarget.kind === "serial") {
-        setValue(`rows.${scannerTarget.rowIndex}.serialNumber`, value, {
-          shouldDirty: true,
-        });
-        setScannerTarget(null);
-        toast.success(`Serial captured for row ${scannerTarget.rowIndex + 1}`);
-        return;
-      }
-
+  // EAN → product lookup + form prefill. Extracted from handleScanResult
+  // so the same three-branch logic (existing product / external lookup
+  // only / not found) can also drive the ?ean= URL prefill on mount —
+  // when the user lands here from the /scan page's "Create Asset" CTA.
+  const lookupAndApplyEan = useCallback(
+    async (ean: string) => {
       try {
         const result = await apiPost<ProductLookupResult>(
           "/api/products/lookup",
-          { ean: value },
+          { ean },
         );
         if (result.product) {
           // (a) Existing internal product — select directly. Seed the cache
@@ -342,28 +353,64 @@ export default function MultiAssetCreateForm({
               name: result.lookup.name,
               brand: result.lookup.brand ?? "",
               model: result.lookup.model ?? "",
-              eanCode: value,
+              eanCode: ean,
             },
           });
           toast.info(
-            `EAN ${value} matched an external catalog. Pick a category to add it to your products.`,
+            `EAN ${ean} matched an external catalog. Pick a category to add it to your products.`,
           );
         } else {
           // (c) Nothing found anywhere.
-          toast.error(`No product found for EAN ${value}. Add it manually.`);
+          toast.error(`No product found for EAN ${ean}. Add it manually.`);
         }
       } catch (err: unknown) {
         toast.error(
           getApiErrorMessage(
             err,
-            `Lookup failed for EAN ${value}. Try again or add manually.`,
+            `Lookup failed for EAN ${ean}. Try again or add manually.`,
           ),
         );
+      }
+    },
+    [setValue, queryClient],
+  );
+
+  // ── EAN query-param prefill ───────────────────────────────────────
+  // The /scan page navigates here with `?ean=<value>` after a successful
+  // product-scan. Run the same three-branch lookup on mount and feed the
+  // result into the form (select existing / open create-new dialog /
+  // show error toast). One-shot guard prevents re-runs from React
+  // StrictMode's dev double-mount or unrelated state changes refiring
+  // the effect.
+  const [eanPrefillDone, setEanPrefillDone] = useState(false);
+  useEffect(() => {
+    if (eanPrefillDone) return;
+    if (typeof window === "undefined") return;
+    const ean = new URLSearchParams(window.location.search).get("ean");
+    if (!ean) return;
+    setEanPrefillDone(true);
+    void lookupAndApplyEan(ean);
+  }, [eanPrefillDone, lookupAndApplyEan]);
+
+  const handleScanResult = useCallback(
+    async (value: string) => {
+      if (!scannerTarget) return;
+      if (scannerTarget.kind === "serial") {
+        setValue(`rows.${scannerTarget.rowIndex}.serialNumber`, value, {
+          shouldDirty: true,
+        });
+        setScannerTarget(null);
+        toast.success(`Serial captured for row ${scannerTarget.rowIndex + 1}`);
+        return;
+      }
+      // Product scan — delegate to the shared lookup + apply path.
+      try {
+        await lookupAndApplyEan(value);
       } finally {
         setScannerTarget(null);
       }
     },
-    [scannerTarget, setValue, queryClient],
+    [scannerTarget, setValue, lookupAndApplyEan],
   );
 
   // ── New product creation handler ──────────────────────────────────
