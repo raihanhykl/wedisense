@@ -22,6 +22,7 @@ import { dashboardRouter } from './modules/dashboard/index.js';
 import { savedViewsRouter } from './modules/saved-views/router.js';
 import { toursRouter } from './modules/tours/router.js';
 import { auditRouter } from './modules/audit/router.js';
+import { purchaseOrderRouter } from './modules/purchase-orders/router.js';
 import { authenticate } from './middleware/authenticate.js';
 
 const app: Express = express();
@@ -132,6 +133,7 @@ app.use('/api/dashboard', authenticate, dashboardRouter);
 app.use('/api/saved-views', authenticate, savedViewsRouter);
 app.use('/api/tours', authenticate, toursRouter);
 app.use('/api/audit-logs', authenticate, auditRouter);
+app.use('/api/purchase-orders', authenticate, purchaseOrderRouter);
 
 // ── Static Files (barcode/QR images) ──────────────────────
 // Helmet's default `Cross-Origin-Resource-Policy: same-origin` would block

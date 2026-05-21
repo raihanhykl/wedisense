@@ -367,6 +367,38 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     decision: audited('tours'),
   },
 
+  // ── purchase-orders ─────────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/purchase-orders',
+    module: 'purchase-orders',
+    decision: audited('purchase-orders'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/purchase-orders/:id',
+    module: 'purchase-orders',
+    decision: audited('purchase-orders'),
+  },
+  {
+    method: 'DELETE',
+    path: '/api/purchase-orders/:id',
+    module: 'purchase-orders',
+    decision: audited('purchase-orders'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/purchase-orders/:id/close',
+    module: 'purchase-orders',
+    decision: audited('purchase-orders'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/purchase-orders/:id/cancel',
+    module: 'purchase-orders',
+    decision: audited('purchase-orders'),
+  },
+
   // ── saved-views ─────────────────────────────────────────────────────────────
   {
     method: 'POST',

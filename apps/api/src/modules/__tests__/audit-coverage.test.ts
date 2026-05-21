@@ -62,6 +62,7 @@ const ROUTER_MOUNTS: Record<string, { mount: string; file: string }> = {
   // belongs in the scan: if a future change introduces a mutating endpoint
   // here, the completeness check forces an inventory entry.
   audit: { mount: '/api/audit-logs', file: 'audit/router.ts' },
+  'purchase-orders': { mount: '/api/purchase-orders', file: 'purchase-orders/router.ts' },
 };
 
 interface DiscoveredRoute {
