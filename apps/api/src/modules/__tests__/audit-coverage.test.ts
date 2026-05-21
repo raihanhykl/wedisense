@@ -63,6 +63,10 @@ const ROUTER_MOUNTS: Record<string, { mount: string; file: string }> = {
   // here, the completeness check forces an inventory entry.
   audit: { mount: '/api/audit-logs', file: 'audit/router.ts' },
   'purchase-orders': { mount: '/api/purchase-orders', file: 'purchase-orders/router.ts' },
+  'procurement-batches': {
+    mount: '/api/procurement-batches',
+    file: 'procurement-batches/router.ts',
+  },
 };
 
 interface DiscoveredRoute {

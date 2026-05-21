@@ -8,7 +8,7 @@ import type {
   UpdatePurchaseOrderInput,
   CancelPurchaseOrderInput,
 } from './schema.js';
-import type { PurchaseOrderListFilters } from './types.js';
+import type { PrismaTransactionClient, PurchaseOrderListFilters } from './types.js';
 
 // ── State machine ───────────────────────────────────────────────────────────
 //
@@ -339,3 +339,119 @@ export async function cancelPurchaseOrder(
 // recompute their parent PO's status. The mutable-statuses constant lives
 // here as the source of truth.
 export { MUTABLE_STATUSES };
+
+// ── Cascade from batches ────────────────────────────────────────────────────
+//
+// Called by the procurement-batches module whenever a batch is created,
+// soft-deleted, cancelled, or transitions across the RECEIVED threshold.
+// Walks the PO's non-deleted, non-cancelled batches and derives the
+// correct PO status:
+//
+//   no batches                       → OPEN
+//   any batch in RECEIVED+COMPLETED  → at least PARTIALLY_RECEIVED
+//   every batch in RECEIVED+COMPLETED → FULLY_RECEIVED
+//
+// CLOSED and CANCELLED POs are terminal — we never demote out of them,
+// even if a downstream operation would otherwise suggest it. (A late
+// batch on a CLOSED PO is a data-quality issue the user has to resolve
+// manually; auto-demoting would silently void a financial close.)
+//
+// Writes an audit log only when the status actually changes. `actorId`
+// may be null for cascades originating from system jobs; the audit row
+// supports null user_id for system actions.
+export async function recomputePurchaseOrderStatus(
+  poId: string,
+  tx: PrismaTransactionClient,
+  actorId: string | null,
+): Promise<{ status: PurchaseOrderStatus; changed: boolean } | null> {
+  const po = await tx.purchaseOrder.findFirst({
+    where: { id: poId, deletedAt: null },
+    select: { id: true, status: true },
+  });
+  if (!po) return null;
+
+  // Terminal statuses do not auto-recompute.
+  if (po.status === 'CLOSED' || po.status === 'CANCELLED') {
+    return { status: po.status, changed: false };
+  }
+
+  // Only count batches that are real (not soft-deleted) and not voided
+  // (not CANCELLED). A cancelled batch is a procurement event that didn't
+  // happen, so it shouldn't influence the parent PO's status.
+  const batches = await tx.procurementBatch.findMany({
+    where: {
+      purchaseOrderId: poId,
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+    select: { status: true },
+  });
+
+  let nextStatus: PurchaseOrderStatus;
+  if (batches.length === 0) {
+    nextStatus = 'OPEN';
+  } else {
+    const isReceived = (s: string) => s === 'RECEIVED' || s === 'COMPLETED';
+    const allReceived = batches.every((b) => isReceived(b.status));
+    const anyReceived = batches.some((b) => isReceived(b.status));
+    if (allReceived) nextStatus = 'FULLY_RECEIVED';
+    else if (anyReceived) nextStatus = 'PARTIALLY_RECEIVED';
+    else nextStatus = 'OPEN';
+  }
+
+  if (nextStatus === po.status) {
+    return { status: po.status, changed: false };
+  }
+
+  await tx.purchaseOrder.update({
+    where: { id: poId },
+    data: { status: nextStatus },
+  });
+  await tx.auditLog.create({
+    data: {
+      userId: actorId,
+      action: 'UPDATE',
+      resourceType: 'PurchaseOrder',
+      resourceId: poId,
+      oldValues: { status: po.status } as unknown as Prisma.InputJsonValue,
+      newValues: { status: nextStatus, recomputedBy: 'batch-cascade' } as unknown as Prisma.InputJsonValue,
+    },
+  });
+
+  return { status: nextStatus, changed: true };
+}
+
+/** Increment the parent PO's batchCount. Called when a batch is created. */
+export async function incrementBatchCount(
+  poId: string,
+  tx: PrismaTransactionClient,
+) {
+  await tx.purchaseOrder.update({
+    where: { id: poId },
+    data: { batchCount: { increment: 1 } },
+  });
+}
+
+/** Decrement the parent PO's batchCount. Called when a batch is soft-deleted. */
+export async function decrementBatchCount(
+  poId: string,
+  tx: PrismaTransactionClient,
+) {
+  await tx.purchaseOrder.update({
+    where: { id: poId },
+    data: { batchCount: { decrement: 1 } },
+  });
+}
+
+/** Bump the parent PO's denormalised assetCount by a signed delta. */
+export async function bumpAssetCount(
+  poId: string,
+  delta: number,
+  tx: PrismaTransactionClient,
+) {
+  await tx.purchaseOrder.update({
+    where: { id: poId },
+    data: { assetCount: { increment: delta } },
+  });
+}
+

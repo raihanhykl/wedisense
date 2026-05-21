@@ -399,6 +399,50 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     decision: audited('purchase-orders'),
   },
 
+  // ── procurement-batches ─────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/procurement-batches',
+    module: 'procurement-batches',
+    decision: audited('procurement-batches'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/procurement-batches/:id',
+    module: 'procurement-batches',
+    decision: audited('procurement-batches'),
+  },
+  {
+    method: 'DELETE',
+    path: '/api/procurement-batches/:id',
+    module: 'procurement-batches',
+    decision: audited('procurement-batches'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/procurement-batches/:id/submit',
+    module: 'procurement-batches',
+    decision: audited('procurement-batches'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/procurement-batches/:id/receive',
+    module: 'procurement-batches',
+    decision: audited('procurement-batches'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/procurement-batches/:id/complete',
+    module: 'procurement-batches',
+    decision: audited('procurement-batches'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/procurement-batches/:id/cancel',
+    module: 'procurement-batches',
+    decision: audited('procurement-batches'),
+  },
+
   // ── saved-views ─────────────────────────────────────────────────────────────
   {
     method: 'POST',
