@@ -1,0 +1,80 @@
+{
+  "page": {
+    "title": "Locations",
+    "subtitle": "Manage office locations, branches, and sub-locations",
+    "addButton": "Add Location",
+    "emptyState": "No locations found. Click \"Add Location\" to create one.",
+    "loading": "Loading locations…"
+  },
+  "form": {
+    "createTitle": "Add Location",
+    "editTitle": "Edit Location",
+    "fields": {
+      "name": "Name",
+      "code": "Code",
+      "address": "Address",
+      "city": "City",
+      "province": "Province",
+      "type": "Type",
+      "parent": "Parent Location",
+      "active": "Active"
+    },
+    "parentNone": "None (top-level)",
+    "typePlaceholder": "Select type",
+    "actions": {
+      "cancel": "Cancel",
+      "save": "Save",
+      "saving": "Saving…"
+    },
+    "errors": {
+      "nameRequired": "Name is required",
+      "codeRequired": "Code is required",
+      "typeRequired": "Type is required"
+    }
+  },
+  "tree": {
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "actions": {
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "deleteConfirm": "Are you sure you want to delete this location?",
+    "inactiveSuffix": "(inactive)"
+  },
+  "picker": {
+    "allLocations": "All locations",
+    "searchPlaceholder": "Search locations…",
+    "noResults": "No locations match \"{query}\"",
+    "noLocations": "No locations configured yet.",
+    "loading": "Loading locations…"
+  },
+  "types": {
+    "HEAD_OFFICE": "Head Office",
+    "BRANCH": "Branch",
+    "FACTORY": "Factory",
+    "SHOWROOM": "Showroom",
+    "SERVICE_CENTER": "Service Center",
+    "OTHER": "Other"
+  },
+  "typeDescriptions": {
+    "HEAD_OFFICE": "Primary corporate site",
+    "BRANCH": "Regional branch office",
+    "FACTORY": "Manufacturing or production site",
+    "SHOWROOM": "Customer-facing display area",
+    "SERVICE_CENTER": "Service and repair facility",
+    "OTHER": "Other location type"
+  },
+  "errors": {
+    "duplicateCode": "Location code \"{code}\" already exists",
+    "parentNotFound": "Parent location not found",
+    "selfParent": "A location cannot be its own parent",
+    "cyclicParent": "A location cannot be moved under one of its own descendants",
+    "hasAssets": "Cannot delete location that has assets assigned to it",
+    "notFound": "Location not found"
+  }
+}

@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { apiGet, apiGetPaginated } from "@/lib/api";
+import type { LocationTypeValue } from "@/lib/location-types";
 import type { AssetCategoryOption } from "@/types/admin";
 
 // ── Shape stubs ─────────────────────────────────────────────────────
@@ -82,8 +83,12 @@ export interface LocationTreeNode {
   id: string;
   name: string;
   code: string;
-  type: string;
+  type: LocationTypeValue;
   isActive: boolean;
+  /** Assets pinned directly to this location (excludes descendants). */
+  directAssetCount: number;
+  /** Assets in this location plus the entire descendant subtree. */
+  subtreeAssetCount: number;
   children: LocationTreeNode[];
 }
 

@@ -1,10 +1,16 @@
 // ── Location types ────────────────────────────────────────────────────
+import type { LocationTypeValue } from "@/lib/location-types";
+
 export interface LocationNode {
   id: string;
   name: string;
   code: string;
-  type: string;
+  type: LocationTypeValue;
   isActive: boolean;
+  /** Assets pinned directly to this location (excludes descendants). */
+  directAssetCount: number;
+  /** Assets in this location plus the entire descendant subtree. */
+  subtreeAssetCount: number;
   children: LocationNode[];
 }
 
@@ -14,21 +20,50 @@ export interface LocationFormData {
   address: string;
   city: string;
   province: string;
-  type: string;
+  type: LocationTypeValue;
   parentId: string | null;
   isActive: boolean;
+}
+
+/** Day-of-week hours. `null` (or absent key) = unspecified; `"closed"` =
+ *  explicitly closed; object = open with hh:mm bounds. Matches the
+ *  Zod schema in apps/api/src/modules/locations/schema.ts. */
+export type LocationDayHours =
+  | { open: string; close: string }
+  | "closed"
+  | null;
+
+export interface LocationOperatingHours {
+  mon?: LocationDayHours;
+  tue?: LocationDayHours;
+  wed?: LocationDayHours;
+  thu?: LocationDayHours;
+  fri?: LocationDayHours;
+  sat?: LocationDayHours;
+  sun?: LocationDayHours;
 }
 
 export interface LocationFlat {
   id: string;
   name: string;
   code: string;
-  type: string;
-  address: string;
-  city: string;
-  province: string;
+  type: LocationTypeValue;
+  address: string | null;
+  city: string | null;
+  province: string | null;
   parentId: string | null;
   isActive: boolean;
+  // Metadata added in Tier 4. All nullable on the DB side; the frontend
+  // treats undefined === null (forms reset() will set defaults regardless).
+  latitude: number | null;
+  longitude: number | null;
+  photoUrl: string | null;
+  qrCodeImageUrl: string | null;
+  contactUserId: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  operatingHours: LocationOperatingHours | null;
+  customFields: Record<string, unknown> | null;
 }
 
 // ── User types ────────────────────────────────────────────────────────

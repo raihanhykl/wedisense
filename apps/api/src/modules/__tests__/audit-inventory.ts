@@ -98,6 +98,30 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     module: 'locations',
     decision: audited('locations'),
   },
+  {
+    method: 'POST',
+    path: '/api/locations/:id/archive',
+    module: 'locations',
+    decision: audited('locations'),
+  },
+  {
+    method: 'POST',
+    path: '/api/locations/:id/reactivate',
+    module: 'locations',
+    decision: audited('locations'),
+  },
+  {
+    method: 'POST',
+    path: '/api/locations/import',
+    module: 'locations',
+    decision: audited('locations'),
+  },
+  {
+    method: 'POST',
+    path: '/api/locations/:id/qrcode/regenerate',
+    module: 'locations',
+    decision: audited('locations'),
+  },
 
   // ── products ────────────────────────────────────────────────────────────────
   {

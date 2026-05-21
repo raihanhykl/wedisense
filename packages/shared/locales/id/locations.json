@@ -1,0 +1,80 @@
+{
+  "page": {
+    "title": "Lokasi",
+    "subtitle": "Kelola lokasi kantor, cabang, dan sub-lokasi",
+    "addButton": "Tambah Lokasi",
+    "emptyState": "Belum ada lokasi. Klik \"Tambah Lokasi\" untuk membuat lokasi baru.",
+    "loading": "Memuat lokasi…"
+  },
+  "form": {
+    "createTitle": "Tambah Lokasi",
+    "editTitle": "Edit Lokasi",
+    "fields": {
+      "name": "Nama",
+      "code": "Kode",
+      "address": "Alamat",
+      "city": "Kota",
+      "province": "Provinsi",
+      "type": "Tipe",
+      "parent": "Lokasi Induk",
+      "active": "Aktif"
+    },
+    "parentNone": "Tidak ada (level atas)",
+    "typePlaceholder": "Pilih tipe",
+    "actions": {
+      "cancel": "Batal",
+      "save": "Simpan",
+      "saving": "Menyimpan…"
+    },
+    "errors": {
+      "nameRequired": "Nama wajib diisi",
+      "codeRequired": "Kode wajib diisi",
+      "typeRequired": "Tipe wajib dipilih"
+    }
+  },
+  "tree": {
+    "expand": "Buka",
+    "collapse": "Tutup",
+    "status": {
+      "active": "Aktif",
+      "inactive": "Nonaktif"
+    },
+    "actions": {
+      "edit": "Edit",
+      "delete": "Hapus"
+    },
+    "deleteConfirm": "Yakin ingin menghapus lokasi ini?",
+    "inactiveSuffix": "(nonaktif)"
+  },
+  "picker": {
+    "allLocations": "Semua lokasi",
+    "searchPlaceholder": "Cari lokasi…",
+    "noResults": "Tidak ada lokasi yang cocok dengan \"{query}\"",
+    "noLocations": "Belum ada lokasi.",
+    "loading": "Memuat lokasi…"
+  },
+  "types": {
+    "HEAD_OFFICE": "Kantor Pusat",
+    "BRANCH": "Cabang",
+    "FACTORY": "Pabrik",
+    "SHOWROOM": "Showroom",
+    "SERVICE_CENTER": "Service Center",
+    "OTHER": "Lainnya"
+  },
+  "typeDescriptions": {
+    "HEAD_OFFICE": "Kantor pusat utama",
+    "BRANCH": "Kantor cabang regional",
+    "FACTORY": "Lokasi produksi atau manufaktur",
+    "SHOWROOM": "Area pamer untuk pelanggan",
+    "SERVICE_CENTER": "Fasilitas layanan dan perbaikan",
+    "OTHER": "Tipe lokasi lain"
+  },
+  "errors": {
+    "duplicateCode": "Kode lokasi \"{code}\" sudah dipakai",
+    "parentNotFound": "Lokasi induk tidak ditemukan",
+    "selfParent": "Lokasi tidak boleh menjadi induknya sendiri",
+    "cyclicParent": "Lokasi tidak boleh dipindahkan ke bawah keturunannya sendiri",
+    "hasAssets": "Tidak dapat menghapus lokasi yang masih memiliki aset",
+    "notFound": "Lokasi tidak ditemukan"
+  }
+}

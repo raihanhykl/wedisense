@@ -10,6 +10,10 @@ export interface LocationTreeNode {
   address: string | null;
   city: string | null;
   province: string | null;
+  /** Assets pinned to this exact location (not descendants). */
+  directAssetCount: number;
+  /** Assets in this location plus the entire descendant subtree. */
+  subtreeAssetCount: number;
   children: LocationTreeNode[];
 }
 

@@ -179,6 +179,7 @@ model User {
   labelTemplates         LabelTemplate[]
   tourProgress           UserTourProgress[]
   savedViews             UserSavedView[]
+  locationsAsContact     Location[]           @relation("LocationContact")
 
   @@index([status])
   @@index([deletedAt])
@@ -277,6 +278,37 @@ model Location {
   type      LocationType @map("type")
   parentId  String?      @map("parent_id") @db.Uuid
   isActive  Boolean      @default(true) @map("is_active")
+
+  // Geographic coordinates (decimal degrees, WGS84). Decimal(10,7) ≈ 1cm
+  // precision — adequate for site-level pins on Leaflet/OpenStreetMap.
+  latitude  Decimal?     @map("latitude")  @db.Decimal(10, 7)
+  longitude Decimal?     @map("longitude") @db.Decimal(11, 7)
+
+  // Single primary photo. Multi-photo gallery would land as a separate
+  // LocationAttachment table; not modelled here until that need is real.
+  photoUrl String? @map("photo_url")
+
+  // Auto-generated QR encoding {APP_BASE_URL}/locations/{id} for mobile
+  // scan-to-detail. Image is materialised by the StorageAdapter the first
+  // time the /qrcode endpoint is hit.
+  qrCodeImageUrl String? @map("qr_code_image_url")
+
+  // On-site contact. contactUserId points to an internal User if applicable;
+  // contactPhone/contactEmail stand alone for external contacts (vendors,
+  // building managers) where no User row exists.
+  contactUserId String? @map("contact_user_id") @db.Uuid
+  contactPhone  String? @map("contact_phone")
+  contactEmail  String? @map("contact_email")
+
+  // Hours-of-operation. Loose shape, e.g.
+  // { mon: { open: "08:00", close: "17:00" }, tue: "closed", … }
+  operatingHours Json? @map("operating_hours")
+
+  // Per-location custom data. The shape contract is held by app-level
+  // config (keyed by location type), not by the schema — keeps the JSONB
+  // truly extensible across future location types.
+  customFields Json? @map("custom_fields")
+
   createdAt DateTime     @default(now()) @map("created_at")
   updatedAt DateTime     @updatedAt @map("updated_at")
   deletedAt DateTime?    @map("deleted_at")
@@ -284,6 +316,7 @@ model Location {
   // Relations
   parent   Location?  @relation("LocationTree", fields: [parentId], references: [id], onDelete: SetNull)
   children Location[] @relation("LocationTree")
+  contactUser User? @relation("LocationContact", fields: [contactUserId], references: [id], onDelete: SetNull)
   assets   Asset[]
   userRoles UserRole[]
   movementsFrom AssetMovement[] @relation("MovementFromLocation")
@@ -293,6 +326,7 @@ model Location {
   @@index([type])
   @@index([isActive])
   @@index([deletedAt])
+  @@index([contactUserId])
   @@map("locations")
 }
 

@@ -44,6 +44,7 @@ const ROUTER_MOUNTS: Record<string, { mount: string; file: string }> = {
   users: { mount: '/api/users', file: 'users/router.ts' },
   roles: { mount: '/api/roles', file: 'roles/router.ts' },
   locations: { mount: '/api/locations', file: 'locations/router.ts' },
+  'locations-import': { mount: '/api/locations/import', file: 'locations/import-router.ts' },
   products: { mount: '/api/products', file: 'products/router.ts' },
   'asset-categories': { mount: '/api/asset-categories', file: 'asset-categories/router.ts' },
   assets: { mount: '/api/assets', file: 'assets/router.ts' },

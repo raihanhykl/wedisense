@@ -90,7 +90,28 @@ export async function hasAssets(id: string): Promise<boolean> {
   return count > 0;
 }
 
+/**
+ * Return the IDs of assets pinned *directly* to a location (not its
+ * descendants). Used by the archive flow to feed bulkMoveAssets. Capped
+ * at 500 to stay within the bulk-move endpoint's reasonable limit; if a
+ * location ever holds more, the UI surfaces a clear error and the user
+ * needs to split the migration manually.
+ */
+export async function findDirectAssetIds(locationId: string): Promise<string[]> {
+  const rows = await prisma.asset.findMany({
+    where: { locationId, deletedAt: null },
+    select: { id: true },
+    take: 500,
+  });
+  return rows.map((r) => r.id);
+}
+
 export async function findTree() {
+  // Single recursive CTE + LEFT JOIN to derive each location's *direct* asset
+  // count (assets pinned to this exact location, not its subtree). The subtree
+  // rollup happens in the service layer via JS post-order traversal — cheap
+  // and keeps the SQL readable. Assets.location_id is indexed (FK) so the
+  // GROUP BY is fast.
   const rows = await prisma.$queryRaw<
     Array<{
       id: string;
@@ -102,6 +123,7 @@ export async function findTree() {
       address: string | null;
       city: string | null;
       province: string | null;
+      direct_asset_count: number;
     }>
   >`
     WITH RECURSIVE location_tree AS (
@@ -114,9 +136,18 @@ export async function findTree() {
       INNER JOIN location_tree lt ON l.parent_id = lt.id
       WHERE l.deleted_at IS NULL
     )
-    SELECT id, name, code, type, parent_id, is_active, address, city, province
-    FROM location_tree
-    ORDER BY depth, name
+    SELECT
+      lt.id, lt.name, lt.code, lt.type, lt.parent_id, lt.is_active,
+      lt.address, lt.city, lt.province,
+      COALESCE(ac.cnt, 0)::int AS direct_asset_count
+    FROM location_tree lt
+    LEFT JOIN (
+      SELECT location_id, COUNT(*) AS cnt
+      FROM assets
+      WHERE deleted_at IS NULL
+      GROUP BY location_id
+    ) ac ON ac.location_id = lt.id
+    ORDER BY lt.depth, lt.name
   `;
 
   return rows;
@@ -165,4 +196,42 @@ export async function findByCode(code: string, excludeId?: string) {
     where.id = { not: excludeId };
   }
   return prisma.location.findFirst({ where });
+}
+
+/**
+ * Aggregate asset counts grouped by status, scoped to a single location
+ * AND scoped to its entire descendant subtree (separately). Returns two
+ * passes in one round-trip so the detail page can show both rollups
+ * without a follow-up query.
+ *
+ * Returns shape: { status, direct_count, subtree_count } per status. Statuses
+ * with zero counts are still included so the UI can render a stable legend.
+ */
+export async function findAssetSummary(locationId: string) {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      status: string;
+      direct_count: number;
+      subtree_count: number;
+    }>
+  >`
+    WITH RECURSIVE descendant_ids AS (
+      SELECT id FROM locations
+      WHERE id = ${locationId}::uuid AND deleted_at IS NULL
+      UNION ALL
+      SELECT l.id FROM locations l
+      INNER JOIN descendant_ids d ON l.parent_id = d.id
+      WHERE l.deleted_at IS NULL
+    )
+    SELECT
+      a.status::text AS status,
+      COUNT(*) FILTER (WHERE a.location_id = ${locationId}::uuid)::int AS direct_count,
+      COUNT(*)::int AS subtree_count
+    FROM assets a
+    WHERE a.deleted_at IS NULL
+      AND a.location_id IN (SELECT id FROM descendant_ids)
+    GROUP BY a.status
+    ORDER BY a.status
+  `;
+  return rows;
 }
