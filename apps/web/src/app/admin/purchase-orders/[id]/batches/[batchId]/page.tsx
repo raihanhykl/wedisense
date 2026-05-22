@@ -670,10 +670,10 @@ export default function BatchDetailPage() {
   return (
     <div className="space-y-6 p-6">
       <Link
-        href={`/admin/purchase-orders/${batch.purchaseOrder.id}`}
+        href={`/admin/purchase-orders/${batch.purchaseOrder?.id ?? poId}`}
         className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-4 w-4" /> Back to {batch.purchaseOrder.poNumber}
+        <ArrowLeft className="h-4 w-4" /> Back to {batch.purchaseOrder?.poNumber ?? "PO"}
       </Link>
 
       {/* Header */}
@@ -776,7 +776,7 @@ export default function BatchDetailPage() {
 
       {/* Parent PO link */}
       <Link
-        href={`/admin/purchase-orders/${batch.purchaseOrder.id}`}
+        href={`/admin/purchase-orders/${batch.purchaseOrder?.id ?? poId}`}
         className="flex items-center justify-between rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-muted/30"
       >
         <div>
@@ -785,10 +785,10 @@ export default function BatchDetailPage() {
           </div>
           <div className="mt-1 flex items-center gap-2 text-sm">
             <span className="font-mono font-medium text-primary">
-              {batch.purchaseOrder.poNumber}
+              {batch.purchaseOrder?.poNumber ?? "PO"}
             </span>
             <span className="text-muted-foreground">·</span>
-            <span>{batch.purchaseOrder.vendor.name}</span>
+            <span>{batch.purchaseOrder?.vendor?.name ?? ""}</span>
           </div>
         </div>
         <ChevronRight className="h-4 w-4 text-muted-foreground" />
