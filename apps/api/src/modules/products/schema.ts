@@ -10,7 +10,11 @@ export const createProductSchema = z.object({
   brand: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
-  categoryId: z.string().uuid(),
+  // Phase 17 v2 — optional for the spec §2.5 "inline quick-save" path.
+  // When omitted, the service falls back to the first available
+  // category (alphabetical by name) so a PO line item can be created
+  // without forcing a category picker during the quick-add flow.
+  categoryId: z.string().uuid().optional(),
   imageUrl: z.string().nullable().optional(),
   source: z.enum(['API_UPCITEMDB', 'API_BARCODELOOKUP', 'MANUAL']).default('MANUAL'),
   rawApiResponse: z.record(z.unknown()).nullable().optional(),

@@ -151,12 +151,34 @@ export async function getProduct(id: string) {
 }
 
 export async function createProduct(input: CreateProductInput, userId: string) {
-  // Verify category exists
-  const category = await prisma.assetCategory.findUnique({
-    where: { id: input.categoryId, deletedAt: null },
-  });
-  if (!category) {
-    throw new AppError(404, 'CATEGORY_NOT_FOUND', 'Asset category not found');
+  // Resolve category: explicit FK when supplied; otherwise fall back to
+  // the first available category (alphabetical by name). The fallback
+  // supports spec §2.5's inline quick-save UX — the user only types a
+  // product name in the PO form and we want the row to land in *some*
+  // category they can re-categorise later from the catalog page.
+  let categoryId: string;
+  if (input.categoryId) {
+    const category = await prisma.assetCategory.findUnique({
+      where: { id: input.categoryId, deletedAt: null },
+    });
+    if (!category) {
+      throw new AppError(404, 'CATEGORY_NOT_FOUND', 'Asset category not found');
+    }
+    categoryId = category.id;
+  } else {
+    const fallback = await prisma.assetCategory.findFirst({
+      where: { deletedAt: null },
+      orderBy: { name: 'asc' },
+      select: { id: true },
+    });
+    if (!fallback) {
+      throw new AppError(
+        500,
+        'NO_DEFAULT_CATEGORY',
+        'Cannot quick-create a product: no asset categories exist. Seed at least one category first.',
+      );
+    }
+    categoryId = fallback.id;
   }
 
   // Check for duplicate EAN
@@ -173,7 +195,7 @@ export async function createProduct(input: CreateProductInput, userId: string) {
     brand: input.brand ?? null,
     model: input.model ?? null,
     description: input.description ?? null,
-    category: { connect: { id: input.categoryId } },
+    category: { connect: { id: categoryId } },
     imageUrl: input.imageUrl ?? null,
     source: input.source ?? 'MANUAL',
     rawApiResponse: input.rawApiResponse
