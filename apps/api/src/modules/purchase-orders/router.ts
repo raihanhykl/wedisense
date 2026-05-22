@@ -1,8 +1,11 @@
 import { Router, type Router as RouterType } from 'express';
+import multer from 'multer';
 import { asyncHandler } from '../../utils/async-handler.js';
 import { sendSuccess, sendCreated, sendNoContent } from '../../utils/response.js';
 import { authorize } from '../../middleware/authorize.js';
 import { parsePagination, buildPaginationMeta } from '../../utils/pagination.js';
+import { AppError } from '../../middleware/error-handler.js';
+import { parseOdooPoPdf } from '../../lib/odoo-pdf-parser.js';
 import {
   createPurchaseOrderSchema,
   updatePurchaseOrderSchema,
@@ -12,6 +15,59 @@ import {
 import * as poService from './service.js';
 
 const router: RouterType = Router();
+
+// Multer instance for PDF upload — kept in memory (no on-disk staging
+// needed; the parser reads the buffer directly) and capped at 10 MB.
+// We accept only the application/pdf MIME type — backed up by a
+// magic-bytes check below since headers are easy to forge.
+const pdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter(_req, file, cb) {
+    if (file.mimetype !== 'application/pdf') {
+      cb(new AppError(400, 'INVALID_FILE_TYPE', 'Only PDF files are accepted'));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+// POST /api/purchase-orders/parse-pdf — Odoo PO PDF extractor
+// Spec §2.3. Returns a ParsedOdooPo with best-effort field extraction.
+// Fields the parser couldn't confidently identify are listed in
+// `unparsedFields` so the UI can highlight rows the user still needs
+// to fill manually. NO PO is persisted by this endpoint — it's a
+// pure read-side analysis. Audit log entry is unnecessary.
+router.post(
+  '/parse-pdf',
+  authorize('purchase-orders:create'),
+  pdfUpload.single('file'),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      throw new AppError(
+        400,
+        'NO_FILE',
+        'No file uploaded. Use multipart/form-data with field name "file"',
+      );
+    }
+    // Magic-bytes sanity check: every PDF starts with "%PDF-".
+    const header = req.file.buffer.slice(0, 5).toString('ascii');
+    if (header !== '%PDF-') {
+      throw new AppError(
+        415,
+        'INVALID_FILE_CONTENT',
+        'File does not appear to be a PDF (missing %PDF- header)',
+      );
+    }
+    const parsed = await parseOdooPoPdf(req.file.buffer);
+    // Strip rawText from the response — useful for debugging but
+    // bulky and not needed by the UI. The parser keeps it on the
+    // server-side return value for log inspection.
+    const { rawText: _rawText, ...payload } = parsed;
+    void _rawText;
+    sendSuccess(res, payload);
+  }),
+);
 
 // GET /api/purchase-orders
 router.get(

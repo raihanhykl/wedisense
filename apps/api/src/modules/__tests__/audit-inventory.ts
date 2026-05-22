@@ -370,6 +370,14 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
   // ── purchase-orders ─────────────────────────────────────────────────────────
   {
     method: 'POST',
+    path: '/api/purchase-orders/parse-pdf',
+    module: 'purchase-orders',
+    decision: skipped(
+      'Read-only Odoo PDF parser (Phase 17 v2 / spec §2.3). Extracts fields from an uploaded PDF and returns JSON; persists nothing. The subsequent POST /api/purchase-orders create call carries its own audit.',
+    ),
+  },
+  {
+    method: 'POST',
     path: '/api/purchase-orders',
     module: 'purchase-orders',
     decision: audited('purchase-orders'),

@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useForm, useFieldArray, Controller, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
-import { apiPost } from "@/lib/api";
+import { ArrowLeft, FileUp, Info, Loader2, Plus, Trash2, X } from "lucide-react";
+import api, { apiGet, apiPost } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import { usePermission } from "@/hooks/use-permission";
 import { formatCurrency } from "@/lib/utils";
@@ -17,6 +17,31 @@ import CurrencySelect from "@/components/shared/currency-select";
 import MoneyInput from "@/components/shared/money-input";
 import { DEFAULT_CURRENCY } from "@/lib/currencies";
 import type { PurchaseOrderDetail } from "@/types/admin";
+
+// ── PDF parse response (matches backend lib/odoo-pdf-parser.ts) ─────
+
+interface ParsedOdooPoItem {
+  description: string;
+  qty: number | null;
+  unitPrice: number | null;
+  discountPercent: number | null;
+  taxPercent: number | null;
+  amount: number | null;
+}
+
+interface ParsedOdooPo {
+  poNumber: string | null;
+  vendor: string | null;
+  buyer: string | null;
+  orderDate: string | null;
+  expectedArrival: string | null;
+  currency: string | null;
+  items: ParsedOdooPoItem[];
+  untaxedAmount: number | null;
+  totalTaxes: number | null;
+  totalAmount: number | null;
+  unparsedFields: string[];
+}
 
 // ── Form schema ───────────────────────────────────────────────────────
 //
@@ -119,6 +144,7 @@ export default function NewPurchaseOrderPage() {
     register,
     handleSubmit,
     control,
+    setValue,
     formState: { errors, isSubmitting },
     setError,
   } = useForm<FormValues>({
@@ -139,10 +165,12 @@ export default function NewPurchaseOrderPage() {
 
   const { fields, append, remove } = useFieldArray({ control, name: "items" });
 
-  // Watch items + currency for live totals. useWatch lets us subscribe
-  // surgically — re-rendering the summary only when these slices change.
+  // Watch items + currency + vendorId for live totals + parsed-PDF
+  // banner cross-references. useWatch lets us subscribe surgically —
+  // re-rendering only when these slices change.
   const items = useWatch({ control, name: "items" });
   const currency = useWatch({ control, name: "currency" });
+  const vendorIdWatched = useWatch({ control, name: "vendorId" });
 
   const totals = useMemo(() => {
     let untaxed = 0;
@@ -156,6 +184,116 @@ export default function NewPurchaseOrderPage() {
     }
     return { untaxed, tax, total };
   }, [items]);
+
+  // ── Odoo PDF import (spec §2.3) ─────────────────────────────────────
+  //
+  // Two-step UX: upload PDF → parser fills as many fields as it can
+  // confidently extract → user reviews + edits the populated form
+  // before submitting. The banner enumerates the fields the parser
+  // couldn't resolve so the user knows where to focus.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pdfState, setPdfState] = useState<"idle" | "parsing" | "done" | "error">(
+    "idle",
+  );
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [parsedPo, setParsedPo] = useState<ParsedOdooPo | null>(null);
+
+  const handlePdfChange = async (file: File | null) => {
+    if (!file) return;
+    setPdfState("parsing");
+    setPdfError(null);
+    setParsedPo(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await api.post<{ success: boolean; data: ParsedOdooPo }>(
+        "/api/purchase-orders/parse-pdf",
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      const data = response.data.data;
+      setParsedPo(data);
+
+      // Populate simple fields directly.
+      if (data.orderDate) setValue("poDate", data.orderDate);
+      if (data.expectedArrival) {
+        setValue("expectedDeliveryDate", data.expectedArrival);
+      }
+      if (data.currency) setValue("currency", data.currency);
+
+      // Try to resolve vendor name → existing registry entry.
+      // Exact (case-insensitive) match wins; otherwise we leave the
+      // picker empty and surface the parsed name in the banner so the
+      // user can click "+ Save new vendor" with one keystroke.
+      if (data.vendor) {
+        try {
+          const vendorRows = await apiGet<
+            Array<{ id: string; name: string }>
+          >("/api/vendors/search", { q: data.vendor, limit: 5 });
+          const exact = vendorRows.find(
+            (v) => v.name.toLowerCase() === data.vendor!.toLowerCase(),
+          );
+          if (exact) {
+            setValue("vendorId", exact.id);
+            setValue("vendorLabel", exact.name);
+          }
+        } catch {
+          // Picker stays empty; user can resolve manually.
+        }
+      }
+
+      // Replace line items with parsed values. Products are looked up
+      // by description; rows without an exact match keep productId
+      // empty (user picks via autocomplete + create-new from the
+      // existing PO row UI).
+      if (data.items.length > 0) {
+        const newItems = await Promise.all(
+          data.items.map(async (it) => {
+            let productId = "";
+            let productLabel = "";
+            if (it.description) {
+              try {
+                const matches = await apiGet<
+                  Array<{ id: string; name: string }>
+                >("/api/products", { search: it.description, limit: 5 });
+                const exact = matches.find(
+                  (m) =>
+                    m.name.toLowerCase() === it.description.toLowerCase(),
+                );
+                if (exact) {
+                  productId = exact.id;
+                  productLabel = exact.name;
+                }
+              } catch {
+                /* leave empty */
+              }
+            }
+            return {
+              productId,
+              productLabel: productLabel || it.description,
+              qty: String(it.qty ?? 1),
+              unitPrice: String(it.unitPrice ?? 0),
+              discountPercent: String(it.discountPercent ?? 0),
+              taxPercent: String(it.taxPercent ?? 0),
+            };
+          }),
+        );
+        // Replace the entire items array atomically. Reuse the
+        // helpers from useFieldArray: remove existing rows first,
+        // then append.
+        for (let i = fields.length - 1; i >= 0; i--) remove(i);
+        for (const it of newItems) append(it);
+      }
+
+      setPdfState("done");
+    } catch (err) {
+      setPdfError(getApiErrorMessage(err, "Failed to parse PDF"));
+      setPdfState("error");
+    } finally {
+      // Reset the input so re-selecting the same file fires onChange.
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   if (!canCreate) {
     return (
@@ -218,6 +356,108 @@ export default function NewPurchaseOrderPage() {
           The SP-YYYY-NNNN number is auto-generated on save. Totals are
           computed from the line items below.
         </p>
+      </div>
+
+      {/* Odoo PDF import panel (spec §2.3) */}
+      <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <h2 className="text-sm font-semibold text-blue-900">
+              Import from Odoo PDF (optional)
+            </h2>
+            <p className="mt-1 text-xs text-blue-800">
+              Upload your Odoo PO PDF and the parser will best-effort fill
+              dates, currency, vendor, and line items below. Review and edit
+              any unresolved fields before submitting.
+            </p>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={(e) => void handlePdfChange(e.target.files?.[0] ?? null)}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={pdfState === "parsing"}
+            className="inline-flex items-center gap-1.5 rounded-md border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100 disabled:opacity-50"
+          >
+            {pdfState === "parsing" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileUp className="h-3.5 w-3.5" />
+            )}
+            {pdfState === "parsing" ? "Parsing…" : "Upload PDF"}
+          </button>
+        </div>
+
+        {pdfState === "error" && (
+          <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+            {pdfError ?? "Failed to parse PDF"}
+          </div>
+        )}
+
+        {pdfState === "done" && parsedPo && (
+          <div className="mt-3 space-y-2 text-xs text-blue-900">
+            <div className="flex items-start gap-1.5">
+              <Info className="mt-0.5 h-3 w-3 flex-shrink-0" />
+              <div className="flex-1">
+                <div className="font-medium">Parsed fields:</div>
+                <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                  <div>
+                    PO #: <span className="font-mono">{parsedPo.poNumber ?? "—"}</span>
+                  </div>
+                  <div>
+                    Vendor: {parsedPo.vendor ?? "—"}
+                  </div>
+                  <div>
+                    Order date: {parsedPo.orderDate ?? "—"}
+                  </div>
+                  <div>
+                    Expected: {parsedPo.expectedArrival ?? "—"}
+                  </div>
+                  <div>
+                    Buyer: {parsedPo.buyer ?? "—"}
+                  </div>
+                  <div>
+                    Currency: {parsedPo.currency ?? "—"}
+                  </div>
+                  <div className="col-span-2">
+                    Items detected: {parsedPo.items.length}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setParsedPo(null);
+                  setPdfState("idle");
+                }}
+                className="rounded p-0.5 text-blue-700 hover:bg-blue-100"
+                aria-label="Dismiss"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+            {parsedPo.unparsedFields.length > 0 && (
+              <div className="rounded-md bg-amber-100 px-3 py-2 text-[11px] text-amber-900">
+                <span className="font-medium">Needs review:</span>{" "}
+                {parsedPo.unparsedFields.join(", ")}. The parser couldn&apos;t
+                confidently extract these — please fill them manually.
+              </div>
+            )}
+            {parsedPo.vendor && !vendorIdWatched && (
+              <div className="rounded-md bg-amber-100 px-3 py-2 text-[11px] text-amber-900">
+                Vendor &ldquo;<span className="font-medium">{parsedPo.vendor}</span>
+                &rdquo; isn&apos;t in your vendor registry yet. Click the
+                Vendor picker below to search for an existing match or save
+                it as a new vendor.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <form onSubmit={onSubmit} className="space-y-6">
