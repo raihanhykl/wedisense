@@ -67,6 +67,7 @@ const ROUTER_MOUNTS: Record<string, { mount: string; file: string }> = {
     mount: '/api/procurement-batches',
     file: 'procurement-batches/router.ts',
   },
+  vendors: { mount: '/api/vendors', file: 'vendors/router.ts' },
 };
 
 interface DiscoveredRoute {

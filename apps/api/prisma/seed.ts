@@ -43,6 +43,13 @@ async function main() {
     { resource: 'procurement', action: 'complete' },
     { resource: 'procurement', action: 'cancel' },
     { resource: 'procurement', action: 'export' },
+    // Phase 17 v2 — vendor registry. read+create granted broadly so the
+    // PO form's inline autocomplete + "save new" can work; update/delete
+    // gated to the vendor admin page.
+    { resource: 'vendors', action: 'read' },
+    { resource: 'vendors', action: 'create' },
+    { resource: 'vendors', action: 'update' },
+    { resource: 'vendors', action: 'delete' },
   ]
 
   const permissions: Record<string, string> = {}
@@ -105,17 +112,22 @@ async function main() {
       'purchase-orders:read', 'purchase-orders:create', 'purchase-orders:update',
       'procurement:read', 'procurement:create', 'procurement:update',
       'procurement:complete', 'procurement:export',
+      // Vendor: MANAGER can read + quick-save during PO creation. Full
+      // edit + delete stays with ADMIN.
+      'vendors:read', 'vendors:create',
     ],
     STAFF: [
       'assets:read', 'assets:print',
       'movements:create',
       'reports:view',
       'purchase-orders:read', 'procurement:read',
+      'vendors:read',
     ],
     VIEWER: [
       'assets:read',
       'reports:view',
       'purchase-orders:read', 'procurement:read',
+      'vendors:read',
     ],
   }
 

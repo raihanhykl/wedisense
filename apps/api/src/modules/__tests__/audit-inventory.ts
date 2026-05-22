@@ -399,6 +399,26 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     decision: audited('purchase-orders'),
   },
 
+  // ── vendors (Phase 17 v2) ───────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/vendors',
+    module: 'vendors',
+    decision: audited('vendors'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/vendors/:id',
+    module: 'vendors',
+    decision: audited('vendors'),
+  },
+  {
+    method: 'DELETE',
+    path: '/api/vendors/:id',
+    module: 'vendors',
+    decision: audited('vendors'),
+  },
+
   // ── procurement-batches ─────────────────────────────────────────────────────
   {
     method: 'POST',
