@@ -6,6 +6,7 @@ import { authorize } from '../../middleware/authorize.js';
 import { parsePagination, buildPaginationMeta } from '../../utils/pagination.js';
 import { AppError } from '../../middleware/error-handler.js';
 import { parseOdooPoPdf } from '../../lib/odoo-pdf-parser.js';
+import { parsePdfWithAi } from '../../lib/ai-pdf-parser.js';
 import {
   createPurchaseOrderSchema,
   updatePurchaseOrderSchema,
@@ -32,12 +33,19 @@ const pdfUpload = multer({
   },
 });
 
-// POST /api/purchase-orders/parse-pdf — Odoo PO PDF extractor
-// Spec §2.3. Returns a ParsedOdooPo with best-effort field extraction.
-// Fields the parser couldn't confidently identify are listed in
-// `unparsedFields` so the UI can highlight rows the user still needs
-// to fill manually. NO PO is persisted by this endpoint — it's a
-// pure read-side analysis. Audit log entry is unnecessary.
+// POST /api/purchase-orders/parse-pdf — Odoo PO PDF extractor (spec §2.3)
+//
+// Two modes — selected by the `mode` multipart field:
+//   - "ai"    (default): OpenRouter → Claude Haiku 4.5 → fallback to
+//             gpt-4o-mini → gemini-2.5-flash. Best accuracy.
+//   - "regex": local heuristic parser. No API key needed. Faster but
+//             ~70-90% accurate on the standard Odoo template.
+//
+// Returns ParsedOdooPo (+ `servedBy` field naming the parser that
+// actually ran). Fields the parser couldn't confidently extract are
+// listed in `unparsedFields` so the UI can prompt for review. NO PO
+// is persisted by this endpoint — pure read-side analysis, no audit
+// log entry needed.
 router.post(
   '/parse-pdf',
   authorize('purchase-orders:create'),
@@ -59,13 +67,49 @@ router.post(
         'File does not appear to be a PDF (missing %PDF- header)',
       );
     }
+
+    // Parse mode resolution. `mode` arrives as a multipart text field;
+    // anything other than the literal "regex" is treated as "ai" so
+    // the default is the higher-quality path even if the client omits
+    // the field entirely.
+    const requestedMode =
+      typeof req.body?.['mode'] === 'string' ? req.body['mode'] : 'ai';
+    const mode: 'ai' | 'regex' = requestedMode === 'regex' ? 'regex' : 'ai';
+
+    if (mode === 'ai') {
+      if (!process.env['OPENROUTER_API_KEY']) {
+        throw new AppError(
+          503,
+          'AI_PARSER_UNAVAILABLE',
+          'AI parser is not configured (OPENROUTER_API_KEY is missing on the server). Switch the toggle to Regex, or contact an admin to set the key.',
+        );
+      }
+      try {
+        const aiParsed = await parsePdfWithAi(req.file.buffer);
+        const { rawText: _rawText, ...payload } = aiParsed;
+        void _rawText;
+        sendSuccess(res, payload);
+        return;
+      } catch (err) {
+        // Surface OpenRouter / SDK errors with a clean shape. We
+        // deliberately don't auto-fall-back to regex here — the user
+        // explicitly picked AI mode, so we want them to see WHY it
+        // failed (rate limit, network, schema rejection, etc.) and
+        // decide whether to retry or switch mode.
+        const detail = err instanceof Error ? err.message : 'Unknown error';
+        throw new AppError(
+          502,
+          'AI_PARSER_FAILED',
+          `AI parser failed: ${detail}. You can retry, or switch to the Regex parser.`,
+        );
+      }
+    }
+
+    // Regex path — the deterministic fallback (Tier 7.10 + parser fixes).
     const parsed = await parseOdooPoPdf(req.file.buffer);
-    // Strip rawText from the response — useful for debugging but
-    // bulky and not needed by the UI. The parser keeps it on the
-    // server-side return value for log inspection.
     const { rawText: _rawText, ...payload } = parsed;
     void _rawText;
-    sendSuccess(res, payload);
+    sendSuccess(res, { ...payload, servedBy: 'regex' });
   }),
 );
 

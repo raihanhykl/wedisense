@@ -41,7 +41,13 @@ interface ParsedOdooPo {
   totalTaxes: number | null;
   totalAmount: number | null;
   unparsedFields: string[];
+  /** Which parser served the request — "regex" or an OpenRouter
+   *  model slug like "anthropic/claude-haiku-4.5". Used in the
+   *  banner so the user knows what produced the result. */
+  servedBy?: string;
 }
+
+type ParseMode = "ai" | "regex";
 
 // ── Form schema ───────────────────────────────────────────────────────
 //
@@ -197,6 +203,9 @@ export default function NewPurchaseOrderPage() {
   );
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [parsedPo, setParsedPo] = useState<ParsedOdooPo | null>(null);
+  // Default to AI per user preference. Regex stays as offline fallback
+  // for environments without an OpenRouter key.
+  const [parseMode, setParseMode] = useState<ParseMode>("ai");
 
   const handlePdfChange = async (file: File | null) => {
     if (!file) return;
@@ -206,6 +215,7 @@ export default function NewPurchaseOrderPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("mode", parseMode);
       const response = await api.post<{ success: boolean; data: ParsedOdooPo }>(
         "/api/purchase-orders/parse-pdf",
         formData,
@@ -370,6 +380,40 @@ export default function NewPurchaseOrderPage() {
               dates, currency, vendor, and line items below. Review and edit
               any unresolved fields before submitting.
             </p>
+
+            {/* Parser mode toggle (Tier 7.10c): AI is the default per
+                spec — higher accuracy, especially on multi-line item
+                descriptions and uncommon layouts. Regex is the offline
+                fallback when OPENROUTER_API_KEY isn't set or for
+                privacy-sensitive parses. */}
+            <fieldset className="mt-3 flex items-center gap-3">
+              <legend className="sr-only">Parser engine</legend>
+              <span className="text-xs font-medium text-blue-900">Parser:</span>
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-blue-900">
+                <input
+                  type="radio"
+                  name="parseMode"
+                  value="ai"
+                  checked={parseMode === "ai"}
+                  onChange={() => setParseMode("ai")}
+                  disabled={pdfState === "parsing"}
+                  className="h-3 w-3"
+                />
+                <span>AI <span className="text-blue-700">(smart, slower, API-backed)</span></span>
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-blue-900">
+                <input
+                  type="radio"
+                  name="parseMode"
+                  value="regex"
+                  checked={parseMode === "regex"}
+                  onChange={() => setParseMode("regex")}
+                  disabled={pdfState === "parsing"}
+                  className="h-3 w-3"
+                />
+                <span>Regex <span className="text-blue-700">(offline, ~70-90% accurate)</span></span>
+              </label>
+            </fieldset>
           </div>
           <input
             ref={fileInputRef}
@@ -404,7 +448,15 @@ export default function NewPurchaseOrderPage() {
             <div className="flex items-start gap-1.5">
               <Info className="mt-0.5 h-3 w-3 flex-shrink-0" />
               <div className="flex-1">
-                <div className="font-medium">Parsed fields:</div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="font-medium">Parsed fields:</div>
+                  {parsedPo.servedBy && (
+                    <div className="text-[10px] text-blue-700">
+                      via{" "}
+                      <span className="font-mono">{parsedPo.servedBy}</span>
+                    </div>
+                  )}
+                </div>
                 <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
                   <div>
                     PO #: <span className="font-mono">{parsedPo.poNumber ?? "—"}</span>
