@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { AppError } from '../../middleware/error-handler.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
@@ -9,6 +10,8 @@ import {
   decrementBatchCount,
   bumpAssetCount as bumpPoAssetCount,
 } from '../purchase-orders/service.js';
+import * as poRepo from '../purchase-orders/repository.js';
+import { computeItemAmounts } from '../purchase-orders/totals.js';
 import type { PrismaTransactionClient } from './types.js';
 import type {
   CreateProcurementBatchInput,
@@ -16,6 +19,7 @@ import type {
   ReceiveProcurementBatchInput,
   CompleteProcurementBatchInput,
   CancelProcurementBatchInput,
+  BatchItemInput,
 } from './schema.js';
 import type { ProcurementBatchListFilters } from './types.js';
 
@@ -133,54 +137,202 @@ export async function getBatchAuditTrail(id: string) {
   return batchRepo.findBatchAuditTrail(id);
 }
 
+// ── Parent PO lookup + acceptance check ─────────────────────────────────────
+//
+// Returns the parent PO if it exists and is in a status that accepts
+// new (or modified) batches; throws AppError otherwise. The returned
+// fields are exactly what the batch needs to inherit at create time.
+async function loadAcceptingPo(
+  poId: string,
+  tx: PrismaTransactionClient,
+): Promise<{ id: string; status: string; currency: string; poDate: Date }> {
+  const po = await tx.purchaseOrder.findFirst({
+    where: { id: poId, deletedAt: null },
+    select: { id: true, status: true, currency: true, poDate: true },
+  });
+  if (!po) {
+    throw new AppError(
+      404,
+      'PURCHASE_ORDER_NOT_FOUND',
+      'Parent purchase order not found',
+    );
+  }
+  if (po.status === 'CLOSED' || po.status === 'CANCELLED') {
+    throw new AppError(
+      409,
+      'PURCHASE_ORDER_LOCKED',
+      `Cannot attach a batch to a ${po.status.toLowerCase()} purchase order`,
+    );
+  }
+  return po;
+}
+
+// ── Per-line qty validation + amount derivation ─────────────────────────────
+//
+// For each input BatchItem we:
+//   1. confirm the purchaseOrderItemId belongs to the given PO
+//   2. confirm qtyReceived ≤ (po_item.qty − already received in OTHER batches)
+//   3. derive batch_item_total via computeItemAmounts() on the PO item's
+//      unitPrice/discount/tax (substituting qty=qtyReceived). Same math
+//      as PO line totals, so a 30-of-50 batch carries proportional value.
+//
+// `excludeBatchId` is supplied during update so the batch's OWN current
+// items aren't double-counted in the remaining-capacity calculation.
+async function validateAndPrepareBatchItems(
+  batchId: string,
+  poId: string,
+  items: BatchItemInput[],
+  excludeBatchId: string | null,
+  tx: PrismaTransactionClient,
+): Promise<{
+  rows: Prisma.BatchItemCreateManyInput[];
+  totalAmount: Prisma.Decimal;
+}> {
+  // 1) Load the PO's items + unit prices so we can validate ownership
+  //    AND compute amounts in one round-trip.
+  const poItems = await tx.purchaseOrderItem.findMany({
+    where: { purchaseOrderId: poId },
+    select: {
+      id: true,
+      qty: true,
+      unitPrice: true,
+      discountPercent: true,
+      taxPercent: true,
+    },
+  });
+  const poItemMap = new Map(poItems.map((p) => [p.id, p]));
+
+  // 2) Sum qtyReceived per PO item across OTHER batches (non-cancelled,
+  //    non-deleted, excluding this batch if updating).
+  const otherReceiptsRaw = await tx.batchItem.groupBy({
+    by: ['purchaseOrderItemId'],
+    where: {
+      purchaseOrderItem: { purchaseOrderId: poId },
+      procurementBatch: {
+        deletedAt: null,
+        status: { not: 'CANCELLED' },
+        ...(excludeBatchId && { id: { not: excludeBatchId } }),
+      },
+    },
+    _sum: { qtyReceived: true },
+  });
+  const otherReceived = new Map<string, number>();
+  for (const r of otherReceiptsRaw) {
+    otherReceived.set(r.purchaseOrderItemId, r._sum.qtyReceived ?? 0);
+  }
+
+  // 3) Within-batch duplicate check — same PO item appearing twice in
+  //    the input array would otherwise pass the unique constraint by
+  //    accident only because createMany hasn't run yet.
+  const seenInPayload = new Set<string>();
+  for (const item of items) {
+    if (seenInPayload.has(item.purchaseOrderItemId)) {
+      throw new AppError(
+        400,
+        'DUPLICATE_BATCH_ITEM',
+        `Item ${item.purchaseOrderItemId} appears more than once in this batch`,
+      );
+    }
+    seenInPayload.add(item.purchaseOrderItemId);
+  }
+
+  // 4) Per-item validation + amount derivation.
+  const rows: Prisma.BatchItemCreateManyInput[] = [];
+  let runningTotal = new Prisma.Decimal(0);
+
+  for (const item of items) {
+    const poItem = poItemMap.get(item.purchaseOrderItemId);
+    if (!poItem) {
+      throw new AppError(
+        404,
+        'PO_ITEM_NOT_FOUND',
+        `PO item ${item.purchaseOrderItemId} does not belong to this purchase order`,
+      );
+    }
+
+    const alreadyReceived = otherReceived.get(item.purchaseOrderItemId) ?? 0;
+    const remaining = poItem.qty - alreadyReceived;
+    if (item.qtyReceived > remaining) {
+      throw new AppError(
+        400,
+        'QTY_RECEIVED_EXCEEDS_REMAINING',
+        `Cannot receive ${item.qtyReceived} units of item ${item.purchaseOrderItemId} — only ${remaining} unit(s) remain (ordered: ${poItem.qty}, already received in other batches: ${alreadyReceived})`,
+      );
+    }
+
+    // Amount derivation: same formula as PO line totals, substituting
+    // qty with qtyReceived. Skip zero-qty rows from the running total
+    // (DRAFT batches commonly enter every PO line with 0 to start).
+    if (item.qtyReceived > 0) {
+      const amounts = computeItemAmounts({
+        qty: item.qtyReceived,
+        unitPrice: poItem.unitPrice,
+        discountPercent: poItem.discountPercent,
+        taxPercent: poItem.taxPercent,
+      });
+      runningTotal = runningTotal.add(amounts.totalAmount);
+    }
+
+    rows.push({
+      id: randomUUID(),
+      procurementBatchId: batchId,
+      purchaseOrderItemId: item.purchaseOrderItemId,
+      qtyReceived: item.qtyReceived,
+      notes: item.notes ?? null,
+    });
+  }
+
+  return {
+    rows,
+    totalAmount: runningTotal.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP),
+  };
+}
+
 // ── Create ──────────────────────────────────────────────────────────────────
 
 export async function createProcurementBatch(
   input: CreateProcurementBatchInput,
   userId: string,
 ) {
-  // If a parent PO is referenced, validate it exists, isn't deleted, and is
-  // in a status that accepts new batches. CLOSED / CANCELLED PO reject;
-  // FULLY_RECEIVED accepts and demotes itself via the cascade below.
-  if (input.purchaseOrderId) {
-    const po = await prisma.purchaseOrder.findFirst({
-      where: { id: input.purchaseOrderId, deletedAt: null },
-      select: { id: true, status: true, currency: true, poDate: true },
-    });
-    if (!po) {
-      throw new AppError(
-        404,
-        'PURCHASE_ORDER_NOT_FOUND',
-        'Parent purchase order not found',
-      );
-    }
-    if (po.status === 'CLOSED' || po.status === 'CANCELLED') {
-      throw new AppError(
-        409,
-        'PURCHASE_ORDER_LOCKED',
-        `Cannot attach a batch to a ${po.status.toLowerCase()} purchase order`,
-      );
-    }
-  }
-
   return prisma.$transaction(async (tx) => {
+    const po = await loadAcceptingPo(input.purchaseOrderId, tx);
+
     const batchNumber = await batchRepo.nextBatchNumber(tx);
+    const batchId = randomUUID();
+
+    // Validate + prepare items (when supplied). Empty items array is a
+    // valid "blank DRAFT batch" — user will fill qtyReceived later.
+    let itemRows: Prisma.BatchItemCreateManyInput[] = [];
+    let totalAmount: Prisma.Decimal = new Prisma.Decimal(0);
+    if (input.items && input.items.length > 0) {
+      const prepared = await validateAndPrepareBatchItems(
+        batchId,
+        po.id,
+        input.items,
+        null,
+        tx,
+      );
+      itemRows = prepared.rows;
+      totalAmount = prepared.totalAmount;
+    }
 
     const created = await batchRepo.create(
       {
+        id: batchId,
         batchNumber,
         name: input.name ?? null,
         status: 'DRAFT',
-        purchaseDate: input.purchaseDate,
-        currency: input.currency ?? 'IDR',
-        // Phase 17 v2: totalAmount is computed from BatchItems, default 0
-        // until items are added (Tier 7.4).
-        totalAmount: 0,
+        // Spec §3.3: purchaseDate + currency inherited from PO at create
+        // time. Stored denormalised so future PO edits don't retroactively
+        // rewrite history.
+        purchaseDate: po.poDate,
+        currency: po.currency,
+        totalAmount,
         notes: input.notes ?? null,
         attachments: (input.attachments ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         customFields: (input.customFields ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         createdBy: { connect: { id: userId } },
-        purchaseOrder: { connect: { id: input.purchaseOrderId } },
+        purchaseOrder: { connect: { id: po.id } },
         ...(input.defaultLocationId && {
           defaultLocation: { connect: { id: input.defaultLocationId } },
         }),
@@ -191,20 +343,25 @@ export async function createProcurementBatch(
       tx,
     );
 
+    if (itemRows.length > 0) {
+      await batchRepo.createItems(itemRows, tx);
+    }
+
     await tx.auditLog.create({
       data: {
         userId,
         action: 'CREATE',
         resourceType: 'ProcurementBatch',
         resourceId: created.id,
-        newValues: created as unknown as Prisma.InputJsonValue,
+        newValues: {
+          ...created,
+          itemCount: itemRows.length,
+        } as unknown as Prisma.InputJsonValue,
       },
     });
 
-    if (input.purchaseOrderId) {
-      await incrementBatchCount(input.purchaseOrderId, tx);
-      await recomputePurchaseOrderStatus(input.purchaseOrderId, tx, userId);
-    }
+    await incrementBatchCount(po.id, tx);
+    await recomputePurchaseOrderStatus(po.id, tx, userId);
 
     return created;
   });
@@ -240,7 +397,37 @@ export async function updateProcurementBatch(
     }
   }
 
+  // Items replacement guard. Once the batch is RECEIVED, qtyReceived
+  // values reflect what was physically received and can't be rewritten
+  // retroactively. DRAFT and ITEMS_PENDING accept item edits freely.
+  if (
+    input.items !== undefined &&
+    existing.status !== 'DRAFT' &&
+    existing.status !== 'ITEMS_PENDING'
+  ) {
+    throw new AppError(
+      409,
+      'BATCH_ITEMS_LOCKED',
+      `Cannot edit items on a ${existing.status.toLowerCase()} batch — items lock at RECEIVED`,
+    );
+  }
+
   return prisma.$transaction(async (tx) => {
+    // Items replacement: validate + recompute total. We don't touch
+    // items if the caller didn't pass them.
+    let nextTotalAmount: Prisma.Decimal | undefined;
+    if (input.items !== undefined) {
+      const prepared = await validateAndPrepareBatchItems(
+        id,
+        existing.purchaseOrderId,
+        input.items,
+        id, // excludeBatchId — don't count THIS batch's old items
+        tx,
+      );
+      await batchRepo.replaceItems(id, prepared.rows, tx);
+      nextTotalAmount = prepared.totalAmount;
+    }
+
     const updated = await batchRepo.update(
       id,
       {
@@ -285,9 +472,21 @@ export async function updateProcurementBatch(
         ...(input.customFields !== undefined && {
           customFields: (input.customFields ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         }),
+        // Phase 17 v2: when items are replaced, totalAmount is set from
+        // the recomputed value above. Otherwise it's untouched.
+        ...(nextTotalAmount !== undefined && { totalAmount: nextTotalAmount }),
       },
       tx,
     );
+
+    // When items changed AND the batch had already crossed RECEIVED
+    // before this update (shouldn't happen — gated above), recompute
+    // the parent PO so its FULLY_RECEIVED status reflects new receipts.
+    // For DRAFT/ITEMS_PENDING the parent PO can't be in FULLY_RECEIVED
+    // anyway, so this is defensive only.
+    if (input.items !== undefined) {
+      await recomputePurchaseOrderStatus(existing.purchaseOrderId, tx, userId);
+    }
 
     await tx.auditLog.create({
       data: {

@@ -130,6 +130,32 @@ export async function findById(id: string) {
       createdBy: { select: { id: true, name: true, email: true } },
       receivedBy: { select: { id: true, name: true, email: true } },
       completedBy: { select: { id: true, name: true, email: true } },
+      // Phase 17 v2: line items include the referenced PO item +
+      // product so the detail page can render qty/unitPrice/total per
+      // product without follow-up queries.
+      items: {
+        select: {
+          id: true,
+          purchaseOrderItemId: true,
+          qtyReceived: true,
+          notes: true,
+          createdAt: true,
+          purchaseOrderItem: {
+            select: {
+              id: true,
+              qty: true,
+              unitPrice: true,
+              discountPercent: true,
+              taxPercent: true,
+              sortOrder: true,
+              product: {
+                select: { id: true, name: true, brand: true, model: true },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      },
       assets: {
         where: { deletedAt: null },
         select: {
@@ -176,6 +202,52 @@ export async function softDelete(id: string, tx?: PrismaTransactionClient) {
   return (tx ?? prisma).procurementBatch.update({
     where: { id },
     data: { deletedAt: new Date() },
+  });
+}
+
+// ── Batch line items (Phase 17 v2) ──────────────────────────────────────────
+
+export async function createItems(
+  data: Prisma.BatchItemCreateManyInput[],
+  tx: PrismaTransactionClient,
+) {
+  if (data.length === 0) return { count: 0 };
+  return tx.batchItem.createMany({ data });
+}
+
+/**
+ * Atomic replacement of a batch's items. Used by update when the caller
+ * sends a fresh items array. Service-layer guards ensure this is only
+ * invoked while the batch is in DRAFT or ITEMS_PENDING (after RECEIVED
+ * we'd be rewriting history).
+ */
+export async function replaceItems(
+  batchId: string,
+  items: Prisma.BatchItemCreateManyInput[],
+  tx: PrismaTransactionClient,
+) {
+  await tx.batchItem.deleteMany({ where: { procurementBatchId: batchId } });
+  if (items.length > 0) {
+    await tx.batchItem.createMany({ data: items });
+  }
+}
+
+/**
+ * Read the current BatchItem rows for a batch. Used by the updateBatch
+ * flow to know what was there before so the audit-log diff is helpful.
+ */
+export async function findItemsForBatch(
+  batchId: string,
+  tx?: PrismaTransactionClient,
+) {
+  return (tx ?? prisma).batchItem.findMany({
+    where: { procurementBatchId: batchId },
+    select: {
+      id: true,
+      purchaseOrderItemId: true,
+      qtyReceived: true,
+      notes: true,
+    },
   });
 }
 

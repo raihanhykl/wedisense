@@ -23,27 +23,45 @@ const attachmentsSchema = z
 
 const customFieldsSchema = z.record(z.unknown());
 
+// ── Batch line items (Phase 17 v2) ──────────────────────────────────────────
+//
+// One row per PO line item that this batch receives. `qtyReceived` is the
+// physical-count delivered IN THIS BATCH. Service-layer enforces:
+//   - purchaseOrderItemId belongs to the batch's parent PO
+//   - 0 ≤ qtyReceived ≤ (po_item.qty − sum of qtyReceived in OTHER batches)
+//
+// Per-batch-item amounts (untaxed/tax/total) are NOT stored on BatchItem —
+// they're derived from the parent PO line's unit price + discount/tax
+// when needed. batch.totalAmount aggregates these for fast list reads.
+const batchItemInputSchema = z.object({
+  purchaseOrderItemId: z.string().uuid(),
+  qtyReceived: z.number().int().min(0, 'qtyReceived must be ≥ 0'),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+const batchItemsSchema = z
+  .array(batchItemInputSchema)
+  .max(200, 'A single batch may not contain more than 200 line items');
+
 // ── Create ──────────────────────────────────────────────────────────────────
 
 export const createProcurementBatchSchema = z.object({
-  // Optional parent PO. Null means direct-purchase batch (no formal PO).
-  // Phase 17 v2: PO is now mandatory (direct-purchase removed per spec).
+  // Spec §3.1 — every batch belongs to a PO; direct-purchase removed.
   purchaseOrderId: z.string().uuid(),
 
   name: z.string().min(1).max(255).nullable().optional(),
 
-  // Inherited from PO at create time but kept denormalised on the batch
-  // so future PO edits don't retroactively change historical batches.
-  // The frontend pre-fills + disables these per spec 3.3.
-  purchaseDate: z.coerce.date(),
-  currency: currencySchema.optional(),
-  // Phase 17 v2: totalAmount is computed from BatchItems (qtyReceived ×
-  // line item amounts), so we no longer accept it from the API. BatchItems
-  // input lands in Tier 7.4.
+  // Spec §3.3: purchaseDate + currency now ALWAYS inherited from PO at
+  // create time (auto-fill + disabled in the form). We no longer accept
+  // either as create input — the service copies them from the parent PO.
 
   // Defaults applied to assets at import time. Each asset may override.
   defaultLocationId: z.string().uuid().nullable().optional(),
   defaultCategoryId: z.string().uuid().nullable().optional(),
+
+  // Spec §3.4 / §3.5 — items optional at create. A blank DRAFT batch
+  // (no items yet) is valid; the user can fill in qtyReceived later.
+  items: batchItemsSchema.optional(),
 
   notes: z.string().max(2000).nullable().optional(),
   attachments: attachmentsSchema.nullable().optional(),
@@ -89,6 +107,13 @@ export const updateProcurementBatchSchema = z.object({
   notes: z.string().max(2000).nullable().optional(),
   attachments: attachmentsSchema.nullable().optional(),
   customFields: customFieldsSchema.nullable().optional(),
+
+  // Spec §3.4 / §3.5 — items can be patched after batch creation. When
+  // present, replaces the whole BatchItem set atomically. Service guards
+  // ensure items can only be replaced while the batch is in DRAFT or
+  // ITEMS_PENDING (after RECEIVED, qty changes would distort the audit
+  // trail of what was actually received).
+  items: batchItemsSchema.optional(),
 });
 
 // ── List ────────────────────────────────────────────────────────────────────
@@ -146,3 +171,4 @@ export type ListProcurementBatchQuery = z.infer<typeof listProcurementBatchQuery
 export type ReceiveProcurementBatchInput = z.infer<typeof receiveProcurementBatchSchema>;
 export type CompleteProcurementBatchInput = z.infer<typeof completeProcurementBatchSchema>;
 export type CancelProcurementBatchInput = z.infer<typeof cancelProcurementBatchSchema>;
+export type BatchItemInput = z.infer<typeof batchItemInputSchema>;
