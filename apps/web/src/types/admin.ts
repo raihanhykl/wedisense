@@ -756,7 +756,8 @@ export interface PurchaseOrderDetail extends Omit<PurchaseOrderListItem, "vendor
 
 export interface ProcurementBatchListItem {
   id: string;
-  purchaseOrderId: string | null;
+  // Phase 17 v2: purchaseOrder is now mandatory (direct-purchase removed).
+  purchaseOrderId: string;
   batchNumber: string;
   name: string | null;
   status: ProcurementBatchStatus;
@@ -767,7 +768,7 @@ export interface ProcurementBatchListItem {
   purchaseDate: string;
   receivedDate: string | null;
   currency: string;
-  totalAmount: string | null;
+  totalAmount: string;
   assetCount: number;
   receivedByUserId: string | null;
   receivedByName: string | null;
@@ -778,9 +779,9 @@ export interface ProcurementBatchListItem {
   purchaseOrder: {
     id: string;
     poNumber: string;
-    vendor: string;
     status: PurchaseOrderStatus;
-  } | null;
+    vendor: { id: string; name: string };
+  };
 }
 
 export interface ProcurementBatchAssetEntry {
@@ -793,6 +794,31 @@ export interface ProcurementBatchAssetEntry {
   locationId: string;
   assignedToUserId: string | null;
   createdAt: string;
+}
+
+// Phase 17 v2 — per-line receipt tracking. Each batch item references a
+// PO line item; the API embeds the line so the UI can show qty + price
+// + product info without a follow-up query.
+export interface BatchItemRow {
+  id: string;
+  purchaseOrderItemId: string;
+  qtyReceived: number;
+  notes: string | null;
+  createdAt: string;
+  purchaseOrderItem: {
+    id: string;
+    qty: number;
+    unitPrice: string;
+    discountPercent: string;
+    taxPercent: string;
+    sortOrder: number;
+    product: {
+      id: string;
+      name: string;
+      brand: string | null;
+      model: string | null;
+    };
+  };
 }
 
 export interface ProcurementBatchDetail extends Omit<ProcurementBatchListItem, "purchaseOrder"> {
@@ -814,15 +840,16 @@ export interface ProcurementBatchDetail extends Omit<ProcurementBatchListItem, "
   purchaseOrder: {
     id: string;
     poNumber: string;
-    vendor: string;
     status: PurchaseOrderStatus;
     poDate: string;
-  } | null;
+    vendor: { id: string; name: string };
+  };
   defaultLocation: { id: string; name: string; code: string } | null;
   defaultCategory: { id: string; name: string; code: string } | null;
   createdBy: { id: string; name: string; email: string };
-  receivedBy: { id: string; name: string; email: string } | null;
+  receivedBy: { id: string; name: string; email: string | null } | null;
   completedBy: { id: string; name: string; email: string } | null;
+  items: BatchItemRow[];
   assets: ProcurementBatchAssetEntry[];
 }
 
