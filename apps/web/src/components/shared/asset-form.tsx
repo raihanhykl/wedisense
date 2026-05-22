@@ -1,15 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { getApiErrorMessage } from "@/lib/error";
-import {
-  useProducts,
-  useLocations,
-  useUsers,
-} from "@/hooks/use-reference-data";
+import { useLocations, useUsers } from "@/hooks/use-reference-data";
+import ProductPicker from "@/components/shared/product-picker";
 import type { AssetFormData } from "@/types/admin";
 
 // ── Zod schema ──────────────────────────────────────────────────────
@@ -48,6 +45,11 @@ const CONDITION_OPTIONS = ["NEW", "GOOD", "FAIR", "POOR", "DAMAGED"];
 // ── Props ───────────────────────────────────────────────────────────
 interface AssetFormProps {
   defaultValues?: AssetFormData;
+  /** Phase 17 v2: pre-fills the ProductPicker chip when editing an
+   *  existing asset. The form data only carries productId — the label
+   *  comes through this side-channel so we don't need an extra fetch
+   *  on mount just to render the selected product name. */
+  defaultProductLabel?: string | null;
   onSubmit: (data: AssetFormData) => Promise<void>;
   submitLabel: string;
 }
@@ -55,31 +57,22 @@ interface AssetFormProps {
 // ── Component ───────────────────────────────────────────────────────
 export default function AssetForm({
   defaultValues,
+  defaultProductLabel,
   onSubmit,
   submitLabel,
 }: AssetFormProps) {
-  const [productSearch, setProductSearch] = useState("");
-  // Debounced version actually fed into the products query — see the
-  // useEffect below. Mirrors the same pattern in MultiAssetCreateForm.
-  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
   // Holds the human-readable backend rejection (e.g. INVALID_STATUS_TRANSITION).
   // Without this the rejected promise bubbles up to Next.js's dev overlay and
   // the user sees a useless stack trace instead of the actual reason.
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Phase 17 v2 — track the picker's selected product label locally so
+  // the chip shows the name. Initialised from prop on mount.
+  const [productLabel, setProductLabel] = useState(defaultProductLabel ?? "");
 
   // Reference data via TanStack Query — cached across page mounts.
-  const { data: products = [] } = useProducts(debouncedSearch);
   const { data: locations = [] } = useLocations();
   const { data: users = [] } = useUsers();
-
-  useEffect(() => {
-    if (productSearch === debouncedSearch) return;
-    const handle = window.setTimeout(() => {
-      setDebouncedSearch(productSearch);
-    }, 300);
-    return () => window.clearTimeout(handle);
-  }, [productSearch, debouncedSearch]);
 
   const {
     register,
@@ -87,6 +80,7 @@ export default function AssetForm({
     setValue,
     watch,
     reset,
+    control,
     formState: { errors, isDirty },
   } = useForm<AssetSchemaValues>({
     resolver: zodResolver(assetSchema),
@@ -109,17 +103,11 @@ export default function AssetForm({
     },
   });
 
-  const selectedProductId = watch("productId");
-
-  // Auto-fill name from product
-  useEffect(() => {
-    if (!defaultValues && selectedProductId) {
-      const product = products.find((p) => p.id === selectedProductId);
-      if (product) {
-        setValue("name", product.name);
-      }
-    }
-  }, [selectedProductId, products, setValue, defaultValues]);
+  // Phase 17 v2: name auto-fill is now driven by the ProductPicker's
+  // onChange callback (see the field render below) — the picker hands
+  // us the chosen item with its label, so we don't need a follow-up
+  // products query to map id→name.
+  void watch;
 
   const onFormSubmit = async (data: AssetSchemaValues) => {
     setSubmitting(true);
@@ -183,32 +171,37 @@ export default function AssetForm({
       <fieldset className="rounded-lg border bg-card p-5">
         <legend className="px-2 text-lg font-semibold">Basic Info</legend>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          {/* Product search */}
+          {/* Product picker (Phase 17 v2 — autocomplete + quick-save).
+              Auto-fills the asset `name` field with the chosen
+              product's name on first pick (only when the form is in
+              create mode, so editing doesn't clobber a custom asset
+              name). */}
           <div>
-            <label htmlFor="productSearch" className={labelClass}>
-              Product
-            </label>
-            <input
-              id="productSearch"
-              type="text"
-              placeholder="Search products..."
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-              className={fieldClass}
+            <label className={labelClass}>Product</label>
+            <Controller
+              name="productId"
+              control={control}
+              render={({ field }) => (
+                <ProductPicker
+                  value={
+                    field.value
+                      ? { id: field.value, label: productLabel }
+                      : null
+                  }
+                  onChange={(next) => {
+                    field.onChange(next?.id ?? "");
+                    setProductLabel(next?.label ?? "");
+                    // Auto-seed asset name from product name on
+                    // create. Skip when editing (defaultValues present)
+                    // so we don't overwrite a customised label.
+                    if (next && !defaultValues) {
+                      setValue("name", next.label);
+                    }
+                  }}
+                  invalid={!!errors.productId}
+                />
+              )}
             />
-            <select
-              {...register("productId")}
-              className={`${fieldClass} mt-2`}
-              size={4}
-            >
-              <option value="">-- Select a product --</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.brand ? ` (${p.brand})` : ""}
-                </option>
-              ))}
-            </select>
             {errors.productId && (
               <p className={errorClass}>{errors.productId.message}</p>
             )}

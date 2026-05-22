@@ -117,6 +117,7 @@ function EditAssetContent() {
       </div>
       <AssetForm
         defaultValues={defaultValues}
+        defaultProductLabel={asset.product?.name ?? null}
         onSubmit={handleSubmit}
         submitLabel="Save Changes"
       />
