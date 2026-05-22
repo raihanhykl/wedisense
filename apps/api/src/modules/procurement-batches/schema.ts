@@ -27,16 +27,19 @@ const customFieldsSchema = z.record(z.unknown());
 
 export const createProcurementBatchSchema = z.object({
   // Optional parent PO. Null means direct-purchase batch (no formal PO).
-  purchaseOrderId: z.string().uuid().nullable().optional(),
+  // Phase 17 v2: PO is now mandatory (direct-purchase removed per spec).
+  purchaseOrderId: z.string().uuid(),
 
   name: z.string().min(1).max(255).nullable().optional(),
 
-  // Inherited from PO at create time when purchaseOrderId is set, but
-  // override-able if the batch represents a different commercial moment
-  // (e.g. items priced as of a different date).
+  // Inherited from PO at create time but kept denormalised on the batch
+  // so future PO edits don't retroactively change historical batches.
+  // The frontend pre-fills + disables these per spec 3.3.
   purchaseDate: z.coerce.date(),
   currency: currencySchema.optional(),
-  totalAmount: z.number().nonnegative().nullable().optional(),
+  // Phase 17 v2: totalAmount is computed from BatchItems (qtyReceived ×
+  // line item amounts), so we no longer accept it from the API. BatchItems
+  // input lands in Tier 7.4.
 
   // Defaults applied to assets at import time. Each asset may override.
   defaultLocationId: z.string().uuid().nullable().optional(),
@@ -71,7 +74,8 @@ export const updateProcurementBatchSchema = z.object({
   receivedDate: z.coerce.date().nullable().optional(),
 
   currency: currencySchema.optional(),
-  totalAmount: z.number().nonnegative().nullable().optional(),
+  // Phase 17 v2: totalAmount is computed from BatchItems — not patched
+  // directly via this endpoint. Use /receive or item edits instead.
 
   defaultLocationId: z.string().uuid().nullable().optional(),
   defaultCategoryId: z.string().uuid().nullable().optional(),
@@ -125,9 +129,9 @@ export const completeProcurementBatchSchema = z.object({
   invoiceUrl: z.string().url().max(2048).nullable().optional(),
   taxInvoiceNumber: z.string().max(255).nullable().optional(),
   taxInvoiceDate: z.coerce.date().nullable().optional(),
-  // Optional override of the batch's total amount as recorded on the
-  // supplier invoice. If omitted, batch.totalAmount stays as-is.
-  totalAmount: z.number().nonnegative().nullable().optional(),
+  // Phase 17 v2: totalAmount is computed from BatchItems and locked
+  // at completion. Manual overrides no longer accepted via this
+  // endpoint.
 });
 
 // ── Cancel (DRAFT or ITEMS_PENDING → CANCELLED) ─────────────────────────────

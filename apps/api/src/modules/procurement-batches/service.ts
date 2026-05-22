@@ -173,14 +173,14 @@ export async function createProcurementBatch(
         status: 'DRAFT',
         purchaseDate: input.purchaseDate,
         currency: input.currency ?? 'IDR',
-        totalAmount: input.totalAmount ?? null,
+        // Phase 17 v2: totalAmount is computed from BatchItems, default 0
+        // until items are added (Tier 7.4).
+        totalAmount: 0,
         notes: input.notes ?? null,
         attachments: (input.attachments ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         customFields: (input.customFields ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         createdBy: { connect: { id: userId } },
-        ...(input.purchaseOrderId && {
-          purchaseOrder: { connect: { id: input.purchaseOrderId } },
-        }),
+        purchaseOrder: { connect: { id: input.purchaseOrderId } },
         ...(input.defaultLocationId && {
           defaultLocation: { connect: { id: input.defaultLocationId } },
         }),
@@ -258,7 +258,7 @@ export async function updateProcurementBatch(
         ...(input.purchaseDate !== undefined && { purchaseDate: input.purchaseDate }),
         ...(input.receivedDate !== undefined && { receivedDate: input.receivedDate }),
         ...(input.currency !== undefined && { currency: input.currency }),
-        ...(input.totalAmount !== undefined && { totalAmount: input.totalAmount }),
+        // Phase 17 v2: totalAmount computed from BatchItems, never patched directly here.
         ...(input.defaultLocationId !== undefined && {
           defaultLocation: input.defaultLocationId
             ? { connect: { id: input.defaultLocationId } }
@@ -510,7 +510,6 @@ export async function completeProcurementBatch(
           taxInvoiceNumber: input.taxInvoiceNumber,
         }),
         ...(input.taxInvoiceDate !== undefined && { taxInvoiceDate: input.taxInvoiceDate }),
-        ...(input.totalAmount !== undefined && { totalAmount: input.totalAmount }),
         completedAt: new Date(),
         completedBy: { connect: { id: userId } },
       },

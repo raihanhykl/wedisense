@@ -408,11 +408,13 @@ model Product {
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  category AssetCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  assets   Asset[]
+  category           AssetCategory       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  assets             Asset[]
+  purchaseOrderItems PurchaseOrderItem[]
 
   @@index([categoryId])
   @@index([eanCode])
+  @@index([name])
   @@map("products")
 }
 
@@ -731,37 +733,66 @@ model UserTourProgress {
   @@map("user_tour_progress")
 }
 
-// PurchaseOrder is the commercial commitment layer — what was agreed
-// with the vendor. ProcurementBatch sits below it as the receipt event
-// (BAST). One PO may have many batches (partial delivery), or zero (we
-// also support direct-purchase batches with purchaseOrderId = null).
+// Phase 17 v2 — Vendor as first-class DB entity. Previously a free-text
+// string on PurchaseOrder; the spec now requires a registry so the user
+// picks vendors via autocomplete (no typo-driven splits) and we can
+// surface per-vendor procurement history. Vendor.name is unique so the
+// autocomplete's "create new" path is naturally idempotent.
+model Vendor {
+  id            String  @id @default(uuid()) @db.Uuid
+  name          String  @unique @map("name")
+  // Indonesian NPWP (15 digits, free-text for now — DJP-format validation
+  // when we wire eFaktur integration). Optional.
+  taxId         String? @map("tax_id")
+  email         String? @map("email")
+  phone         String? @map("phone")
+  address       String? @map("address")
+  contactPerson String? @map("contact_person")
+  notes         String? @map("notes")
+  isActive      Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  purchaseOrders PurchaseOrder[]
+
+  @@index([name])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("vendors")
+}
+
+// PurchaseOrder — the commercial commitment layer. The redesign drops
+// the single flat `totalAmount` in favour of computed totals derived
+// from the PO's line items (PurchaseOrderItem). Vendor is now a FK to
+// the Vendor table.
 model PurchaseOrder {
   id String @id @default(uuid()) @db.Uuid
 
-  // SP-YYYY-NNNN — generated server-side in the service layer using
-  // PurchaseOrderSequence for thread-safety. Unique constraint guards
-  // against any race that slipped past the sequence row lock.
+  // SP-YYYY-NNNN — generated server-side via PurchaseOrderSequence.
   poNumber    String              @unique @map("po_number")
   name        String?             @map("name")
   description String?             @map("description")
   status      PurchaseOrderStatus @default(OPEN) @map("status")
 
-  // Vendor identity. Free-text for now — graduating to a Vendor table is
-  // a separate phase; doing it now would balloon the schema and the
-  // procurement audit story works fine with the denormalised string.
-  vendor        String  @map("vendor")
-  vendorContact String? @map("vendor_contact")
+  vendorId String @map("vendor_id") @db.Uuid
 
   poDate               DateTime  @map("po_date")
   expectedDeliveryDate DateTime? @map("expected_delivery_date")
   poUrl                String?   @map("po_url")
 
-  currency    String   @default("IDR") @map("currency")
-  totalAmount Decimal? @map("total_amount") @db.Decimal(15, 2)
+  currency String @default("IDR") @map("currency")
+
+  // Computed totals from line items, stored denormalised so the list
+  // view doesn't issue an aggregation query per row. Recomputed inside
+  // the same transaction that mutates items.
+  untaxedAmount Decimal @default(0) @map("untaxed_amount") @db.Decimal(15, 2)
+  totalTaxes    Decimal @default(0) @map("total_taxes") @db.Decimal(15, 2)
+  totalAmount   Decimal @default(0) @map("total_amount") @db.Decimal(15, 2)
 
   // Denormalised counters maintained inside the same $transaction that
-  // mutates batches/assets. Cheap to keep correct, expensive to compute
-  // on every list render.
+  // mutates batches/assets.
   batchCount Int @default(0) @map("batch_count")
   assetCount Int @default(0) @map("asset_count")
 
@@ -777,30 +808,80 @@ model PurchaseOrder {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  // Relations
-  createdBy User               @relation("PurchaseOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  closedBy  User?              @relation("PurchaseOrderClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  vendor    Vendor              @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  createdBy User                @relation("PurchaseOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  closedBy  User?               @relation("PurchaseOrderClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  items     PurchaseOrderItem[]
   batches   ProcurementBatch[]
 
   @@index([poNumber])
   @@index([status])
-  @@index([vendor])
+  @@index([vendorId])
   @@index([poDate])
   @@index([createdByUserId])
   @@index([deletedAt])
   @@map("purchase_orders")
 }
 
+// Phase 17 v2 — PurchaseOrderItem: one line per product-on-PO.
+// Multiple line items allowed per PO (spec 2.6). Tax is computed
+// EXCLUSIVE (spec 2.7):
+//
+//   untaxed_amount = qty × unit_price × (1 - discount_percent/100)
+//   tax_amount     = untaxed_amount × tax_percent/100
+//   total_amount   = untaxed_amount + tax_amount
+//
+// All three amount fields are denormalised at write time — they never
+// drift from the inputs because the service recomputes on every
+// create/update inside the same transaction.
+model PurchaseOrderItem {
+  id              String @id @default(uuid()) @db.Uuid
+  purchaseOrderId String @map("purchase_order_id") @db.Uuid
+  productId       String @map("product_id") @db.Uuid
+
+  qty       Int     @map("qty")
+  unitPrice Decimal @map("unit_price") @db.Decimal(15, 2)
+
+  // Discount + tax as PERCENT, not absolute. 0 = none, 11 = 11%.
+  // Decimal(5,2) gives us 999.99% headroom which is silly-but-safe;
+  // matches Odoo's invoice precision.
+  discountPercent Decimal @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  taxPercent      Decimal @default(0) @map("tax_percent") @db.Decimal(5, 2)
+
+  untaxedAmount Decimal @map("untaxed_amount") @db.Decimal(15, 2)
+  taxAmount     Decimal @map("tax_amount") @db.Decimal(15, 2)
+  totalAmount   Decimal @map("total_amount") @db.Decimal(15, 2)
+
+  // Display order in the line-items table. Free-numbered (0, 10, 20…)
+  // so reordering doesn't require renumbering siblings.
+  sortOrder Int @default(0) @map("sort_order")
+
+  notes String? @map("notes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batchItems    BatchItem[]
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+  @@map("purchase_order_items")
+}
+
 // One row = one physical receipt event = one BAST. Carries the
 // document chain (BAST, supplier invoice, faktur pajak) and the
 // signatory in a HYBRID shape: receivedByUserId for internal staff,
 // receivedByName/receivedByPosition for external (vendor) signers.
+//
+// Phase 17 v2: purchaseOrderId is now MANDATORY — direct-purchase
+// batches were removed per spec. Direct purchase flows route through
+// /assets/new instead.
 model ProcurementBatch {
   id String @id @default(uuid()) @db.Uuid
 
-  // Optional FK to PurchaseOrder. Nullable so a quick direct-purchase
-  // batch (no formal PO) can still flow through the same UI.
-  purchaseOrderId String? @map("purchase_order_id") @db.Uuid
+  purchaseOrderId String @map("purchase_order_id") @db.Uuid
 
   // BATCH-YYYYMM-NNNN — generated server-side via ProcurementBatchSequence.
   batchNumber String                 @unique @map("batch_number")
@@ -829,8 +910,11 @@ model ProcurementBatch {
   purchaseDate DateTime  @map("purchase_date")
   receivedDate DateTime? @map("received_date")
 
-  currency    String   @default("IDR") @map("currency")
-  totalAmount Decimal? @map("total_amount") @db.Decimal(15, 2)
+  currency    String  @default("IDR") @map("currency")
+  // Phase 17 v2: totalAmount on Batch is now computed from BatchItems
+  // (sum of qtyReceived × line item unit price × tax/discount). Stored
+  // denormalised so list/detail render doesn't need an aggregation.
+  totalAmount Decimal @default(0) @map("total_amount") @db.Decimal(15, 2)
 
   // Defaults applied to assets at import time. Each asset row may
   // override these — the batch values are only the starting point.
@@ -860,12 +944,13 @@ model ProcurementBatch {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  purchaseOrder   PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
   defaultLocation Location?      @relation("ProcurementBatchDefaultLocation", fields: [defaultLocationId], references: [id], onDelete: SetNull)
   defaultCategory AssetCategory? @relation("ProcurementBatchDefaultCategory", fields: [defaultCategoryId], references: [id], onDelete: SetNull)
   receivedBy      User?          @relation("ProcurementBatchReceivedBy", fields: [receivedByUserId], references: [id], onDelete: SetNull)
   createdBy       User           @relation("ProcurementBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   completedBy     User?          @relation("ProcurementBatchCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  items           BatchItem[]
   assets          Asset[]
 
   @@index([purchaseOrderId])
@@ -881,6 +966,32 @@ model ProcurementBatch {
   @@index([createdByUserId])
   @@index([deletedAt])
   @@map("procurement_batches")
+}
+
+// Phase 17 v2 — BatchItem: "how many of THIS PO line item did we
+// physically receive in THIS batch". One row per (batch × POItem) pair.
+// The unique constraint prevents double-counting; service-layer
+// validation guards against qtyReceived overflowing the parent PO
+// line's qty (across all batches).
+model BatchItem {
+  id                  String @id @default(uuid()) @db.Uuid
+  procurementBatchId  String @map("procurement_batch_id") @db.Uuid
+  purchaseOrderItemId String @map("purchase_order_item_id") @db.Uuid
+
+  qtyReceived Int @map("qty_received")
+
+  notes String? @map("notes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  procurementBatch  ProcurementBatch  @relation(fields: [procurementBatchId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Restrict)
+
+  @@unique([procurementBatchId, purchaseOrderItemId])
+  @@index([procurementBatchId])
+  @@index([purchaseOrderItemId])
+  @@map("batch_items")
 }
 
 // Mirrors AssetNumberSequence: per-year row for PO, per-yearMonth row

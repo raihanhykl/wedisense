@@ -29,7 +29,12 @@ const procurementBatchListSelect = {
   createdAt: true,
   updatedAt: true,
   purchaseOrder: {
-    select: { id: true, poNumber: true, vendor: true, status: true },
+    select: {
+      id: true,
+      poNumber: true,
+      status: true,
+      vendor: { select: { id: true, name: true } },
+    },
   },
 } as const;
 
@@ -42,10 +47,10 @@ function buildWhereClause(
   if (filters.purchaseOrderId) where.purchaseOrderId = filters.purchaseOrderId;
 
   if (filters.vendor) {
-    // Vendor lives on the parent PO. Use a relation filter; Prisma compiles
-    // to a JOIN with the same WHERE on purchase_orders.vendor.
+    // Vendor is a relation on PO (Phase 17 v2). Chain through to the
+    // Vendor.name field.
     where.purchaseOrder = {
-      vendor: { contains: filters.vendor, mode: 'insensitive' },
+      vendor: { name: { contains: filters.vendor, mode: 'insensitive' } },
     };
   }
 
@@ -115,9 +120,9 @@ export async function findById(id: string) {
         select: {
           id: true,
           poNumber: true,
-          vendor: true,
           status: true,
           poDate: true,
+          vendor: { select: { id: true, name: true } },
         },
       },
       defaultLocation: { select: { id: true, name: true, code: true } },

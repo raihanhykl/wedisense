@@ -572,6 +572,65 @@ async function main() {
 
   console.log('  ✓ 2 label templates created\n')
 
+  // ─── 11b. Vendors (Phase 17 v2) ────────────────────────────────────────────────
+  // Seeds the vendor registry with a handful of common Indonesian
+  // suppliers so the autocomplete shows realistic options out of the box.
+  // taxId is the standard 15-digit NPWP format (placeholders here).
+  console.log('Creating vendors...')
+
+  const vendorDefs = [
+    {
+      name: 'iBox Indonesia',
+      taxId: '01.234.567.8-901.000',
+      email: 'sales@ibox.co.id',
+      phone: '+62 21 5000-0000',
+      address: 'Plaza Indonesia, Jakarta Pusat',
+      contactPerson: 'Bambang Pratama',
+    },
+    {
+      name: 'Dell Indonesia',
+      taxId: '02.345.678.9-012.000',
+      email: 'enterprise@dell.co.id',
+      phone: '+62 21 5290-9999',
+      address: 'Wisma 46 Kota BNI, Jakarta',
+      contactPerson: 'Siti Rahmawati',
+    },
+    {
+      name: 'IKEA Indonesia',
+      taxId: '03.456.789.0-123.000',
+      email: 'business@ikea.co.id',
+      phone: '+62 21 8082-1234',
+      address: 'Alam Sutera, Tangerang',
+      contactPerson: 'Andi Wijaya',
+    },
+    {
+      name: 'Herman Miller Official',
+      taxId: '04.567.890.1-234.000',
+      email: 'orders@hermanmiller.id',
+      phone: '+62 21 8378-1010',
+      address: 'Sudirman, Jakarta Selatan',
+      contactPerson: 'Maria Santoso',
+    },
+    {
+      name: 'Toyota Astra Motor',
+      taxId: '05.678.901.2-345.000',
+      email: 'fleet@toyota.astra.co.id',
+      phone: '+62 21 6510-0000',
+      address: 'Sunter, Jakarta Utara',
+      contactPerson: 'Pak Hartono',
+    },
+  ]
+
+  for (const v of vendorDefs) {
+    await prisma.vendor.upsert({
+      where: { name: v.name },
+      update: {},
+      create: v,
+    })
+  }
+
+  console.log(`  ✓ ${vendorDefs.length} vendors created\n`)
+
   // ─── 12. Onboarding Tours ─────────────────────────────────────────────────────
   console.log('Creating onboarding tours...')
 
@@ -669,6 +728,7 @@ async function main() {
   console.log(`  - ${sequences.length} asset number sequences`)
   console.log(`  - ${movementCounter + 4} asset movements`)
   console.log(`  - 2 label templates`)
+  console.log(`  - ${vendorDefs.length} vendors`)
   console.log(`  - ${tourDefs.length} onboarding tours`)
   console.log('\nTest credentials:')
   console.log('  superadmin@wedison.com / password123')

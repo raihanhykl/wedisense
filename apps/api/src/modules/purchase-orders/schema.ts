@@ -33,13 +33,16 @@ const customFieldsSchema = z.record(z.unknown());
 const sharedFields = {
   name: z.string().min(1).max(255).nullable().optional(),
   description: z.string().max(2000).nullable().optional(),
-  vendor: z.string().min(1).max(255),
-  vendorContact: z.string().max(255).nullable().optional(),
+  // Phase 17 v2: vendor is a FK; vendorContact moved into Vendor entity.
+  vendorId: z.string().uuid(),
   poDate: z.coerce.date(),
   expectedDeliveryDate: z.coerce.date().nullable().optional(),
   poUrl: z.string().url().max(2048).nullable().optional(),
   currency: currencySchema.optional(),
-  totalAmount: z.number().nonnegative().nullable().optional(),
+  // Phase 17 v2: PO totals are computed from line items in the service.
+  // We no longer accept totalAmount from the API. Items array will land
+  // in Tier 7.3 — for now the create call goes through with no items
+  // and totals default to 0 (computed but empty).
   notes: z.string().max(2000).nullable().optional(),
   attachments: attachmentsSchema.nullable().optional(),
   customFields: customFieldsSchema.nullable().optional(),
@@ -63,13 +66,11 @@ export const updatePurchaseOrderSchema = z
   .object({
     name: sharedFields.name,
     description: sharedFields.description,
-    vendor: sharedFields.vendor.optional(),
-    vendorContact: sharedFields.vendorContact,
+    vendorId: sharedFields.vendorId.optional(),
     poDate: sharedFields.poDate.optional(),
     expectedDeliveryDate: sharedFields.expectedDeliveryDate,
     poUrl: sharedFields.poUrl,
     currency: sharedFields.currency,
-    totalAmount: sharedFields.totalAmount,
     notes: sharedFields.notes,
     attachments: sharedFields.attachments,
     customFields: sharedFields.customFields,

@@ -34,14 +34,15 @@ function buildWhereClause(
   }
 
   if (filters.vendor) {
-    where.vendor = { contains: filters.vendor, mode: 'insensitive' };
+    // Phase 17 v2 — vendor is now a relation; filter through Vendor.name.
+    where.vendor = { name: { contains: filters.vendor, mode: 'insensitive' } };
   }
 
   if (filters.search) {
     where.OR = [
       { poNumber: { contains: filters.search, mode: 'insensitive' } },
       { name: { contains: filters.search, mode: 'insensitive' } },
-      { vendor: { contains: filters.search, mode: 'insensitive' } },
+      { vendor: { name: { contains: filters.search, mode: 'insensitive' } } },
     ];
   }
 

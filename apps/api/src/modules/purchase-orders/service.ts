@@ -73,13 +73,16 @@ export async function createPurchaseOrder(
         name: input.name ?? null,
         description: input.description ?? null,
         status: 'OPEN',
-        vendor: input.vendor,
-        vendorContact: input.vendorContact ?? null,
+        // Phase 17 v2: vendor FK + computed totals (default 0, set
+        // properly when items are persisted in Tier 7.3).
+        vendor: { connect: { id: input.vendorId } },
         poDate: input.poDate,
         expectedDeliveryDate: input.expectedDeliveryDate ?? null,
         poUrl: input.poUrl ?? null,
         currency: input.currency ?? 'IDR',
-        totalAmount: input.totalAmount ?? null,
+        untaxedAmount: 0,
+        totalTaxes: 0,
+        totalAmount: 0,
         notes: input.notes ?? null,
         attachments: (input.attachments ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         customFields: (input.customFields ?? Prisma.JsonNull) as Prisma.InputJsonValue,
@@ -146,15 +149,17 @@ export async function updatePurchaseOrder(
       {
         ...(input.name !== undefined && { name: input.name }),
         ...(input.description !== undefined && { description: input.description }),
-        ...(input.vendor !== undefined && { vendor: input.vendor }),
-        ...(input.vendorContact !== undefined && { vendorContact: input.vendorContact }),
+        // Phase 17 v2: vendor swaps via relation re-connect; totals are
+        // computed (not patched directly).
+        ...(input.vendorId !== undefined && {
+          vendor: { connect: { id: input.vendorId } },
+        }),
         ...(input.poDate !== undefined && { poDate: input.poDate }),
         ...(input.expectedDeliveryDate !== undefined && {
           expectedDeliveryDate: input.expectedDeliveryDate,
         }),
         ...(input.poUrl !== undefined && { poUrl: input.poUrl }),
         ...(input.currency !== undefined && { currency: input.currency }),
-        ...(input.totalAmount !== undefined && { totalAmount: input.totalAmount }),
         ...(input.notes !== undefined && { notes: input.notes }),
         ...(input.attachments !== undefined && {
           attachments: (input.attachments ?? Prisma.JsonNull) as Prisma.InputJsonValue,
