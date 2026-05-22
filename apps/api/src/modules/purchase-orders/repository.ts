@@ -5,15 +5,22 @@ import type { PrismaTransactionClient, PurchaseOrderListFilters } from './types.
 // Columns we surface on the list view. Heavy JSONB (attachments,
 // customFields) deliberately excluded — those land via the detail
 // endpoint to keep list payloads lean.
+//
+// Phase 17 v2: vendor is now a relation, so we select its id/name into
+// a nested object. List items also get itemCount (computed from
+// _count) so the tree-view list can render a chevron only when the PO
+// actually has line items.
 const purchaseOrderListSelect = {
   id: true,
   poNumber: true,
   name: true,
   status: true,
-  vendor: true,
+  vendor: { select: { id: true, name: true } },
   poDate: true,
   expectedDeliveryDate: true,
   currency: true,
+  untaxedAmount: true,
+  totalTaxes: true,
   totalAmount: true,
   batchCount: true,
   assetCount: true,
@@ -22,6 +29,7 @@ const purchaseOrderListSelect = {
   closedAt: true,
   createdAt: true,
   updatedAt: true,
+  _count: { select: { items: true, batches: true } },
 } as const;
 
 function buildWhereClause(
@@ -84,8 +92,46 @@ export async function findById(id: string) {
   return prisma.purchaseOrder.findFirst({
     where: { id, deletedAt: null },
     include: {
+      vendor: {
+        select: {
+          id: true,
+          name: true,
+          taxId: true,
+          email: true,
+          phone: true,
+          contactPerson: true,
+        },
+      },
       createdBy: { select: { id: true, name: true, email: true } },
       closedBy: { select: { id: true, name: true, email: true } },
+      // Line items + their product reference. Ordered by sortOrder so
+      // the UI presents the list in the order the user authored.
+      items: {
+        select: {
+          id: true,
+          productId: true,
+          qty: true,
+          unitPrice: true,
+          discountPercent: true,
+          taxPercent: true,
+          untaxedAmount: true,
+          taxAmount: true,
+          totalAmount: true,
+          sortOrder: true,
+          notes: true,
+          product: {
+            select: {
+              id: true,
+              name: true,
+              brand: true,
+              model: true,
+              eanCode: true,
+              category: { select: { id: true, name: true, code: true } },
+            },
+          },
+        },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      },
       batches: {
         where: { deletedAt: null },
         select: {
@@ -103,6 +149,19 @@ export async function findById(id: string) {
         orderBy: { createdAt: 'asc' },
       },
     },
+  });
+}
+
+/**
+ * Light fetch returning just the PO's items (id, qty, totals) — used
+ * by the Tier 7.4 batch service when it needs to validate qty receipts
+ * against PO line capacity. Skips heavy product joins.
+ */
+export async function findItemsForReceiptCheck(poId: string) {
+  return prisma.purchaseOrderItem.findMany({
+    where: { purchaseOrderId: poId },
+    select: { id: true, qty: true, productId: true, sortOrder: true },
+    orderBy: { sortOrder: 'asc' },
   });
 }
 
@@ -133,6 +192,60 @@ export async function softDelete(id: string, tx?: PrismaTransactionClient) {
     where: { id },
     data: { deletedAt: new Date() },
   });
+}
+
+// ── Line items (Phase 17 v2) ────────────────────────────────────────────────
+
+export async function createItems(
+  data: Prisma.PurchaseOrderItemCreateManyInput[],
+  tx: PrismaTransactionClient,
+) {
+  if (data.length === 0) return { count: 0 };
+  return tx.purchaseOrderItem.createMany({ data });
+}
+
+/**
+ * Atomic item replacement — used by update when the caller sends a
+ * fresh items array. Service-layer guards ensure this is only invoked
+ * when status === OPEN (no batches attached).
+ */
+export async function replaceItems(
+  poId: string,
+  items: Prisma.PurchaseOrderItemCreateManyInput[],
+  tx: PrismaTransactionClient,
+) {
+  await tx.purchaseOrderItem.deleteMany({ where: { purchaseOrderId: poId } });
+  if (items.length > 0) {
+    await tx.purchaseOrderItem.createMany({ data: items });
+  }
+}
+
+/**
+ * Sum the qtyReceived per PO item across all non-cancelled, non-deleted
+ * batches. Returns a map keyed by purchase_order_item_id, used by both
+ * recomputePurchaseOrderStatus (Tier 7.3) and the closePO qty guard
+ * (spec §3.6: cannot complete unless 100% received).
+ */
+export async function sumReceivedByItem(
+  poId: string,
+  tx?: PrismaTransactionClient,
+): Promise<Map<string, number>> {
+  const rows = await (tx ?? prisma).batchItem.groupBy({
+    by: ['purchaseOrderItemId'],
+    where: {
+      purchaseOrderItem: { purchaseOrderId: poId },
+      procurementBatch: {
+        deletedAt: null,
+        status: { in: ['RECEIVED', 'COMPLETED'] },
+      },
+    },
+    _sum: { qtyReceived: true },
+  });
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    map.set(r.purchaseOrderItemId, r._sum.qtyReceived ?? 0);
+  }
+  return map;
 }
 
 /**

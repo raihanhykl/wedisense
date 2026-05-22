@@ -1,12 +1,15 @@
+import { randomUUID } from 'crypto';
 import { AppError } from '../../middleware/error-handler.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 import type { PurchaseOrderStatus } from '@prisma/client';
 import * as poRepo from './repository.js';
+import { computeItemAmounts, sumPoTotals } from './totals.js';
 import type {
   CreatePurchaseOrderInput,
   UpdatePurchaseOrderInput,
   CancelPurchaseOrderInput,
+  PurchaseOrderItemInput,
 } from './schema.js';
 import type { PrismaTransactionClient, PurchaseOrderListFilters } from './types.js';
 
@@ -55,34 +58,126 @@ export async function getPurchaseOrder(id: string) {
   return po;
 }
 
+// ── Item validation + row preparation ───────────────────────────────────────
+//
+// Translates user input into ready-to-insert Prisma createMany rows.
+// Validates every product UUID exists, then computes the three
+// denormalised amounts per item plus the PO-level totals. Runs inside
+// the create/update transaction so a missing product rolls back the
+// whole operation.
+async function validateAndPrepareItems(
+  poId: string,
+  items: PurchaseOrderItemInput[],
+  tx: PrismaTransactionClient,
+): Promise<{
+  rows: Prisma.PurchaseOrderItemCreateManyInput[];
+  totals: { untaxedAmount: Prisma.Decimal; totalTaxes: Prisma.Decimal; totalAmount: Prisma.Decimal };
+}> {
+  // Pre-load referenced products in a single query. Empty array (no
+  // items) is guarded by the Zod schema's `min(1)` so we never get here
+  // with zero items.
+  const productIds = [...new Set(items.map((i) => i.productId))];
+  const products = await tx.product.findMany({
+    where: { id: { in: productIds } },
+    select: { id: true },
+  });
+  const productSet = new Set(products.map((p) => p.id));
+
+  for (const item of items) {
+    if (!productSet.has(item.productId)) {
+      throw new AppError(
+        404,
+        'PRODUCT_NOT_FOUND',
+        `Product ${item.productId} not found`,
+      );
+    }
+  }
+
+  const computedAmounts = items.map((i) => computeItemAmounts(i));
+
+  const rows: Prisma.PurchaseOrderItemCreateManyInput[] = items.map((item, idx) => {
+    const amt = computedAmounts[idx]!;
+    return {
+      id: randomUUID(),
+      purchaseOrderId: poId,
+      productId: item.productId,
+      qty: item.qty,
+      unitPrice: new Prisma.Decimal(item.unitPrice),
+      discountPercent: new Prisma.Decimal(item.discountPercent ?? 0),
+      taxPercent: new Prisma.Decimal(item.taxPercent ?? 0),
+      untaxedAmount: amt.untaxedAmount,
+      taxAmount: amt.taxAmount,
+      totalAmount: amt.totalAmount,
+      // Service-assigned default: 0, 10, 20… so the user can reorder
+      // (insert "5" between 0 and 10) without renumbering siblings.
+      // Explicit user value wins if provided.
+      sortOrder: item.sortOrder ?? idx * 10,
+      notes: item.notes ?? null,
+    };
+  });
+
+  const totals = sumPoTotals(computedAmounts);
+  return { rows, totals };
+}
+
+// ── Vendor validation helper ────────────────────────────────────────────────
+//
+// Pre-check inside the same transaction that creates/updates the PO so
+// a missing or archived vendor reverts the whole operation cleanly
+// rather than letting the DB's Restrict FK throw a raw P2003.
+async function assertVendorExists(
+  vendorId: string,
+  tx: PrismaTransactionClient,
+): Promise<void> {
+  const vendor = await tx.vendor.findFirst({
+    where: { id: vendorId, deletedAt: null, isActive: true },
+    select: { id: true },
+  });
+  if (!vendor) {
+    throw new AppError(
+      404,
+      'VENDOR_NOT_FOUND',
+      `Vendor ${vendorId} not found or archived`,
+    );
+  }
+}
+
 // ── Create ──────────────────────────────────────────────────────────────────
 
 export async function createPurchaseOrder(
   input: CreatePurchaseOrderInput,
   userId: string,
 ) {
-  // Generate the SP number, persist the row, and write the audit log in a
-  // single $transaction. The sequence bump must roll back with a failed
-  // create — otherwise an aborted import leaves a "burned" PO number.
+  // Generate the SP number, validate inputs, persist PO + items, and
+  // write the audit log in ONE $transaction so the SP-number sequence
+  // bump rolls back together with any validation failure.
   return prisma.$transaction(async (tx) => {
+    await assertVendorExists(input.vendorId, tx);
+
     const poNumber = await poRepo.nextPurchaseOrderNumber(tx);
+    const poId = randomUUID();
+
+    const { rows: itemRows, totals } = await validateAndPrepareItems(
+      poId,
+      input.items,
+      tx,
+    );
 
     const created = await poRepo.create(
       {
+        id: poId,
         poNumber,
         name: input.name ?? null,
         description: input.description ?? null,
         status: 'OPEN',
-        // Phase 17 v2: vendor FK + computed totals (default 0, set
-        // properly when items are persisted in Tier 7.3).
         vendor: { connect: { id: input.vendorId } },
         poDate: input.poDate,
         expectedDeliveryDate: input.expectedDeliveryDate ?? null,
         poUrl: input.poUrl ?? null,
         currency: input.currency ?? 'IDR',
-        untaxedAmount: 0,
-        totalTaxes: 0,
-        totalAmount: 0,
+        untaxedAmount: totals.untaxedAmount,
+        totalTaxes: totals.totalTaxes,
+        totalAmount: totals.totalAmount,
         notes: input.notes ?? null,
         attachments: (input.attachments ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         customFields: (input.customFields ?? Prisma.JsonNull) as Prisma.InputJsonValue,
@@ -91,21 +186,41 @@ export async function createPurchaseOrder(
       tx,
     );
 
+    await poRepo.createItems(itemRows, tx);
+
     await tx.auditLog.create({
       data: {
         userId,
         action: 'CREATE',
         resourceType: 'PurchaseOrder',
         resourceId: created.id,
-        newValues: created as unknown as Prisma.InputJsonValue,
+        newValues: {
+          ...created,
+          itemCount: itemRows.length,
+        } as unknown as Prisma.InputJsonValue,
       },
     });
 
-    return created;
+    // Re-fetch with items + vendor populated so the caller sees the
+    // complete picture for redirect-to-detail UX.
+    const detail = await tx.purchaseOrder.findUnique({
+      where: { id: created.id },
+      include: {
+        vendor: { select: { id: true, name: true } },
+        items: { orderBy: { sortOrder: 'asc' } },
+      },
+    });
+    return detail ?? created;
   });
 }
 
-// ── Update (metadata only — status changes go through dedicated endpoints) ─
+// ── Update (metadata + optional items replacement) ─────────────────────────
+//
+// Status changes go through /close and /cancel — never via this endpoint.
+// Items replacement (when `input.items` is provided) is allowed ONLY when
+// the PO has zero batches attached, because BatchItem rows FK to
+// PurchaseOrderItem.id; replacing items mid-batch would orphan or
+// silently void those receipts.
 
 export async function updatePurchaseOrder(
   id: string,
@@ -143,14 +258,41 @@ export async function updatePurchaseOrder(
     );
   }
 
+  // Items replacement guard. Once batches exist, item rows are
+  // referenced by BatchItem and cannot be swapped without orphaning
+  // receipts.
+  if (input.items !== undefined && existing.batches.length > 0) {
+    throw new AppError(
+      409,
+      'PURCHASE_ORDER_HAS_BATCHES',
+      'Cannot change PO items after a batch has been attached. Cancel the batches first or create a new PO.',
+    );
+  }
+
   return prisma.$transaction(async (tx) => {
+    // Validate vendor swap inside the tx so a missing vendor reverts
+    // the entire update.
+    if (input.vendorId !== undefined && input.vendorId !== existing.vendorId) {
+      await assertVendorExists(input.vendorId, tx);
+    }
+
+    // Compute new items + totals if the caller supplied an items array.
+    let nextTotals:
+      | { untaxedAmount: Prisma.Decimal; totalTaxes: Prisma.Decimal; totalAmount: Prisma.Decimal }
+      | undefined;
+    if (input.items !== undefined) {
+      const prepared = await validateAndPrepareItems(id, input.items, tx);
+      nextTotals = prepared.totals;
+      await poRepo.replaceItems(id, prepared.rows, tx);
+    }
+
     const updated = await poRepo.update(
       id,
       {
         ...(input.name !== undefined && { name: input.name }),
         ...(input.description !== undefined && { description: input.description }),
-        // Phase 17 v2: vendor swaps via relation re-connect; totals are
-        // computed (not patched directly).
+        // Phase 17 v2: vendor swaps via relation re-connect; totals come
+        // from the items recompute above (never patched directly).
         ...(input.vendorId !== undefined && {
           vendor: { connect: { id: input.vendorId } },
         }),
@@ -167,6 +309,11 @@ export async function updatePurchaseOrder(
         ...(input.customFields !== undefined && {
           customFields: (input.customFields ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         }),
+        ...(nextTotals && {
+          untaxedAmount: nextTotals.untaxedAmount,
+          totalTaxes: nextTotals.totalTaxes,
+          totalAmount: nextTotals.totalAmount,
+        }),
       },
       tx,
     );
@@ -178,7 +325,10 @@ export async function updatePurchaseOrder(
         resourceType: 'PurchaseOrder',
         resourceId: id,
         oldValues: existing as unknown as Prisma.InputJsonValue,
-        newValues: updated as unknown as Prisma.InputJsonValue,
+        newValues: {
+          ...updated,
+          ...(input.items !== undefined && { itemCount: input.items.length }),
+        } as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -233,6 +383,14 @@ export async function deletePurchaseOrder(id: string, userId: string) {
 // FULLY_RECEIVED — we don't allow an admin to skip ahead from OPEN
 // because closing an unreceived PO leaves the procurement state ambiguous
 // (was the order fulfilled? was it cancelled?). Use cancel for that case.
+//
+// Phase 17 v2 / spec §3.6: even from FULLY_RECEIVED, close requires that
+// every PO line item has been 100% fulfilled (sum of qtyReceived across
+// non-cancelled batches == PO line qty). The auto-cascade in
+// recomputePurchaseOrderStatus already enforces this for the FULLY_RECEIVED
+// transition itself, but we re-check here as a defence-in-depth guard —
+// closes shouldn't depend on a derived status that could theoretically
+// drift if the cascade ever has a bug.
 export async function closePurchaseOrder(id: string, userId: string) {
   const existing = await poRepo.findById(id);
   if (!existing) {
@@ -249,6 +407,29 @@ export async function closePurchaseOrder(id: string, userId: string) {
       409,
       'PURCHASE_ORDER_NOT_CLOSABLE',
       `Only FULLY_RECEIVED purchase orders can be closed. Current status: ${existing.status}.`,
+    );
+  }
+
+  // Per-line qty audit — re-verify outside the cascade. Surface a
+  // detailed error per item so the UI can highlight which lines are
+  // still short.
+  const receivedMap = await poRepo.sumReceivedByItem(id);
+  const shortfalls = existing.items
+    .map((it) => ({
+      productId: it.productId,
+      itemId: it.id,
+      ordered: it.qty,
+      received: receivedMap.get(it.id) ?? 0,
+    }))
+    .filter((s) => s.received < s.ordered);
+
+  if (shortfalls.length > 0) {
+    throw new AppError(
+      409,
+      'PURCHASE_ORDER_INCOMPLETE_RECEIPT',
+      `Cannot close — ${shortfalls.length} item(s) under-received: ${shortfalls
+        .map((s) => `${s.received}/${s.ordered}`)
+        .join(', ')}.`,
     );
   }
 
@@ -352,9 +533,14 @@ export { MUTABLE_STATUSES };
 // Walks the PO's non-deleted, non-cancelled batches and derives the
 // correct PO status:
 //
-//   no batches                       → OPEN
-//   any batch in RECEIVED+COMPLETED  → at least PARTIALLY_RECEIVED
-//   every batch in RECEIVED+COMPLETED → FULLY_RECEIVED
+//   no batches                          → OPEN
+//   any received batch                  → at least PARTIALLY_RECEIVED
+//   all PO line items 100% received     → FULLY_RECEIVED
+//
+// Phase 17 v2: FULLY_RECEIVED now requires PER-LINE qty fulfillment
+// (spec §3.6), not just "all batches in RECEIVED". A batch can be
+// RECEIVED while still under-fulfilling its PO line — that puts the
+// PO in PARTIALLY_RECEIVED until additional batches close the gap.
 //
 // CLOSED and CANCELLED POs are terminal — we never demote out of them,
 // even if a downstream operation would otherwise suggest it. (A late
@@ -397,11 +583,30 @@ export async function recomputePurchaseOrderStatus(
     nextStatus = 'OPEN';
   } else {
     const isReceived = (s: string) => s === 'RECEIVED' || s === 'COMPLETED';
-    const allReceived = batches.every((b) => isReceived(b.status));
     const anyReceived = batches.some((b) => isReceived(b.status));
-    if (allReceived) nextStatus = 'FULLY_RECEIVED';
-    else if (anyReceived) nextStatus = 'PARTIALLY_RECEIVED';
-    else nextStatus = 'OPEN';
+
+    if (!anyReceived) {
+      // All batches still DRAFT or ITEMS_PENDING.
+      nextStatus = 'OPEN';
+    } else {
+      // At least one batch received. FULLY_RECEIVED requires all PO
+      // items to have qtyReceived ≥ qty across non-cancelled batches.
+      // We fetch the PO's items + the per-item received tally and
+      // compare.
+      const [items, receivedMap] = await Promise.all([
+        tx.purchaseOrderItem.findMany({
+          where: { purchaseOrderId: poId },
+          select: { id: true, qty: true },
+        }),
+        poRepo.sumReceivedByItem(poId, tx),
+      ]);
+
+      const everyFulfilled =
+        items.length > 0 &&
+        items.every((it) => (receivedMap.get(it.id) ?? 0) >= it.qty);
+
+      nextStatus = everyFulfilled ? 'FULLY_RECEIVED' : 'PARTIALLY_RECEIVED';
+    }
   }
 
   if (nextStatus === po.status) {
