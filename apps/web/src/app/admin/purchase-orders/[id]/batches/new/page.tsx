@@ -59,8 +59,11 @@ interface CategoryOption {
 
 export default function NewBatchPage() {
   const router = useRouter();
-  const params = useParams<{ poId: string }>();
-  const poId = params?.poId;
+  // Segment name must match the parent /[id] route (Next.js requires
+  // consistent dynamic slug names along a path). We alias to poId
+  // locally for readability.
+  const params = useParams<{ id: string }>();
+  const poId = params?.id;
   const canCreate = usePermission("procurement:create");
 
   const [po, setPo] = useState<PurchaseOrderDetail | null>(null);

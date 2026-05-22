@@ -518,8 +518,11 @@ function CancelDialog({
 
 export default function BatchDetailPage() {
   const router = useRouter();
-  const params = useParams<{ poId: string; batchId: string }>();
-  const poId = params?.poId;
+  // Parent segment is /[id] (Next.js dynamic-slug-uniqueness rule —
+  // can't reuse a different slug name like 'poId' alongside 'id').
+  // Locally we alias to poId for readability.
+  const params = useParams<{ id: string; batchId: string }>();
+  const poId = params?.id;
   const batchId = params?.batchId;
 
   const canUpdate = usePermission("procurement:update");
