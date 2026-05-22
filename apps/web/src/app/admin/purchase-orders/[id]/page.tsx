@@ -10,24 +10,29 @@ import {
   ExternalLink,
   FileText,
   Loader2,
+  Mail,
   Package,
+  Phone,
+  Plus,
   Trash2,
+  User as UserIcon,
   XCircle,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPut } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import { usePermission } from "@/hooks/use-permission";
-import { cn, formatIDR } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import {
-  PurchaseOrderStatusBadge,
   ProcurementBatchStatusBadge,
+  PurchaseOrderStatusBadge,
 } from "@/components/shared/procurement-status-badge";
 import type {
-  PurchaseOrderDetail,
   PurchaseOrderBatchSummary,
+  PurchaseOrderDetail,
+  PurchaseOrderItemRow,
 } from "@/types/admin";
 
-// ── Helpers ───────────────────────────────────────────────────────────
+// ── Formatting helpers ────────────────────────────────────────────────
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -46,15 +51,7 @@ function formatDateTime(iso: string | null): string {
   });
 }
 
-function formatTotal(amount: string | null, currency: string): string {
-  if (!amount) return "—";
-  if (currency === "IDR") return formatIDR(amount);
-  return `${currency} ${new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-  }).format(Number(amount))}`;
-}
-
-// ── Action availability based on status ────────────────────────────────
+// ── Status-driven action availability ─────────────────────────────────
 
 function canEdit(status: PurchaseOrderDetail["status"]): boolean {
   return status !== "CLOSED" && status !== "CANCELLED";
@@ -73,6 +70,14 @@ function canDelete(
   batchCount: number,
 ): boolean {
   return status === "OPEN" && batchCount === 0;
+}
+
+function canAddBatch(status: PurchaseOrderDetail["status"]): boolean {
+  return (
+    status === "OPEN" ||
+    status === "PARTIALLY_RECEIVED" ||
+    status === "FULLY_RECEIVED"
+  );
 }
 
 // ── Cancel dialog ─────────────────────────────────────────────────────
@@ -146,12 +151,11 @@ function CancelDialog({ open, onClose, onConfirm, busy }: CancelDialogProps) {
   );
 }
 
-// ── Edit modal ────────────────────────────────────────────────────────
+// ── Edit modal (metadata patch) ───────────────────────────────────────
 //
-// Inline metadata edit. Keeps the detail page navigation-free for the
-// common case (small touch-ups: vendor contact, notes, expected delivery).
-// More invasive edits (vendor name change after batches exist) still
-// allowed but warned at the API level.
+// Metadata-only — items are locked once the PO is saved (full items
+// edit requires zero batches anyway). For now the user can edit name,
+// description, expected delivery, PO document URL, and notes.
 
 interface EditDialogProps {
   open: boolean;
@@ -162,16 +166,12 @@ interface EditDialogProps {
 
 function EditDialog({ open, po, onClose, onSaved }: EditDialogProps) {
   const [form, setForm] = useState({
-    vendor: po.vendor,
-    vendorContact: po.vendorContact ?? "",
     name: po.name ?? "",
     description: po.description ?? "",
     expectedDeliveryDate: po.expectedDeliveryDate
       ? po.expectedDeliveryDate.slice(0, 10)
       : "",
     poUrl: po.poUrl ?? "",
-    currency: po.currency,
-    totalAmount: po.totalAmount ?? "",
     notes: po.notes ?? "",
   });
   const [busy, setBusy] = useState(false);
@@ -184,13 +184,9 @@ function EditDialog({ open, po, onClose, onSaved }: EditDialogProps) {
     setError(null);
     try {
       const payload: Record<string, unknown> = {
-        vendor: form.vendor,
-        vendorContact: form.vendorContact || null,
         name: form.name || null,
         description: form.description || null,
         poUrl: form.poUrl || null,
-        currency: form.currency,
-        totalAmount: form.totalAmount === "" ? null : Number(form.totalAmount),
         notes: form.notes || null,
         expectedDeliveryDate: form.expectedDeliveryDate
           ? new Date(`${form.expectedDeliveryDate}T12:00:00.000Z`).toISOString()
@@ -220,31 +216,12 @@ function EditDialog({ open, po, onClose, onSaved }: EditDialogProps) {
       >
         <h2 className="text-lg font-semibold">Edit purchase order</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Status changes use the Close / Cancel actions on the detail page.
+          Vendor + items are locked here. Use Close / Cancel for status
+          changes.
         </p>
 
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           <div className="md:col-span-2">
-            <label className="block text-sm font-medium">Vendor</label>
-            <input
-              type="text"
-              value={form.vendor}
-              onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))}
-              className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium">Vendor contact</label>
-            <input
-              type="text"
-              value={form.vendorContact}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, vendorContact: e.target.value }))
-              }
-              className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
-            />
-          </div>
-          <div>
             <label className="block text-sm font-medium">Name</label>
             <input
               type="text"
@@ -276,30 +253,6 @@ function EditDialog({ open, po, onClose, onSaved }: EditDialogProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium">Total amount</label>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={form.totalAmount}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, totalAmount: e.target.value }))
-              }
-              className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium">Currency</label>
-            <input
-              type="text"
-              value={form.currency}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))
-              }
-              maxLength={3}
-              className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm uppercase outline-none focus:border-primary"
-            />
-          </div>
-          <div className="md:col-span-2">
             <label className="block text-sm font-medium">PO document URL</label>
             <input
               type="url"
@@ -359,6 +312,7 @@ export default function PurchaseOrderDetailPage() {
   const canUpdate = usePermission("purchase-orders:update");
   const canCloseAction = usePermission("purchase-orders:close");
   const canCancelAction = usePermission("purchase-orders:cancel");
+  const canCreateBatch = usePermission("procurement:create");
 
   const [po, setPo] = useState<PurchaseOrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -424,10 +378,9 @@ export default function PurchaseOrderDetailPage() {
 
   const handleDelete = async () => {
     if (!po) return;
-    const confirmed = window.confirm(
-      `Delete purchase order ${po.poNumber}? This cannot be undone.`,
-    );
-    if (!confirmed) return;
+    if (!window.confirm(`Delete purchase order ${po.poNumber}? This cannot be undone.`)) {
+      return;
+    }
     setBusyAction("delete");
     setActionError(null);
     try {
@@ -467,7 +420,6 @@ export default function PurchaseOrderDetailPage() {
 
   return (
     <div className="space-y-6 p-6">
-      {/* Breadcrumb */}
       <Link
         href="/admin/purchase-orders"
         className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -487,6 +439,15 @@ export default function PurchaseOrderDetailPage() {
           {po.name && <p className="mt-1 text-sm text-muted-foreground">{po.name}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {canCreateBatch && canAddBatch(po.status) && (
+            <Link
+              href={`/admin/purchase-orders/${po.id}/batches/new`}
+              className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+              data-tour="po-add-batch"
+            >
+              <Plus className="h-4 w-4" /> Add Procurement Batch
+            </Link>
+          )}
           {canUpdate && canEdit(po.status) && (
             <button
               type="button"
@@ -545,19 +506,36 @@ export default function PurchaseOrderDetailPage() {
         </div>
       )}
 
-      {/* Overview grid */}
+      {/* Vendor + Dates + Totals */}
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Vendor card */}
         <div className="rounded-lg border bg-card p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Vendor
           </div>
-          <div className="mt-2 text-base font-medium">{po.vendor}</div>
-          {po.vendorContact && (
-            <div className="mt-1 text-sm text-muted-foreground">
-              {po.vendorContact}
+          <div className="mt-2 text-base font-medium">{po.vendor.name}</div>
+          {po.vendor.taxId && (
+            <div className="mt-1 font-mono text-xs text-muted-foreground">
+              NPWP {po.vendor.taxId}
             </div>
           )}
+          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {po.vendor.contactPerson && (
+              <div className="flex items-center gap-1">
+                <UserIcon className="h-3 w-3" /> {po.vendor.contactPerson}
+              </div>
+            )}
+            {po.vendor.email && (
+              <div className="flex items-center gap-1">
+                <Mail className="h-3 w-3" /> {po.vendor.email}
+              </div>
+            )}
+            {po.vendor.phone && (
+              <div className="flex items-center gap-1">
+                <Phone className="h-3 w-3" /> {po.vendor.phone}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Dates card */}
@@ -583,25 +561,29 @@ export default function PurchaseOrderDetailPage() {
           </dl>
         </div>
 
-        {/* Totals card */}
+        {/* Summary card */}
         <div className="rounded-lg border bg-card p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Totals
+            Summary
           </div>
           <dl className="mt-2 space-y-1 text-sm">
             <div className="flex justify-between">
-              <dt className="text-muted-foreground">Total amount</dt>
-              <dd className="font-medium">
-                {formatTotal(po.totalAmount, po.currency)}
+              <dt className="text-muted-foreground">Untaxed</dt>
+              <dd>{formatCurrency(po.untaxedAmount, po.currency)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Taxes</dt>
+              <dd>{formatCurrency(po.totalTaxes, po.currency)}</dd>
+            </div>
+            <div className="flex justify-between border-t pt-1 font-semibold">
+              <dt>Total</dt>
+              <dd>{formatCurrency(po.totalAmount, po.currency)}</dd>
+            </div>
+            <div className="flex justify-between pt-1 text-xs text-muted-foreground">
+              <dt>Batches / Assets</dt>
+              <dd>
+                {po.batchCount} / {po.assetCount}
               </dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Batches</dt>
-              <dd>{po.batchCount}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Assets</dt>
-              <dd>{po.assetCount}</dd>
             </div>
           </dl>
         </div>
@@ -643,6 +625,51 @@ export default function PurchaseOrderDetailPage() {
         </a>
       )}
 
+      {/* Line items table */}
+      <div className="overflow-hidden rounded-lg border bg-card">
+        <div className="flex items-center gap-2 border-b px-4 py-3">
+          <Package className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">
+            Line items ({po.items.length})
+          </h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 font-medium">Product</th>
+                <th className="px-4 py-2 text-right font-medium">Qty</th>
+                <th className="px-4 py-2 text-right font-medium">Unit price</th>
+                <th className="px-4 py-2 text-right font-medium">Disc %</th>
+                <th className="px-4 py-2 text-right font-medium">Tax %</th>
+                <th className="px-4 py-2 text-right font-medium">Untaxed</th>
+                <th className="px-4 py-2 text-right font-medium">Tax</th>
+                <th className="px-4 py-2 text-right font-medium">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {po.items.map((item) => (
+                <ItemRow key={item.id} item={item} currency={po.currency} />
+              ))}
+              <tr className="border-t bg-muted/30 text-sm font-medium">
+                <td className="px-4 py-3" colSpan={5}>
+                  Totals
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {formatCurrency(po.untaxedAmount, po.currency)}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {formatCurrency(po.totalTaxes, po.currency)}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {formatCurrency(po.totalAmount, po.currency)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Batches table */}
       <div className="overflow-hidden rounded-lg border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3">
@@ -652,11 +679,29 @@ export default function PurchaseOrderDetailPage() {
               Procurement batches ({po.batches.length})
             </h2>
           </div>
+          {canCreateBatch && canAddBatch(po.status) && (
+            <Link
+              href={`/admin/purchase-orders/${po.id}/batches/new`}
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              <Plus className="h-3 w-3" /> Add batch
+            </Link>
+          )}
         </div>
         {po.batches.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-            No batches yet. Add a batch from the Procurement page and link it to
-            this PO.
+            No batches yet.{" "}
+            {canCreateBatch && canAddBatch(po.status) && (
+              <>
+                <Link
+                  href={`/admin/purchase-orders/${po.id}/batches/new`}
+                  className="text-primary hover:underline"
+                >
+                  Add the first batch
+                </Link>{" "}
+                to start receiving items.
+              </>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -673,7 +718,12 @@ export default function PurchaseOrderDetailPage() {
               </thead>
               <tbody>
                 {po.batches.map((b) => (
-                  <BatchRow key={b.id} batch={b} currency={po.currency} />
+                  <BatchRow
+                    key={b.id}
+                    batch={b}
+                    poId={po.id}
+                    currency={po.currency}
+                  />
                 ))}
               </tbody>
             </table>
@@ -708,20 +758,64 @@ export default function PurchaseOrderDetailPage() {
   );
 }
 
-// ── Batch row ─────────────────────────────────────────────────────────
+// ── PO line item row ──────────────────────────────────────────────────
+
+function ItemRow({
+  item,
+  currency,
+}: {
+  item: PurchaseOrderItemRow;
+  currency: string;
+}) {
+  return (
+    <tr className={cn("border-b transition-colors last:border-0 hover:bg-muted/30")}>
+      <td className="px-4 py-3">
+        <div className="font-medium">{item.product.name}</div>
+        <div className="text-xs text-muted-foreground">
+          {[item.product.brand, item.product.model, item.product.eanCode]
+            .filter(Boolean)
+            .join(" · ") || item.product.category.name}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-right">{item.qty}</td>
+      <td className="px-4 py-3 text-right">
+        {formatCurrency(item.unitPrice, currency)}
+      </td>
+      <td className="px-4 py-3 text-right text-muted-foreground">
+        {item.discountPercent}%
+      </td>
+      <td className="px-4 py-3 text-right text-muted-foreground">
+        {item.taxPercent}%
+      </td>
+      <td className="px-4 py-3 text-right">
+        {formatCurrency(item.untaxedAmount, currency)}
+      </td>
+      <td className="px-4 py-3 text-right">
+        {formatCurrency(item.taxAmount, currency)}
+      </td>
+      <td className="px-4 py-3 text-right font-medium">
+        {formatCurrency(item.totalAmount, currency)}
+      </td>
+    </tr>
+  );
+}
+
+// ── Batch summary row ─────────────────────────────────────────────────
 
 function BatchRow({
   batch,
+  poId,
   currency,
 }: {
   batch: PurchaseOrderBatchSummary;
+  poId: string;
   currency: string;
 }) {
   return (
     <tr className={cn("border-b transition-colors last:border-0 hover:bg-muted/30")}>
       <td className="px-4 py-3">
         <Link
-          href={`/admin/procurement/${batch.id}`}
+          href={`/admin/purchase-orders/${poId}/batches/${batch.id}`}
           className="font-mono text-sm font-medium text-primary hover:underline"
         >
           {batch.batchNumber}
@@ -741,7 +835,7 @@ function BatchRow({
       </td>
       <td className="px-4 py-3 text-right">{batch.assetCount}</td>
       <td className="px-4 py-3 text-right">
-        {formatTotal(batch.totalAmount, currency)}
+        {formatCurrency(batch.totalAmount, currency)}
       </td>
     </tr>
   );

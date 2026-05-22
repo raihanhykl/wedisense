@@ -652,16 +652,37 @@ export type ProcurementBatchStatus =
   | "COMPLETED"
   | "CANCELLED";
 
+// Phase 17 v2 — vendor is a relation. The list endpoint embeds the
+// nested object so the table renders a name without follow-up queries;
+// the detail endpoint embeds extra contact fields.
+export interface VendorSummary {
+  id: string;
+  name: string;
+}
+
+export interface VendorRow {
+  id: string;
+  name: string;
+  taxId?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  contactPerson?: string | null;
+  isActive?: boolean;
+}
+
 export interface PurchaseOrderListItem {
   id: string;
   poNumber: string;
   name: string | null;
   status: PurchaseOrderStatus;
-  vendor: string;
+  vendor: VendorSummary;
   poDate: string;
   expectedDeliveryDate: string | null;
   currency: string;
-  totalAmount: string | null;
+  // Phase 17 v2 — three computed totals stored denormalised.
+  untaxedAmount: string;
+  totalTaxes: string;
+  totalAmount: string;
   batchCount: number;
   assetCount: number;
   createdByUserId: string;
@@ -669,6 +690,8 @@ export interface PurchaseOrderListItem {
   closedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** _count{items, batches} returned by the API for tree-list rendering. */
+  _count?: { items: number; batches: number };
 }
 
 export interface PurchaseOrderBatchSummary {
@@ -684,9 +707,30 @@ export interface PurchaseOrderBatchSummary {
   createdAt: string;
 }
 
-export interface PurchaseOrderDetail extends PurchaseOrderListItem {
+export interface PurchaseOrderItemRow {
+  id: string;
+  productId: string;
+  qty: number;
+  unitPrice: string;
+  discountPercent: string;
+  taxPercent: string;
+  untaxedAmount: string;
+  taxAmount: string;
+  totalAmount: string;
+  sortOrder: number;
+  notes: string | null;
+  product: {
+    id: string;
+    name: string;
+    brand: string | null;
+    model: string | null;
+    eanCode: string | null;
+    category: { id: string; name: string; code: string };
+  };
+}
+
+export interface PurchaseOrderDetail extends Omit<PurchaseOrderListItem, "vendor"> {
   description: string | null;
-  vendorContact: string | null;
   poUrl: string | null;
   notes: string | null;
   attachments: Array<{
@@ -696,8 +740,17 @@ export interface PurchaseOrderDetail extends PurchaseOrderListItem {
     uploadedAt?: string;
   }> | null;
   customFields: Record<string, unknown> | null;
+  vendor: {
+    id: string;
+    name: string;
+    taxId: string | null;
+    email: string | null;
+    phone: string | null;
+    contactPerson: string | null;
+  };
   createdBy: { id: string; name: string; email: string };
   closedBy: { id: string; name: string; email: string } | null;
+  items: PurchaseOrderItemRow[];
   batches: PurchaseOrderBatchSummary[];
 }
 

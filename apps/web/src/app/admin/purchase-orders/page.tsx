@@ -2,12 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Plus, Search, X } from "lucide-react";
-import { apiGetPaginated } from "@/lib/api";
+import { ChevronDown, ChevronRight, Loader2, Plus, Search, X } from "lucide-react";
+import { apiGet, apiGetPaginated } from "@/lib/api";
 import { usePermission } from "@/hooks/use-permission";
-import { formatIDR } from "@/lib/utils";
-import { PurchaseOrderStatusBadge } from "@/components/shared/procurement-status-badge";
+import { formatCurrency } from "@/lib/utils";
+import {
+  PurchaseOrderStatusBadge,
+  ProcurementBatchStatusBadge,
+} from "@/components/shared/procurement-status-badge";
 import type {
+  ProcurementBatchListItem,
   PurchaseOrderListItem,
   PurchaseOrderStatus,
 } from "@/types/admin";
@@ -42,13 +46,13 @@ const EMPTY_FILTERS: Filters = {
   poDateTo: "",
 };
 
+// ── Helpers ───────────────────────────────────────────────────────────
+
 function buildParams(f: Filters, page: number, limit: number): Record<string, unknown> {
   const params: Record<string, unknown> = { page, limit };
   if (f.search) params.search = f.search;
   if (f.status) params.status = f.status;
   if (f.vendor) params.vendor = f.vendor;
-  // Backend expects ISO-8601 datetimes. The HTML date input emits YYYY-MM-DD;
-  // we promote to start-of-day UTC for `from` and end-of-day UTC for `to`.
   if (f.poDateFrom) params.poDateFrom = `${f.poDateFrom}T00:00:00.000Z`;
   if (f.poDateTo) params.poDateTo = `${f.poDateTo}T23:59:59.999Z`;
   return params;
@@ -67,22 +71,120 @@ function formatDate(iso: string | null): string {
   });
 }
 
-function formatTotal(amount: string | null, currency: string): string {
-  if (!amount) return "—";
-  // Backend serialises Decimal as string; formatIDR handles either.
-  if (currency === "IDR") return formatIDR(amount);
-  // Non-IDR rare today; show with explicit currency prefix.
-  return `${currency} ${new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-  }).format(Number(amount))}`;
+// ── Batch sub-row (lazy-loaded when PO is expanded) ───────────────────
+
+function BatchRow({ batch }: { batch: ProcurementBatchListItem }) {
+  return (
+    <tr className="border-b bg-muted/20 last:border-0">
+      <td className="py-2 pl-10 pr-4">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-mono">{batch.batchNumber}</span>
+          {batch.name && <span>· {batch.name}</span>}
+        </div>
+      </td>
+      <td className="px-4 py-2 text-xs">
+        <ProcurementBatchStatusBadge status={batch.status} />
+      </td>
+      <td className="px-4 py-2 text-xs text-muted-foreground">
+        {batch.bastNumber ?? "—"}
+      </td>
+      <td className="px-4 py-2 text-xs text-muted-foreground">
+        {formatDate(batch.receivedDate)}
+      </td>
+      <td className="px-4 py-2 text-right text-xs">{batch.assetCount}</td>
+      <td className="px-4 py-2 text-right text-xs">—</td>
+      <td className="px-4 py-2 text-right text-xs text-muted-foreground">
+        {formatCurrency(batch.totalAmount, batch.currency)}
+      </td>
+    </tr>
+  );
 }
 
-// ── Skeleton row ──────────────────────────────────────────────────────
+// ── PO row + expansion state ──────────────────────────────────────────
+
+interface PoRowProps {
+  po: PurchaseOrderListItem;
+  expanded: boolean;
+  onToggle: () => void;
+  batches: ProcurementBatchListItem[] | "loading" | null;
+}
+
+function PoRow({ po, expanded, onToggle, batches }: PoRowProps) {
+  const hasBatches = (po._count?.batches ?? po.batchCount) > 0;
+  return (
+    <>
+      <tr className="border-b transition-colors hover:bg-muted/30">
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onToggle}
+              disabled={!hasBatches}
+              className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+              aria-label={expanded ? "Collapse batches" : "Expand batches"}
+            >
+              {expanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+            </button>
+            <Link
+              href={`/admin/purchase-orders/${po.id}`}
+              className="font-mono text-sm font-medium text-primary hover:underline"
+            >
+              {po.poNumber}
+            </Link>
+            {po.name && (
+              <span className="text-xs text-muted-foreground">· {po.name}</span>
+            )}
+          </div>
+        </td>
+        <td className="px-4 py-3">{po.vendor.name}</td>
+        <td className="px-4 py-3 text-muted-foreground">{formatDate(po.poDate)}</td>
+        <td className="px-4 py-3">
+          <PurchaseOrderStatusBadge status={po.status} />
+        </td>
+        <td className="px-4 py-3 text-right">{po.batchCount}</td>
+        <td className="px-4 py-3 text-right">{po.assetCount}</td>
+        <td className="px-4 py-3 text-right font-medium">
+          {formatCurrency(po.totalAmount, po.currency)}
+        </td>
+      </tr>
+
+      {expanded && (
+        <>
+          {batches === "loading" && (
+            <tr className="border-b bg-muted/20">
+              <td colSpan={7} className="py-3 pl-10 pr-4">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading batches…
+                </div>
+              </td>
+            </tr>
+          )}
+          {Array.isArray(batches) && batches.length === 0 && (
+            <tr className="border-b bg-muted/20">
+              <td colSpan={7} className="py-3 pl-10 pr-4 text-xs italic text-muted-foreground">
+                No batches yet.
+              </td>
+            </tr>
+          )}
+          {Array.isArray(batches) &&
+            batches.map((b) => <BatchRow key={b.id} batch={b} />)}
+        </>
+      )}
+    </>
+  );
+}
+
+// ── Skeleton ──────────────────────────────────────────────────────────
 
 function SkeletonRow() {
   return (
     <tr className="animate-pulse border-b">
-      {[28, 32, 16, 20, 12, 12, 20, 16].map((w, i) => (
+      {[28, 32, 16, 20, 12, 12, 20].map((w, i) => (
         <td key={i} className="px-4 py-3">
           <div className="h-3.5 rounded bg-muted" style={{ width: `${w * 4}px` }} />
         </td>
@@ -109,9 +211,13 @@ export default function PurchaseOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Debounce free-text inputs (search, vendor) so we don't fire a request
-  // per keystroke. Status + date inputs commit instantly because they
-  // change once per interaction.
+  // Expansion state: poId → "loading" | batches[] | null (not loaded yet).
+  const [batchesByPo, setBatchesByPo] = useState<
+    Record<string, ProcurementBatchListItem[] | "loading" | null>
+  >({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Debounce free-text inputs.
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [debouncedVendor, setDebouncedVendor] = useState("");
 
@@ -124,8 +230,6 @@ export default function PurchaseOrdersPage() {
     return () => clearTimeout(t);
   }, [filters.vendor]);
 
-  // Reset to page 1 when the filter shape changes — otherwise we'd land
-  // on page N of a result set that may not have N pages anymore.
   useEffect(() => {
     setPage(1);
   }, [
@@ -152,23 +256,51 @@ export default function PurchaseOrdersPage() {
       );
       setRows(data);
       setMeta(nextMeta);
+      // Clear expansion state for POs no longer in view to avoid stale UI.
+      const visibleIds = new Set(data.map((r) => r.id));
+      setExpanded((prev) => {
+        const next = new Set<string>();
+        prev.forEach((id) => visibleIds.has(id) && next.add(id));
+        return next;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load purchase orders");
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, [
-    filters,
-    debouncedSearch,
-    debouncedVendor,
-    page,
-    limit,
-  ]);
+  }, [filters, debouncedSearch, debouncedVendor, page, limit]);
 
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // Lazy-load batches for a PO when it's first expanded. Cached
+  // per-poId so re-expansion is instant.
+  const toggleExpand = useCallback(
+    async (poId: string) => {
+      const isOpen = expanded.has(poId);
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (isOpen) next.delete(poId);
+        else next.add(poId);
+        return next;
+      });
+      if (!isOpen && !batchesByPo[poId]) {
+        setBatchesByPo((prev) => ({ ...prev, [poId]: "loading" }));
+        try {
+          const batches = await apiGet<ProcurementBatchListItem[]>(
+            "/api/procurement-batches",
+            { purchaseOrderId: poId, limit: 100 },
+          );
+          setBatchesByPo((prev) => ({ ...prev, [poId]: batches }));
+        } catch {
+          setBatchesByPo((prev) => ({ ...prev, [poId]: [] }));
+        }
+      }
+    },
+    [expanded, batchesByPo],
+  );
 
   const totalPages = meta.totalPages;
   const showingFrom = useMemo(
@@ -187,7 +319,7 @@ export default function PurchaseOrdersPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Purchase Orders</h1>
           <p className="text-sm text-muted-foreground">
-            Commercial commitments to vendors. Each PO contains one or more
+            Commercial commitments to vendors. Click the chevron to view a PO&apos;s
             procurement batches.
           </p>
         </div>
@@ -223,7 +355,6 @@ export default function PurchaseOrdersPage() {
               />
             </div>
           </div>
-
           <div>
             <label className="block text-xs font-medium text-muted-foreground">
               Status
@@ -245,7 +376,6 @@ export default function PurchaseOrdersPage() {
               ))}
             </select>
           </div>
-
           <div>
             <label className="block text-xs font-medium text-muted-foreground">
               PO date from
@@ -259,7 +389,6 @@ export default function PurchaseOrdersPage() {
               className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm outline-none focus:border-primary"
             />
           </div>
-
           <div>
             <label className="block text-xs font-medium text-muted-foreground">
               PO date to
@@ -274,7 +403,6 @@ export default function PurchaseOrdersPage() {
             />
           </div>
         </div>
-
         {hasActiveFilters(filters) && (
           <div className="mt-3 flex items-center justify-end">
             <button
@@ -288,7 +416,6 @@ export default function PurchaseOrdersPage() {
         )}
       </div>
 
-      {/* Error banner */}
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {error}
@@ -308,7 +435,6 @@ export default function PurchaseOrdersPage() {
                 <th className="px-4 py-2 text-right font-medium">Batches</th>
                 <th className="px-4 py-2 text-right font-medium">Assets</th>
                 <th className="px-4 py-2 text-right font-medium">Total</th>
-                <th className="px-4 py-2 font-medium">Created</th>
               </tr>
             </thead>
             <tbody>
@@ -321,7 +447,7 @@ export default function PurchaseOrdersPage() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={7}
                     className="px-4 py-12 text-center text-sm text-muted-foreground"
                   >
                     {hasActiveFilters(filters)
@@ -331,39 +457,13 @@ export default function PurchaseOrdersPage() {
                 </tr>
               ) : (
                 rows.map((po) => (
-                  <tr
+                  <PoRow
                     key={po.id}
-                    className="border-b transition-colors last:border-0 hover:bg-muted/30"
-                  >
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/admin/purchase-orders/${po.id}`}
-                        className="font-mono text-sm font-medium text-primary hover:underline"
-                      >
-                        {po.poNumber}
-                      </Link>
-                      {po.name && (
-                        <div className="text-xs text-muted-foreground">
-                          {po.name}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">{po.vendor}</td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {formatDate(po.poDate)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <PurchaseOrderStatusBadge status={po.status} />
-                    </td>
-                    <td className="px-4 py-3 text-right">{po.batchCount}</td>
-                    <td className="px-4 py-3 text-right">{po.assetCount}</td>
-                    <td className="px-4 py-3 text-right">
-                      {formatTotal(po.totalAmount, po.currency)}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {formatDate(po.createdAt)}
-                    </td>
-                  </tr>
+                    po={po}
+                    expanded={expanded.has(po.id)}
+                    onToggle={() => void toggleExpand(po.id)}
+                    batches={batchesByPo[po.id] ?? null}
+                  />
                 ))
               )}
             </tbody>
