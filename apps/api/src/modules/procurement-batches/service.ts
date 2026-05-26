@@ -127,6 +127,25 @@ export async function getProcurementBatch(id: string) {
   return batch;
 }
 
+// Returns the full detail shape (with items, assets, purchaseOrder, …)
+// for a batch we KNOW exists because we just mutated it. Distinct from
+// getProcurementBatch in that a missing row here is a 500 server-side
+// invariant violation (we just wrote it), not a user-facing 404. Used
+// at the tail of every mutation endpoint so the response shape matches
+// the frontend's ProcurementBatchDetail type — without this, callers
+// got the bare Prisma row (no relations) and crashed on `.items.length`.
+async function reloadDetailOrFail(id: string) {
+  const fresh = await batchRepo.findById(id);
+  if (!fresh) {
+    throw new AppError(
+      500,
+      'PROCUREMENT_BATCH_RELOAD_FAILED',
+      'Batch could not be reloaded after mutation',
+    );
+  }
+  return fresh;
+}
+
 export async function getBatchAuditTrail(id: string) {
   // Use findFirst — same not-found mapping the detail endpoint uses, so the
   // audit endpoint and detail endpoint surface identical error codes.
@@ -294,7 +313,7 @@ export async function createProcurementBatch(
   input: CreateProcurementBatchInput,
   userId: string,
 ) {
-  return prisma.$transaction(async (tx) => {
+  const newBatchId = await prisma.$transaction(async (tx) => {
     const po = await loadAcceptingPo(input.purchaseOrderId, tx);
 
     const batchNumber = await batchRepo.nextBatchNumber(tx);
@@ -363,8 +382,13 @@ export async function createProcurementBatch(
     await incrementBatchCount(po.id, tx);
     await recomputePurchaseOrderStatus(po.id, tx, userId);
 
-    return created;
+    return created.id;
   });
+
+  // Refetch with relations so the POST response matches the detail
+  // shape the frontend already binds to ProcurementBatchDetail. Without
+  // this the create response is missing items/assets/purchaseOrder.
+  return reloadDetailOrFail(newBatchId);
 }
 
 // ── Update (metadata only — status changes go through dedicated endpoints) ─
@@ -412,7 +436,7 @@ export async function updateProcurementBatch(
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     // Items replacement: validate + recompute total. We don't touch
     // items if the caller didn't pass them.
     let nextTotalAmount: Prisma.Decimal | undefined;
@@ -498,9 +522,9 @@ export async function updateProcurementBatch(
         newValues: updated as unknown as Prisma.InputJsonValue,
       },
     });
-
-    return updated;
   });
+
+  return reloadDetailOrFail(id);
 }
 
 // ── Delete (soft) ───────────────────────────────────────────────────────────
@@ -575,8 +599,8 @@ export async function submitProcurementBatch(id: string, userId: string) {
   // forward as a placeholder for "items are coming via the bulk path".
   // The bulk-import service will increment assetCount as it links assets.
 
-  return prisma.$transaction(async (tx) => {
-    const updated = await batchRepo.update(id, { status: 'ITEMS_PENDING' }, tx);
+  await prisma.$transaction(async (tx) => {
+    await batchRepo.update(id, { status: 'ITEMS_PENDING' }, tx);
     await tx.auditLog.create({
       data: {
         userId,
@@ -588,8 +612,9 @@ export async function submitProcurementBatch(id: string, userId: string) {
       },
     });
     // No PO cascade — ITEMS_PENDING doesn't cross the RECEIVED threshold.
-    return updated;
   });
+
+  return reloadDetailOrFail(id);
 }
 
 // ── Transition: receive (ITEMS_PENDING → RECEIVED) ──────────────────────────
@@ -615,6 +640,26 @@ export async function receiveProcurementBatch(
     );
   }
 
+  // Spec §3 (Phase 17 v2): every physical unit declared in BatchItem
+  // must have a corresponding Asset row before the batch crosses to
+  // RECEIVED. This is the receipt-integrity contract — no "we got 3
+  // monitors but only logged 1 asset" gap. The user adds assets via
+  // the bulk-create flow (POST /api/assets/bulk with procurementBatchId
+  // per row) on a dedicated /add-assets page; here we just gate the
+  // status transition.
+  const expectedAssetCount = (existing.items ?? []).reduce(
+    (sum, it) => sum + (it.qtyReceived ?? 0),
+    0,
+  );
+  const currentAssetCount = (existing.assets ?? []).length;
+  if (expectedAssetCount > 0 && currentAssetCount < expectedAssetCount) {
+    throw new AppError(
+      409,
+      'INSUFFICIENT_ASSETS',
+      `Cannot mark this batch as received until every received unit has an asset record. Expected ${expectedAssetCount} asset(s), found ${currentAssetCount}. Add the remaining ${expectedAssetCount - currentAssetCount} via the Add Assets page first.`,
+    );
+  }
+
   // Signatory: prefer the input's values; fall back to whatever was already
   // on the batch (set via metadata patch). The hybrid rule (≥1 of FK/name)
   // is evaluated against the merged result.
@@ -629,7 +674,7 @@ export async function receiveProcurementBatch(
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const updated = await batchRepo.update(
       id,
       {
@@ -670,9 +715,9 @@ export async function receiveProcurementBatch(
     if (existing.purchaseOrderId) {
       await recomputePurchaseOrderStatus(existing.purchaseOrderId, tx, userId);
     }
-
-    return updated;
   });
+
+  return reloadDetailOrFail(id);
 }
 
 // ── Transition: complete (RECEIVED → COMPLETED) ─────────────────────────────
@@ -697,7 +742,7 @@ export async function completeProcurementBatch(
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const updated = await batchRepo.update(
       id,
       {
@@ -735,8 +780,9 @@ export async function completeProcurementBatch(
     // RECEIVED → COMPLETED stays inside the "received family" for the PO
     // cascade rule, so the parent PO's status is unchanged. We skip the
     // recompute call to avoid a no-op write.
-    return updated;
   });
+
+  return reloadDetailOrFail(id);
 }
 
 // ── Transition: cancel (DRAFT or ITEMS_PENDING → CANCELLED) ─────────────────
@@ -774,12 +820,8 @@ export async function cancelProcurementBatch(
   const cancelStamp = `[Cancelled ${new Date().toISOString()}] ${input.reason}`;
   const nextNotes = existing.notes ? `${existing.notes}\n\n${cancelStamp}` : cancelStamp;
 
-  return prisma.$transaction(async (tx) => {
-    const updated = await batchRepo.update(
-      id,
-      { status: 'CANCELLED', notes: nextNotes },
-      tx,
-    );
+  await prisma.$transaction(async (tx) => {
+    await batchRepo.update(id, { status: 'CANCELLED', notes: nextNotes }, tx);
 
     await tx.auditLog.create({
       data: {
@@ -806,7 +848,7 @@ export async function cancelProcurementBatch(
       // history-friendly view ("PO had 3 batches, 1 cancelled").
       await recomputePurchaseOrderStatus(existing.purchaseOrderId, tx, userId);
     }
-
-    return updated;
   });
+
+  return reloadDetailOrFail(id);
 }

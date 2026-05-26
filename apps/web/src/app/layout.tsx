@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
 import { QueryProvider } from "@/lib/query-provider";
 import TourProvider from "@/components/tour/tour-provider";
+import NavigationProgress from "@/components/shared/navigation-progress";
 import "./globals.css";
 
 const inter = Inter({
@@ -27,6 +29,11 @@ export default function RootLayout({
             shared caching. Toaster lives inside the provider tree so toasts
             triggered by mutation success handlers find their <Toaster /> mount. */}
         <QueryProvider>
+          {/* Suspense boundary required because NavigationProgress reads
+              useSearchParams, which Next.js asks consumers to wrap. */}
+          <Suspense fallback={null}>
+            <NavigationProgress />
+          </Suspense>
           <TourProvider>
             {children}
           </TourProvider>

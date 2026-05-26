@@ -30,6 +30,8 @@ interface ProductPickerProps {
   id?: string;
   name?: string;
   allowCreate?: boolean;
+  /** Pre-fill the search input — see AutocompletePicker docs. */
+  prefilledQuery?: string;
 }
 
 export default function ProductPicker({
@@ -41,6 +43,7 @@ export default function ProductPicker({
   id,
   name,
   allowCreate = true,
+  prefilledQuery,
 }: ProductPickerProps) {
   const searchFn = useCallback(
     (q: string) =>
@@ -82,6 +85,7 @@ export default function ProductPicker({
       id={id}
       name={name}
       emptyMessage="No products match. Type a name and click + to create."
+      {...(prefilledQuery && { prefilledQuery })}
     />
   );
 }

@@ -10,6 +10,7 @@ import {
   Edit3,
   ExternalLink,
   FileText,
+  ListPlus,
   Loader2,
   Package,
   PlayCircle,
@@ -22,6 +23,7 @@ import { getApiErrorMessage } from "@/lib/error";
 import { usePermission } from "@/hooks/use-permission";
 import { cn, formatCurrency } from "@/lib/utils";
 import { ProcurementBatchStatusBadge } from "@/components/shared/procurement-status-badge";
+import Breadcrumb from "@/components/shared/breadcrumb";
 import type {
   BatchItemRow,
   ProcurementBatchDetail,
@@ -667,14 +669,36 @@ export default function BatchDetailPage() {
     );
   }
 
+  // Receipt-integrity gate (spec §3 / Phase 17 v2). Every unit declared
+  // in BatchItem.qtyReceived must have a matching Asset row before the
+  // batch can transition ITEMS_PENDING → RECEIVED. We mirror the
+  // backend's INSUFFICIENT_ASSETS check here to disable the "Mark
+  // Received" button + surface a clear progress hint, instead of
+  // letting the user click and get a 409.
+  const expectedAssetCount = (batch.items ?? []).reduce(
+    (sum, it) => sum + (it.qtyReceived ?? 0),
+    0,
+  );
+  const currentAssetCount = batch.assetCount ?? 0;
+  const assetsRemaining = Math.max(
+    0,
+    expectedAssetCount - currentAssetCount,
+  );
+  const assetsReady =
+    expectedAssetCount === 0 || currentAssetCount >= expectedAssetCount;
+
+  const poRefId = batch.purchaseOrder?.id ?? poId ?? "";
+  const poRefNumber = batch.purchaseOrder?.poNumber ?? "PO";
+
   return (
     <div className="space-y-6 p-6">
-      <Link
-        href={`/admin/purchase-orders/${batch.purchaseOrder?.id ?? poId}`}
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-4 w-4" /> Back to {batch.purchaseOrder?.poNumber ?? "PO"}
-      </Link>
+      <Breadcrumb
+        items={[
+          { label: "Purchase Orders", href: "/admin/purchase-orders" },
+          { label: poRefNumber, href: `/admin/purchase-orders/${poRefId}` },
+          { label: batch.batchNumber },
+        ]}
+      />
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -688,8 +712,42 @@ export default function BatchDetailPage() {
           {batch.name && (
             <p className="mt-1 text-sm text-muted-foreground">{batch.name}</p>
           )}
+          {(batch.status === "DRAFT" || batch.status === "ITEMS_PENDING") &&
+            expectedAssetCount > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Asset entry:{" "}
+                <span
+                  className={cn(
+                    "font-medium",
+                    assetsReady ? "text-emerald-700" : "text-amber-700",
+                  )}
+                >
+                  {currentAssetCount} / {expectedAssetCount}
+                </span>{" "}
+                {assetsRemaining > 0 && (
+                  <span>
+                    — add the remaining {assetsRemaining} before marking
+                    received
+                  </span>
+                )}
+              </p>
+            )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Primary asset-entry path (Phase 17 v2). Visible while the
+              batch is still DRAFT or ITEMS_PENDING AND there's at least
+              one unit still missing. The Excel "Import assets" path
+              below stays available as the bulk alternative. */}
+          {canUpdate &&
+            (batch.status === "DRAFT" || batch.status === "ITEMS_PENDING") &&
+            assetsRemaining > 0 && (
+              <Link
+                href={`/admin/purchase-orders/${batch.purchaseOrder?.id ?? poId}/batches/${batch.id}/add-assets`}
+                className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                <ListPlus className="h-4 w-4" /> Add Assets ({assetsRemaining})
+              </Link>
+            )}
           {canImportAssets && canImport(batch.status) && (
             <Link
               href={`/admin/assets/import?batchId=${batch.id}`}
@@ -727,7 +785,13 @@ export default function BatchDetailPage() {
             <button
               type="button"
               onClick={() => setOpenDialog("receive")}
-              className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700"
+              disabled={!assetsReady}
+              title={
+                assetsReady
+                  ? undefined
+                  : `Add ${assetsRemaining} more asset(s) before marking received`
+              }
+              className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <CheckCircle2 className="h-4 w-4" /> Mark Received
             </button>

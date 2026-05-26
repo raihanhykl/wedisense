@@ -63,6 +63,13 @@ interface AutocompletePickerProps<T> {
   className?: string;
   /** Optional helper for the empty state. */
   emptyMessage?: string;
+  /** Pre-fill the search input with this text and auto-open the
+   *  dropdown — useful after a flow like PDF parsing fills in a name
+   *  that doesn't match the registry. The "Save 'X' as new …" row is
+   *  then one click away, but the user must still click it explicitly
+   *  (no silent auto-create). Only takes effect when nothing is yet
+   *  selected (`value === null`). */
+  prefilledQuery?: string;
 }
 
 export default function AutocompletePicker<T>({
@@ -81,6 +88,7 @@ export default function AutocompletePicker<T>({
   debounceMs = 250,
   className,
   emptyMessage = "No results.",
+  prefilledQuery,
 }: AutocompletePickerProps<T>) {
   // Rendering state.
   const [open, setOpen] = useState(false);
@@ -99,6 +107,21 @@ export default function AutocompletePicker<T>({
     const t = setTimeout(() => setDebouncedQuery(query), debounceMs);
     return () => clearTimeout(t);
   }, [query, debounceMs]);
+
+  // Honor `prefilledQuery` — fires when the parent passes a new value
+  // for it AND nothing is currently selected. After it sets the query
+  // and opens the dropdown, the standard debounce + search pipeline
+  // takes over and the user sees either the matching row or the
+  // "+ Save '…' as new" affordance, which they must click themselves.
+  useEffect(() => {
+    if (prefilledQuery && !value) {
+      setQuery(prefilledQuery);
+      setOpen(true);
+    }
+    // We deliberately key off `prefilledQuery` only — if the user types
+    // over it we don't want to overwrite their input on the next render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefilledQuery]);
 
   // Run the search when the debounced query changes — only while open
   // so we don't burn cycles on a closed picker.

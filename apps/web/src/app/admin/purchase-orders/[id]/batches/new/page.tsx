@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Loader2 } from "lucide-react";
+import Breadcrumb from "@/components/shared/breadcrumb";
 import { apiGet, apiPost } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import { usePermission } from "@/hooks/use-permission";
@@ -84,56 +85,43 @@ export default function NewBatchPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Fetch parent PO + already-received-per-item from sibling batches so
-  // the "remaining" column reflects actual capacity. The sibling-batches
-  // query is a soft lookup — backend will re-validate at submit time.
+  // Fetch parent PO — the response now carries qtyReceived (physically
+  // received in RECEIVED+COMPLETED batches) + qtyInDraftBatches (already
+  // reserved in DRAFT+ITEMS_PENDING) per item, so we can compute real
+  // remaining capacity inline without a second round-trip.
   const fetchPoContext = useCallback(async () => {
     if (!poId) return;
     setPoLoading(true);
     setPoError(null);
     try {
-      const [poDetail, siblingBatches] = await Promise.all([
-        apiGet<PurchaseOrderDetail>(`/api/purchase-orders/${poId}`),
-        // Fetch all batches under this PO (excluding cancelled) so we
-        // can pre-compute remaining qty per PO line. The detail page
-        // already includes batches summary, but it doesn't carry items
-        // — separate /procurement-batches list query joins items.
-        apiGet<ProcurementBatchDetail[]>(`/api/procurement-batches`, {
-          purchaseOrderId: poId,
-          limit: 100,
-        }),
-      ]);
+      const poDetail = await apiGet<PurchaseOrderDetail>(
+        `/api/purchase-orders/${poId}`,
+      );
       setPo(poDetail);
 
-      // Sum qty received per PO line across sibling batches (skip
-      // CANCELLED ones — they were voided). The list endpoint
-      // returns ProcurementBatchListItem which doesn't include items;
-      // for a fully accurate "remaining", we'd need per-batch detail
-      // fetches. For now we just show what the user is doing in this
-      // batch — backend will reject over-receive on submit with a
-      // clear message.
-      // Sidebar: the backend's validateAndPrepareBatchItems already
-      // does the source-of-truth check, so soft client display is OK.
-      const totalReceivedPerItem = new Map<string, number>();
-      void siblingBatches; // silence unused; reserved for richer UI later
-
-      // Build the receipt lines from PO items.
+      // Build the receipt lines from PO items. "alreadyReceived" lumps
+      // physical + draft because both count against the backend's
+      // capacity check (validateAndPrepareBatchItems counts any batch
+      // not in CANCELLED state).
       setLines(
-        poDetail.items.map((it) => ({
-          purchaseOrderItemId: it.id,
-          productName: it.product.name,
-          productSub:
-            [it.product.brand, it.product.model, it.product.eanCode]
-              .filter(Boolean)
-              .join(" · ") || it.product.category.name,
-          poQty: it.qty,
-          alreadyReceived: totalReceivedPerItem.get(it.id) ?? 0,
-          remaining: it.qty - (totalReceivedPerItem.get(it.id) ?? 0),
-          unitPrice: it.unitPrice,
-          discountPercent: it.discountPercent,
-          taxPercent: it.taxPercent,
-          qtyReceived: "0",
-        })),
+        poDetail.items.map((it) => {
+          const allocated = it.qtyReceived + it.qtyInDraftBatches;
+          return {
+            purchaseOrderItemId: it.id,
+            productName: it.product.name,
+            productSub:
+              [it.product.brand, it.product.model, it.product.eanCode]
+                .filter(Boolean)
+                .join(" · ") || it.product.category.name,
+            poQty: it.qty,
+            alreadyReceived: allocated,
+            remaining: Math.max(0, it.qty - allocated),
+            unitPrice: it.unitPrice,
+            discountPercent: it.discountPercent,
+            taxPercent: it.taxPercent,
+            qtyReceived: "0",
+          };
+        }),
       );
     } catch (err) {
       setPoError(getApiErrorMessage(err, "Failed to load purchase order"));
@@ -277,12 +265,13 @@ export default function NewBatchPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <Link
-        href={`/admin/purchase-orders/${po.id}`}
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-4 w-4" /> Back to PO
-      </Link>
+      <Breadcrumb
+        items={[
+          { label: "Purchase Orders", href: "/admin/purchase-orders" },
+          { label: po.poNumber, href: `/admin/purchase-orders/${po.id}` },
+          { label: "New batch" },
+        ]}
+      />
 
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">
@@ -398,10 +387,24 @@ export default function NewBatchPage() {
               {lines.map((line, idx) => {
                 const lineTotal = computeLineTotal(line);
                 const overByLine = Number(line.qtyReceived) > line.remaining;
+                const fullyAllocated = line.remaining === 0;
                 return (
-                  <tr key={line.purchaseOrderItemId} className="border-b last:border-0">
+                  <tr
+                    key={line.purchaseOrderItemId}
+                    className={cn(
+                      "border-b last:border-0",
+                      fullyAllocated && "bg-muted/20 text-muted-foreground",
+                    )}
+                  >
                     <td className="px-3 py-2">
-                      <div className="font-medium">{line.productName}</div>
+                      <div className="font-medium">
+                        {line.productName}
+                        {fullyAllocated && (
+                          <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700">
+                            Fully received
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-muted-foreground">
                         {line.productSub}
                       </div>
@@ -421,9 +424,12 @@ export default function NewBatchPage() {
                         step={1}
                         value={line.qtyReceived}
                         onChange={(e) => updateLine(idx, e.target.value)}
+                        disabled={fullyAllocated}
                         className={cn(
                           "w-24 rounded-md border bg-background px-2 py-1 text-right text-sm outline-none focus:border-primary",
                           overByLine && "border-red-500",
+                          fullyAllocated &&
+                            "cursor-not-allowed bg-muted/40 text-muted-foreground",
                         )}
                       />
                       {overByLine && (

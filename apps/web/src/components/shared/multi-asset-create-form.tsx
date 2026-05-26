@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -10,12 +10,12 @@ import { apiPost } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
 import BarcodeScanner from "@/components/barcode/barcode-scanner";
+import VendorPicker from "@/components/shared/vendor-picker";
+import ProductPicker from "@/components/shared/product-picker";
 import {
-  useProducts,
   useLocations,
   useUsers,
   useAssetCategories,
-  referenceQueryKeys,
   type ProductOption,
 } from "@/hooks/use-reference-data";
 import type { AssetCategoryOption } from "@/types/admin";
@@ -56,13 +56,20 @@ const rowSchema = z.object({
 const multiAssetSchema = z
   .object({
     productId: z.string().min(1, "Product is required"),
+    // Local-only label so the picker can render the selected chip without
+    // re-fetching. Not sent to the backend.
+    productLabel: z.string().optional().default(""),
     locationId: z.string().min(1, "Location is required"),
     assignedToUserId: z.string().optional().default(""),
     status: z.enum(STATUS_OPTIONS),
     condition: z.enum(CONDITION_OPTIONS),
     purchaseDate: z.string().optional().default(""),
     purchasePrice: z.string().optional().default(""),
-    vendor: z.string().optional().default(""),
+    // Phase 17 v2 — vendorId is the FK, vendorLabel is the local-only
+    // display string the picker renders in chip mode. Submitted as
+    // `vendorId` to the backend; vendorLabel is dropped.
+    vendorId: z.string().optional().default(""),
+    vendorLabel: z.string().optional().default(""),
     invoiceNumber: z.string().optional().default(""),
     warrantyStartDate: z.string().optional().default(""),
     warrantyEndDate: z.string().optional().default(""),
@@ -136,11 +143,11 @@ function toNullableString(raw: string): string | null {
 export default function MultiAssetCreateForm({
   onAllCreated,
 }: MultiAssetCreateFormProps) {
-  // The text the user typed; mirrors keystrokes. `debouncedSearch` is the
-  // value actually fed into the products query so we don't fire one request
-  // per keystroke (the previous behaviour generated 6+ requests for "Laptop").
-  const [productSearch, setProductSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  // Phase 17 v2 — ProductPicker owns its own search + autocomplete state.
+  // We no longer need productSearch / debouncedSearch / useProducts here:
+  // the picker fetches /api/products itself, and the controlled value
+  // (productId + productLabel in the form) is all we need to render the
+  // selected chip.
 
   // Form state
   const [submitting, setSubmitting] = useState(false);
@@ -165,23 +172,13 @@ export default function MultiAssetCreateForm({
 
   // Reference data via TanStack Query. Each hook caches independently with
   // the 5-min staleTime configured at the QueryProvider — so navigating
-  // away and back doesn't re-fetch.
+  // away and back doesn't re-fetch. Products are NOT loaded here anymore
+  // (ProductPicker owns that fetch); we still need locations / users /
+  // categories for the dropdowns + new-product dialog.
   const queryClient = useQueryClient();
-  const { data: products = [] } = useProducts(debouncedSearch);
   const { data: locations = [] } = useLocations();
   const { data: users = [] } = useUsers();
   const { data: categories = [] } = useAssetCategories();
-
-  // 300ms debounce between the visible input and the query key — matches the
-  // asset-list pattern. Without this, every keystroke creates a new
-  // queryKey, blowing past the staleTime cache entirely.
-  useEffect(() => {
-    if (productSearch === debouncedSearch) return;
-    const handle = window.setTimeout(() => {
-      setDebouncedSearch(productSearch);
-    }, 300);
-    return () => window.clearTimeout(handle);
-  }, [productSearch, debouncedSearch]);
 
   const {
     control,
@@ -196,13 +193,15 @@ export default function MultiAssetCreateForm({
     resolver: zodResolver(multiAssetSchema),
     defaultValues: {
       productId: "",
+      productLabel: "",
       locationId: "",
       assignedToUserId: "",
       status: "ACTIVE",
       condition: "NEW",
       purchaseDate: "",
       purchasePrice: "",
-      vendor: "",
+      vendorId: "",
+      vendorLabel: "",
       invoiceNumber: "",
       warrantyStartDate: "",
       warrantyEndDate: "",
@@ -218,52 +217,24 @@ export default function MultiAssetCreateForm({
   });
 
   const selectedProductId = watch("productId");
-  // Live derivation from the current products fetch — used to render the
-  // selected-product label and to drive the auto-fill effect below.
-  const selectedProduct = useMemo(
-    () => products.find((p) => p.id === selectedProductId) ?? null,
-    [products, selectedProductId],
-  );
-
-  // Sticky cache of the most recently selected product. Necessary because
-  // `selectedProduct` above goes null whenever the products query refetches
-  // with a search that doesn't match the picked item — which happens right
-  // after picking (the productSearch effect below sets the search to
-  // "Name (Brand)" and the backend's partial-match may exclude it).
-  // The cache survives those refetches so `handleAddRow` and any other
-  // downstream consumer can still read the picked product's name.
-  const [pickedProduct, setPickedProduct] = useState<ProductOption | null>(null);
+  const selectedProductLabel = watch("productLabel");
 
   // ── Auto-suffix Name when product changes ─────────────────────────
-  // We only fill empty rows so we never overwrite user-typed names.
+  // Only fills empty rows so user-typed names are never overwritten. The
+  // label written by ProductPicker (or by lookupAndApplyEan / handleCreate)
+  // is the source of truth — no separate product-by-id fetch needed.
   useEffect(() => {
-    if (!selectedProduct) return;
-    // Promote the live selection into the sticky cache. Once stored, it
-    // outlives transient `selectedProduct === null` windows during refetch.
-    setPickedProduct(selectedProduct);
+    if (!selectedProductLabel) return;
     const rows = getValues("rows");
     rows.forEach((row, i) => {
       if (!row.name.trim()) {
-        setValue(`rows.${i}.name`, `${selectedProduct.name} - Unit ${i + 1}`, {
+        setValue(`rows.${i}.name`, `${selectedProductLabel} - Unit ${i + 1}`, {
           shouldDirty: true,
         });
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProduct?.id]);
-
-  // ── Reflect the selected product in the search input ──────────────
-  // Without this, the input keeps showing whatever the user last typed (or
-  // the empty placeholder) even after they pick a product from the listbox —
-  // confusing because the field looks unselected.
-  useEffect(() => {
-    if (selectedProduct) {
-      const label = selectedProduct.brand
-        ? `${selectedProduct.name} (${selectedProduct.brand})`
-        : selectedProduct.name;
-      setProductSearch(label);
-    }
-  }, [selectedProduct]);
+  }, [selectedProductId]);
 
   // ── Unsaved-changes guard ─────────────────────────────────────────
   useEffect(() => {
@@ -294,10 +265,9 @@ export default function MultiAssetCreateForm({
       );
       return;
     }
-    // Prefer the live selection but fall back to the sticky cache so a
-    // newly-appended row still gets "<Product> - Unit N" even when the
-    // products query is mid-refetch and `selectedProduct` is null.
-    const productName = selectedProduct?.name ?? pickedProduct?.name ?? "";
+    // Use the form's productLabel (written by ProductPicker on selection,
+    // or by the EAN-lookup / create-new flows below) as the suffix source.
+    const productName = selectedProductLabel || "";
     const nextIndex = fields.length; // before append, index will equal current length
     append({
       name: productName ? `${productName} - Unit ${nextIndex + 1}` : "",
@@ -332,18 +302,12 @@ export default function MultiAssetCreateForm({
           { ean },
         );
         if (result.product) {
-          // (a) Existing internal product — select directly. Seed the cache
-          // entry for the empty-search key so the product is in the listbox
-          // even if the user hasn't typed anything matching.
+          // (a) Existing internal product — select directly. ProductPicker
+          // is controlled by productId + productLabel, so writing both
+          // immediately renders the selected chip with the correct name.
           const matched = result.product;
-          queryClient.setQueryData<ProductOption[]>(
-            referenceQueryKeys.products(""),
-            (prev) =>
-              prev?.some((p) => p.id === matched.id)
-                ? prev
-                : [matched, ...(prev ?? [])],
-          );
           setValue("productId", matched.id, { shouldDirty: true });
+          setValue("productLabel", matched.name, { shouldDirty: true });
           toast.success(`Product matched: ${matched.name}`);
         } else if (result.lookup) {
           // (b) Upstream EAN data only — open the create dialog prefilled.
@@ -437,21 +401,12 @@ export default function MultiAssetCreateForm({
         if (input.eanCode.trim()) payload['eanCode'] = input.eanCode.trim();
 
         const created = await apiPost<ProductOption>("/api/products", payload);
-        // Optimistically prepend to every cached search variant. Without
-        // this, the listbox would not show the new product until the user
-        // re-types into the search field (which would key a different
-        // cache entry).
-        queryClient.setQueriesData<ProductOption[]>(
-          { queryKey: ["ref", "products"] },
-          (prev) =>
-            prev && !prev.some((p) => p.id === created.id)
-              ? [created, ...prev]
-              : prev,
-        );
-        // Also invalidate so any background refresh aligns with the server
-        // truth (catches the case where two users add products simultaneously).
+        // Invalidate the products cache so any other consumer that still
+        // uses the reference-data hook (e.g. other forms in the same
+        // session) picks up the new product on next render.
         void queryClient.invalidateQueries({ queryKey: ["ref", "products"] });
         setValue("productId", created.id, { shouldDirty: true });
+        setValue("productLabel", created.name, { shouldDirty: true });
         toast.success(`Product created: ${created.name}`);
         setNewProductDialog((s) => ({ ...s, open: false }));
         return true;
@@ -477,7 +432,10 @@ export default function MultiAssetCreateForm({
         assignedToUserId: toNullableString(data.assignedToUserId),
         purchaseDate: data.purchaseDate === "" ? null : data.purchaseDate,
         purchasePrice: toNullableNumber(data.purchasePrice),
-        vendor: toNullableString(data.vendor),
+        // Phase 17 v2 — vendorId is the canonical write path. The
+        // legacy free-text `vendor` field is no longer populated by
+        // this form (read-only fallback for older assets only).
+        vendorId: toNullableString(data.vendorId),
         invoiceNumber: toNullableString(data.invoiceNumber),
         warrantyStartDate: data.warrantyStartDate === "" ? null : data.warrantyStartDate,
         warrantyEndDate: data.warrantyEndDate === "" ? null : data.warrantyEndDate,
@@ -533,23 +491,47 @@ export default function MultiAssetCreateForm({
         <fieldset className="rounded-lg border bg-card p-5">
           <legend className="px-2 text-lg font-semibold">Basic Info</legend>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            {/* Product picker — text search + listbox + EAN scan + manual create.
-                Search input doubles as: (1) the filter that re-fetches the
-                listbox below, and (2) a friendly label of the currently
-                selected product (kept in sync via the effect above). */}
+            {/* Phase 17 v2 — Product picker matches the PO form's UX:
+                ProductPicker (autocomplete + inline "+ Save as new" row).
+                The "Scan EAN" button stays alongside for the camera-scan
+                path — when an EAN matches an external catalog but isn't
+                yet internal, the advanced new-product dialog auto-opens
+                with brand/model/EAN prefilled so the user just picks a
+                category. */}
             <div className="sm:col-span-2">
-              <label htmlFor="productSearch" className={labelClass}>
+              <label htmlFor="productId" className={labelClass}>
                 Product <span className="text-destructive">*</span>
               </label>
               <div className="flex flex-wrap gap-2">
-                <input
-                  id="productSearch"
-                  type="text"
-                  placeholder="Search products..."
-                  value={productSearch}
-                  onChange={(e) => setProductSearch(e.target.value)}
-                  className={`${fieldClass} flex-1`}
-                />
+                <div className="flex-1">
+                  <Controller
+                    name="productId"
+                    control={control}
+                    render={({ field }) => (
+                      <Controller
+                        name="productLabel"
+                        control={control}
+                        render={({ field: labelField }) => (
+                          <ProductPicker
+                            value={
+                              field.value
+                                ? {
+                                    id: field.value,
+                                    label: labelField.value || "",
+                                  }
+                                : null
+                            }
+                            onChange={(next) => {
+                              field.onChange(next?.id ?? "");
+                              labelField.onChange(next?.label ?? "");
+                            }}
+                            invalid={!!errors.productId}
+                          />
+                        )}
+                      />
+                    )}
+                  />
+                </div>
                 <button
                   type="button"
                   onClick={() => setScannerTarget({ kind: "product" })}
@@ -559,61 +541,7 @@ export default function MultiAssetCreateForm({
                 >
                   Scan EAN
                 </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setNewProductDialog({
-                      open: true,
-                      initial: {
-                        name: productSearch.trim(),
-                        brand: "",
-                        model: "",
-                        eanCode: "",
-                      },
-                    })
-                  }
-                  className="shrink-0 rounded-md border border-primary px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10"
-                  title="Create a new product"
-                  data-tour="new-product-btn"
-                >
-                  + New product
-                </button>
               </div>
-              <select
-                {...register("productId")}
-                className={`${fieldClass} mt-2`}
-                size={4}
-              >
-                <option value="">-- Select a product --</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {p.brand ? ` (${p.brand})` : ""}
-                  </option>
-                ))}
-              </select>
-              {products.length === 0 && productSearch.trim() && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  No products match &ldquo;{productSearch}&rdquo;.{" "}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setNewProductDialog({
-                        open: true,
-                        initial: {
-                          name: productSearch.trim(),
-                          brand: "",
-                          model: "",
-                          eanCode: "",
-                        },
-                      })
-                    }
-                    className="text-primary hover:underline"
-                  >
-                    Create &ldquo;{productSearch}&rdquo; as a new product
-                  </button>
-                </p>
-              )}
               {errors.productId && (
                 <p className={errorClass}>{errors.productId.message}</p>
               )}
@@ -723,10 +651,37 @@ export default function MultiAssetCreateForm({
               />
             </div>
             <div>
-              <label htmlFor="vendor" className={labelClass}>
+              <label htmlFor="vendorId" className={labelClass}>
                 Vendor
               </label>
-              <input id="vendor" {...register("vendor")} className={fieldClass} />
+              {/* Phase 17 v2 — vendor is now an FK to the Vendor table.
+                  VendorPicker matches the PO form's behaviour: autocomplete
+                  with an inline "+ Save '…' as new vendor" row when no
+                  match is found. The legacy `vendor` text field is no
+                  longer written from this form. */}
+              <Controller
+                name="vendorId"
+                control={control}
+                render={({ field }) => (
+                  <Controller
+                    name="vendorLabel"
+                    control={control}
+                    render={({ field: labelField }) => (
+                      <VendorPicker
+                        value={
+                          field.value
+                            ? { id: field.value, label: labelField.value || "" }
+                            : null
+                        }
+                        onChange={(next) => {
+                          field.onChange(next?.id ?? "");
+                          labelField.onChange(next?.label ?? "");
+                        }}
+                      />
+                    )}
+                  />
+                )}
+              />
             </div>
             <div>
               <label htmlFor="invoiceNumber" className={labelClass}>

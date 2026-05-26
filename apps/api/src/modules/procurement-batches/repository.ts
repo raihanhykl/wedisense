@@ -167,6 +167,10 @@ export async function findById(id: string) {
           condition: true,
           locationId: true,
           assignedToUserId: true,
+          // productId is required by the /add-assets page so it can
+          // tally how many units per product are still missing without
+          // a separate query per asset.
+          productId: true,
           createdAt: true,
         },
         orderBy: { createdAt: 'asc' },
