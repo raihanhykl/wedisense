@@ -1,0 +1,81 @@
+{
+  "page": {
+    "title": "Roles & Permissions",
+    "subtitle": "Define role-based access to features across the system",
+    "addButton": "Add Role",
+    "emptyState": "No roles found.",
+    "loading": "Loading roles…"
+  },
+  "table": {
+    "name": "Name",
+    "description": "Description",
+    "type": "Type",
+    "users": "Users",
+    "permissions": "Permissions",
+    "actions": "Actions",
+    "system": "System",
+    "custom": "Custom"
+  },
+  "actions": {
+    "viewPermissions": "View permissions",
+    "editPermissions": "Permissions",
+    "clone": "Clone",
+    "delete": "Delete",
+    "deleteConfirm": "Delete role \"{name}\"? This cannot be undone. The role can only be deleted if no users are assigned to it."
+  },
+  "create": {
+    "title": "Add Role",
+    "name": "Name",
+    "description": "Description",
+    "submit": "Create",
+    "submitting": "Creating…",
+    "cancel": "Cancel"
+  },
+  "editor": {
+    "title": "Permissions for {name}",
+    "loading": "Loading permissions…",
+    "save": "Save Permissions",
+    "saving": "Saving…",
+    "close": "Close",
+    "cancel": "Cancel",
+    "readOnlyBanner": "System role permissions are read-only. To customise, create a custom role and copy the permissions you need.",
+    "search": "Search permissions…",
+    "sectionGrantAll": "Grant all",
+    "sectionRevokeAll": "Revoke all",
+    "pendingChanges": "{count} pending change | {count} pending changes",
+    "diffTitle": "Review changes",
+    "diffAdding": "Adding",
+    "diffRemoving": "Removing",
+    "diffAffectedUsers": "{count} user affected | {count} users affected",
+    "confirmSave": "Confirm save"
+  },
+  "errors": {
+    "loadRoles": "Failed to load roles",
+    "loadPermissions": "Failed to load permissions",
+    "createRole": "Failed to create role",
+    "savePermissions": "Failed to save permissions",
+    "deleteRole": "Failed to delete role",
+    "systemProtected": "System roles cannot be modified",
+    "lastAdminLockout": "This change would leave the system with no admin who can manage roles."
+  },
+  "success": {
+    "roleCreated": "Role \"{name}\" created",
+    "roleDeleted": "Role \"{name}\" deleted",
+    "permissionsSaved": "Permissions saved for \"{name}\""
+  },
+  "resources": {
+    "assets": "Assets",
+    "movements": "Movements",
+    "maintenance": "Maintenance",
+    "reports": "Reports",
+    "users": "Users",
+    "roles": "Roles",
+    "audit": "Audit",
+    "labels": "Labels",
+    "tours": "Tours",
+    "categories": "Categories",
+    "purchase-orders": "Purchase Orders",
+    "procurement": "Procurement",
+    "vendors": "Vendors"
+  }
+}

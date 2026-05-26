@@ -8,10 +8,17 @@ type PrismaTransactionClient = Omit<
 >;
 
 export async function findMany() {
+  // Both counts surfaced — the list view shows users-assigned alongside
+  // permission-count so admins can decide which roles need attention
+  // ("MANAGER has 12 users + 14 permissions"). Earlier versions only
+  // included `userRoles` and the frontend mis-labelled it as
+  // "Permissions"; fixing this is the audit-flagged display bug.
   return prisma.role.findMany({
     orderBy: { name: 'asc' },
     include: {
-      _count: { select: { userRoles: true } },
+      _count: {
+        select: { userRoles: true, rolePermissions: true },
+      },
     },
   });
 }

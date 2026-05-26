@@ -72,6 +72,15 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
   { method: 'PUT', path: '/api/users/:id', module: 'users', decision: audited('users') },
   { method: 'DELETE', path: '/api/users/:id', module: 'users', decision: audited('users') },
   { method: 'PUT', path: '/api/users/:id/roles', module: 'users', decision: audited('users') },
+  // Phase 17 v2 — admin-driven password reset. Audits an UPDATE row on
+  // resource_type=User with newValues={ passwordReset: true } (the hash
+  // itself is never logged). See users/service.ts → resetUserPassword.
+  {
+    method: 'POST',
+    path: '/api/users/:id/reset-password',
+    module: 'users',
+    decision: audited('users'),
+  },
 
   // ── roles ───────────────────────────────────────────────────────────────────
   { method: 'POST', path: '/api/roles', module: 'roles', decision: audited('roles') },
@@ -109,6 +118,13 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     path: '/api/locations/:id/reactivate',
     module: 'locations',
     decision: audited('locations'),
+  },
+  // ── roles ──
+  {
+    method: 'POST',
+    path: '/api/roles/:id/clone',
+    module: 'roles',
+    decision: audited('roles'),
   },
   {
     method: 'POST',

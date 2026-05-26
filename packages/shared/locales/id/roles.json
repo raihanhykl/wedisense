@@ -1,0 +1,81 @@
+{
+  "page": {
+    "title": "Peran & Izin",
+    "subtitle": "Atur akses fitur sistem berdasarkan peran",
+    "addButton": "Tambah Peran",
+    "emptyState": "Belum ada peran.",
+    "loading": "Memuat peran…"
+  },
+  "table": {
+    "name": "Nama",
+    "description": "Deskripsi",
+    "type": "Tipe",
+    "users": "Pengguna",
+    "permissions": "Izin",
+    "actions": "Aksi",
+    "system": "Sistem",
+    "custom": "Kustom"
+  },
+  "actions": {
+    "viewPermissions": "Lihat izin",
+    "editPermissions": "Izin",
+    "clone": "Duplikat",
+    "delete": "Hapus",
+    "deleteConfirm": "Hapus peran \"{name}\"? Tindakan ini tidak bisa dibatalkan. Peran hanya bisa dihapus jika belum ditugaskan ke pengguna."
+  },
+  "create": {
+    "title": "Tambah Peran",
+    "name": "Nama",
+    "description": "Deskripsi",
+    "submit": "Buat",
+    "submitting": "Membuat…",
+    "cancel": "Batal"
+  },
+  "editor": {
+    "title": "Izin untuk {name}",
+    "loading": "Memuat izin…",
+    "save": "Simpan Izin",
+    "saving": "Menyimpan…",
+    "close": "Tutup",
+    "cancel": "Batal",
+    "readOnlyBanner": "Izin peran sistem bersifat hanya-baca. Untuk menyesuaikan, buat peran kustom dan salin izin yang dibutuhkan.",
+    "search": "Cari izin…",
+    "sectionGrantAll": "Beri semua",
+    "sectionRevokeAll": "Cabut semua",
+    "pendingChanges": "{count} perubahan tertunda",
+    "diffTitle": "Tinjau perubahan",
+    "diffAdding": "Menambah",
+    "diffRemoving": "Menghapus",
+    "diffAffectedUsers": "{count} pengguna terdampak",
+    "confirmSave": "Konfirmasi simpan"
+  },
+  "errors": {
+    "loadRoles": "Gagal memuat daftar peran",
+    "loadPermissions": "Gagal memuat izin",
+    "createRole": "Gagal membuat peran",
+    "savePermissions": "Gagal menyimpan izin",
+    "deleteRole": "Gagal menghapus peran",
+    "systemProtected": "Peran sistem tidak bisa diubah",
+    "lastAdminLockout": "Perubahan ini akan menyebabkan sistem tidak punya admin yang bisa mengelola peran."
+  },
+  "success": {
+    "roleCreated": "Peran \"{name}\" dibuat",
+    "roleDeleted": "Peran \"{name}\" dihapus",
+    "permissionsSaved": "Izin disimpan untuk \"{name}\""
+  },
+  "resources": {
+    "assets": "Aset",
+    "movements": "Mutasi",
+    "maintenance": "Perawatan",
+    "reports": "Laporan",
+    "users": "Pengguna",
+    "roles": "Peran",
+    "audit": "Audit",
+    "labels": "Label",
+    "tours": "Tur",
+    "categories": "Kategori",
+    "purchase-orders": "Pesanan Pembelian",
+    "procurement": "Pengadaan",
+    "vendors": "Vendor"
+  }
+}

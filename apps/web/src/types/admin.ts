@@ -97,12 +97,40 @@ export interface UserFormData {
   status: string;
 }
 
+// ── Vendors (Phase 17 v2) ────────────────────────────────────────────
+// Backend select shape lives in apps/api/src/modules/vendors/repository.ts
+// (vendorListSelect). Keep these in lockstep.
+
+export interface VendorListItem {
+  id: string;
+  name: string;
+  taxId: string | null;
+  email: string | null;
+  phone: string | null;
+  contactPerson: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Aggregate count from Prisma _count.purchaseOrders. Lets the list
+   *  page show "12 POs" inline and decide whether delete is allowed
+   *  (deletion is rejected when > 0). */
+  _count: { purchaseOrders: number };
+}
+
+export interface VendorDetail extends VendorListItem {
+  address: string | null;
+  notes: string | null;
+}
+
 // ── Role & Permission types ──────────────────────────────────────────
 export interface Role {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   isSystem: boolean;
+  /** Users currently assigned this role (across all location scopes). */
+  userCount: number;
+  /** Permissions granted on this role. */
   permissionCount: number;
 }
 
@@ -134,6 +162,18 @@ export interface AssetListItem {
   } | null;
   location: { id: string; name: string; code: string };
   assignedTo: { id: string; name: string; email: string } | null;
+  /** Procurement provenance summary — null for assets not created via
+   *  a procurement batch. The PO summary is included inline so the list
+   *  page can render a clickable PO column without a follow-up fetch. */
+  procurementBatch: {
+    id: string;
+    batchNumber: string;
+    purchaseOrder: { id: string; poNumber: string };
+  } | null;
+  /** Linked Vendor (Phase 17 v2). Null for assets created before the
+   *  migration that haven't been backfilled, or for assets without a
+   *  vendor set. UI should fall back to `vendorLegacy` in that case. */
+  vendor: { id: string; name: string } | null;
 }
 
 export interface AssetCategoryOption {
@@ -202,7 +242,10 @@ export interface AssetDetail extends AssetListItem {
   barcodeType: string;
   barcodeImageUrl: string | null;
   currency: string;
-  vendor: string | null;
+  /** Legacy free-text vendor field. Use `vendor` (relation, from
+   *  AssetListItem) first; only fall back to this when null. Will be
+   *  removed in a follow-up migration once all rows have vendorId. */
+  vendorLegacy: string | null;
   invoiceNumber: string | null;
   warrantyStartDate: string | null;
   usefulLifeMonths: number | null;
@@ -211,6 +254,30 @@ export interface AssetDetail extends AssetListItem {
   createdBy: { id: string; name: string } | null;
   createdAt: string;
   updatedAt: string;
+  /** Procurement provenance — populated when the asset was created
+   *  via a procurement batch. The batch's purchaseOrder is included
+   *  inline so the detail page can render both links without a
+   *  follow-up fetch. Null for legacy assets added manually before
+   *  the procurement module existed. */
+  procurementBatch: {
+    id: string;
+    batchNumber: string;
+    status:
+      | 'DRAFT'
+      | 'ITEMS_PENDING'
+      | 'RECEIVED'
+      | 'COMPLETED'
+      | 'CANCELLED';
+    bastNumber: string | null;
+    receivedDate: string | null;
+    purchaseOrder: {
+      id: string;
+      poNumber: string;
+      poDate: string;
+      status: PurchaseOrderStatus;
+      vendor: { id: string; name: string };
+    };
+  } | null;
 }
 
 export interface AssetFormData {
@@ -727,6 +794,13 @@ export interface PurchaseOrderItemRow {
     eanCode: string | null;
     category: { id: string; name: string; code: string };
   };
+  /** Units already received across RECEIVED + COMPLETED batches.
+   *  Surfaced by getPurchaseOrder service so the detail page can show
+   *  a progress indicator without an extra round-trip. */
+  qtyReceived: number;
+  /** Units reserved in DRAFT + ITEMS_PENDING batches. Combined with
+   *  qtyReceived to compute remaining capacity for a new batch row. */
+  qtyInDraftBatches: number;
 }
 
 export interface PurchaseOrderDetail extends Omit<PurchaseOrderListItem, "vendor"> {
@@ -793,6 +867,7 @@ export interface ProcurementBatchAssetEntry {
   condition: 'NEW' | 'GOOD' | 'FAIR' | 'POOR' | 'DAMAGED';
   locationId: string;
   assignedToUserId: string | null;
+  productId: string;
   createdAt: string;
 }
 

@@ -98,8 +98,12 @@ export async function apiPost<T>(
 export async function apiPut<T>(
   url: string,
   data?: unknown,
+  /** Custom request headers — used by safety-guard flows that need to
+   *  attach a sentinel header (e.g. x-self-demote-confirm). Auth header
+   *  is still injected by the interceptor; this merges on top. */
+  headers?: Record<string, string>,
 ): Promise<T> {
-  const res = await api.put<ApiEnvelope<T>>(url, data);
+  const res = await api.put<ApiEnvelope<T>>(url, data, headers ? { headers } : undefined);
   return res.data.data;
 }
 
