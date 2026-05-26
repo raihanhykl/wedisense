@@ -24,13 +24,32 @@ import type { ParsedOdooPo } from './odoo-pdf-parser.js';
 
 // ── Fallback chain (May 2026 model slugs) ──────────────────────────────────
 //
-// Quality-first ordering per user preference. The first model to
-// succeed wins; if all fail, OpenRouter surfaces the last error in
-// standard OpenAI APIError shape.
+// Free-tier chain — all three slugs verified live against
+// https://openrouter.ai/api/v1/models and confirmed to support
+// `response_format` + `structured_outputs`. Quality-first ordering:
+// Gemma 31B dense first (best instruction following on multilingual
+// ID/EN text), Gemma 26B MoE next (faster, similar quality), then
+// Baidu Cobuddy as last-resort.
+//
+// ── To switch to PAID models ─────────────────────────────────────────────
+// 1. Top up your OpenRouter account at https://openrouter.ai (min $5).
+// 2. Replace the slugs below — quality-first paid chain:
+//      'anthropic/claude-haiku-4.5'   // best procurement accuracy
+//      'openai/gpt-4o-mini'           // ~10× cheaper, similar quality
+//      'google/gemini-2.5-flash'      // ultra-cheap last resort
+// 3. (Optional but recommended) switch the request body in
+//    `parsePdfWithAi` from `response_format: { type: 'json_object' }`
+//    back to strict json_schema mode for better field-level reliability:
+//      response_format: { type: 'json_schema', json_schema: PARSED_PO_SCHEMA }
+//    Paid endpoints support strict mode; drop the SCHEMA_HINT
+//    concatenation in the system prompt since the schema is now
+//    enforced server-side.
+// 4. No restart needed beyond redeploy of the API process — the OpenAI
+//    client is lazy-init and picks up the new chain on the next call.
 const FALLBACK_CHAIN = [
-  'anthropic/claude-haiku-4.5',   // primary: best accuracy for procurement
-  'openai/gpt-4o-mini',            // fallback 1: ~10× cheaper, similar quality
-  'google/gemini-2.5-flash',       // fallback 2: ultra-cheap, current Google fast tier
+  'google/gemma-4-31b-it:free', // primary: 262K ctx, multilingual, strong struct output
+  'google/gemma-4-26b-a4b-it:free', // fallback 1: MoE sibling, faster
+  'baidu/cobuddy:free', // fallback 2: 131K ctx, last-resort
 ] as const;
 
 // ── JSON Schema for structured output ──────────────────────────────────────
@@ -53,7 +72,7 @@ const PARSED_PO_SCHEMA = {
     properties: {
       poNumber: {
         type: ['string', 'null'],
-        description: 'PO identifier, e.g. PO/2026/04/00057 or SP-2026-0001',
+        description: 'PO identifier, e.g. PO/2026/04/00057',
       },
       vendor: {
         type: ['string', 'null'],
@@ -96,14 +115,7 @@ const PARSED_PO_SCHEMA = {
             },
             amount: { type: ['number', 'null'] },
           },
-          required: [
-            'description',
-            'qty',
-            'unitPrice',
-            'discountPercent',
-            'taxPercent',
-            'amount',
-          ],
+          required: ['description', 'qty', 'unitPrice', 'discountPercent', 'taxPercent', 'amount'],
         },
       },
       untaxedAmount: { type: ['number', 'null'] },
@@ -146,6 +158,14 @@ Rules:
 - Set fields you can't confidently extract to null AND list their key in unparsedFields.
 - Never invent values. If unclear, prefer null + flag in unparsedFields.`;
 
+// Inline schema description for `json_object` mode (free-tier providers
+// don't all support strict json_schema — see parsePdfWithAi for why).
+// We embed the exact shape as plain text in the system prompt so the
+// model still knows which keys to emit. Generated from PARSED_PO_SCHEMA
+// at module load so the two stay in lockstep.
+const SCHEMA_HINT = `Return ONLY a single JSON object — no markdown fences, no commentary — matching exactly this shape:
+${JSON.stringify(PARSED_PO_SCHEMA.schema, null, 2)}`;
+
 // ── Client (lazy-init so the module loads cleanly without API key) ────────
 
 let _client: OpenAI | null = null;
@@ -154,9 +174,7 @@ function getClient(): OpenAI {
   if (_client) return _client;
   const apiKey = process.env['OPENROUTER_API_KEY'];
   if (!apiKey) {
-    throw new Error(
-      'OPENROUTER_API_KEY is not set. Add it to apps/api/.env or use mode=regex.',
-    );
+    throw new Error('OPENROUTER_API_KEY is not set. Add it to apps/api/.env or use mode=regex.');
   }
   _client = new OpenAI({
     apiKey,
@@ -196,55 +214,83 @@ export async function parsePdfWithAi(buffer: Buffer): Promise<AiParsedOdooPo> {
   const text = await extractText(buffer);
   const client = getClient();
 
-  // OpenRouter accepts the standard OpenAI body shape plus a few
-  // extensions: `models` (auto-fallback chain) and `provider`
-  // (provider routing rules). The OpenAI Node SDK's TypeScript types
-  // are strict about unknown fields, so we build the body object as
-  // a typed base + an extension intersection, then assert through.
-  // The fields are passed verbatim to the OpenRouter endpoint — there
-  // is no runtime stripping done by the SDK.
-  const body: ChatCompletionCreateParamsNonStreaming & {
-    models: readonly string[];
-    provider: { require_parameters: boolean };
-  } = {
-    model: FALLBACK_CHAIN[0],
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: text },
-    ],
-    response_format: {
-      type: 'json_schema',
-      json_schema: PARSED_PO_SCHEMA,
-    },
-    temperature: 0,
-    models: FALLBACK_CHAIN,
-    provider: { require_parameters: true },
-  };
+  // Why `json_object` (not `json_schema` strict mode):
+  //
+  // The free-tier endpoints serving our fallback chain are hosted by
+  // third-party providers (Chutes, Targon, …) that don't all implement
+  // strict json_schema validation, even though the base model advertises
+  // `structured_outputs: true` in the OpenRouter registry. Combining
+  // strict mode with `provider.require_parameters: true` returns
+  // `404 No endpoints found that can handle the requested parameters`.
+  //
+  // The pragmatic fix: ask for `json_object` (universally supported),
+  // describe the exact schema in the system prompt, and JSON.parse +
+  // validate-light on the response. Paid endpoints (claude-haiku-4.5,
+  // gpt-4o-mini) DO support strict mode — swap back to `json_schema`
+  // when migrating the fallback chain to those.
+  //
+  // Why we iterate FALLBACK_CHAIN manually (no `models[]` extension):
+  //
+  // OpenRouter's auto-fallback via the `models[]` array only triggers
+  // on 5xx and certain 4xx errors — NOT on 429 rate limits, which are
+  // exactly what bites on free tier. So we drive the fallback ourselves:
+  // try model[i], on 429 (or any error) try model[i+1], and surface
+  // the last error if everything fails.
+  //
+  // `provider.sort: 'throughput'` asks OpenRouter to route each model
+  // to its least-congested provider — reduces the chance of hitting
+  // 429 for a model whose primary host is currently swamped.
+  let lastError: unknown;
+  for (const model of FALLBACK_CHAIN) {
+    const body: ChatCompletionCreateParamsNonStreaming & {
+      provider: { sort: string };
+    } = {
+      model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + SCHEMA_HINT },
+        { role: 'user', content: text },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0,
+      provider: { sort: 'throughput' },
+    };
 
-  const response = await client.chat.completions.create(
-    body as ChatCompletionCreateParamsNonStreaming,
-  );
+    try {
+      const response = await client.chat.completions.create(
+        body as ChatCompletionCreateParamsNonStreaming,
+      );
 
-  const message = response.choices[0]?.message;
-  const content = message?.content;
-  if (typeof content !== 'string' || !content) {
-    throw new Error('OpenRouter returned an empty response');
+      const message = response.choices[0]?.message;
+      const content = message?.content;
+      if (typeof content !== 'string' || !content) {
+        throw new Error('OpenRouter returned an empty response');
+      }
+
+      let parsed: ParsedOdooPo;
+      try {
+        parsed = JSON.parse(content) as ParsedOdooPo;
+      } catch (err) {
+        throw new Error(`OpenRouter response was not valid JSON: ${(err as Error).message}`);
+      }
+
+      return {
+        ...parsed,
+        // pdf-parse text isn't useful to the client (already shaped into
+        // fields); set to empty string for type compat with ParsedOdooPo.
+        rawText: '',
+        servedBy: response.model ?? model,
+      };
+    } catch (err) {
+      lastError = err;
+      // Continue to the next model in the chain. Any error class —
+      // 429 rate limit, 503 provider down, JSON parse failure — gets
+      // the same treatment: try the next one.
+    }
   }
 
-  let parsed: ParsedOdooPo;
-  try {
-    parsed = JSON.parse(content) as ParsedOdooPo;
-  } catch (err) {
-    throw new Error(
-      `OpenRouter response was not valid JSON: ${(err as Error).message}`,
-    );
-  }
-
-  return {
-    ...parsed,
-    // pdf-parse text isn't useful to the client (already shaped into
-    // fields); set to empty string for type compat with ParsedOdooPo.
-    rawText: '',
-    servedBy: response.model ?? FALLBACK_CHAIN[0],
-  };
+  // Every model in the chain failed. Surface the most recent error so
+  // the user sees the actionable HTTP code/provider message.
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('All models in the fallback chain failed');
 }
