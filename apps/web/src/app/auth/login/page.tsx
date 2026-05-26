@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiPost } from "@/lib/api";
 import { useAuthStore, type AuthUser } from "@/stores/auth.store";
+import PasswordInput from "@/components/shared/password-input";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -88,12 +89,11 @@ export default function LoginPage() {
             >
               {"Password"}
             </label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
               autoComplete="current-password"
               {...register("password")}
-              className="w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
             {errors.password && (
               <p className="text-xs text-red-600">{errors.password.message}</p>

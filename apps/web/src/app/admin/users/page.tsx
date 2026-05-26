@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ProtectedRoute from "@/components/shared/protected-route";
 import { apiGet, apiDelete } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { usePermission } from "@/hooks/use-permission";
 import UserFormDialog from "@/components/shared/user-form-dialog";
+import ResetPasswordDialog from "@/components/shared/reset-password-dialog";
 import type { UserListItem } from "@/types/admin";
 
 function UsersContent() {
@@ -13,6 +15,11 @@ function UsersContent() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserListItem | null>(null);
+  // Phase 17 v2 — admin-driven password reset. Gated to SUPER_ADMIN via
+  // the dedicated `users:reset-password` permission (see seed.ts).
+  const canResetPassword = usePermission("users:reset-password");
+  const [resetPasswordUser, setResetPasswordUser] =
+    useState<UserListItem | null>(null);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -129,22 +136,57 @@ function UsersContent() {
                     {user.employeeId}
                   </td>
                   <td className="px-4 py-3">
+                    {/* Backend stores Prisma enum literals in uppercase
+                        (ACTIVE / INACTIVE / RESIGNED). The old lowercase
+                        comparison here always missed every branch, so
+                        every badge defaulted to red. Compare against
+                        the actual enum values now. */}
                     <span
                       className={cn(
                         "rounded-full px-2 py-0.5 text-xs font-medium",
-                        user.status === "active"
+                        user.status === "ACTIVE"
                           ? "bg-green-100 text-green-800"
-                          : user.status === "suspended"
+                          : user.status === "INACTIVE"
                             ? "bg-yellow-100 text-yellow-800"
                             : "bg-red-100 text-red-800",
                       )}
                     >
-                      {user.status.charAt(0).toUpperCase() +
-                        user.status.slice(1)}
+                      {/* Render in title case for display: ACTIVE → Active. */}
+                      {user.status.charAt(0) +
+                        user.status.slice(1).toLowerCase()}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {user.userRoles?.map((ur) => ur.role.name).join(", ") || "None"}
+                  <td className="px-4 py-3">
+                    {user.userRoles?.length ? (
+                      <div className="flex flex-wrap gap-1">
+                        {user.userRoles.map((ur) => (
+                          <span
+                            key={`${ur.role.id}-${ur.locationId ?? "global"}`}
+                            className="inline-flex items-center gap-1 rounded-full border bg-secondary/60 px-2 py-0.5 text-xs font-medium text-secondary-foreground"
+                            title={
+                              ur.location
+                                ? `${ur.role.name} scoped to ${ur.location.name}`
+                                : `${ur.role.name} (all locations)`
+                            }
+                          >
+                            <span>{ur.role.name}</span>
+                            {ur.location ? (
+                              <span className="text-[10px] font-normal text-muted-foreground">
+                                @ {ur.location.name}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-normal text-muted-foreground">
+                                · global
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        No roles
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button
@@ -154,6 +196,16 @@ function UsersContent() {
                     >
                       Edit
                     </button>
+                    {canResetPassword && (
+                      <button
+                        type="button"
+                        onClick={() => setResetPasswordUser(user)}
+                        title="Override this user's password (SUPER_ADMIN only)"
+                        className="ml-1 rounded px-2 py-1 text-xs text-amber-700 hover:bg-amber-50"
+                      >
+                        Reset password
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void handleDelete(user.id)}
@@ -174,6 +226,20 @@ function UsersContent() {
         onClose={() => setDialogOpen(false)}
         onSuccess={() => void fetchUsers()}
         editingUser={editingUser}
+      />
+
+      <ResetPasswordDialog
+        open={resetPasswordUser !== null}
+        user={
+          resetPasswordUser
+            ? {
+                id: resetPasswordUser.id,
+                name: resetPasswordUser.name,
+                email: resetPasswordUser.email,
+              }
+            : null
+        }
+        onClose={() => setResetPasswordUser(null)}
       />
     </div>
   );

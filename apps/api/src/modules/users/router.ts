@@ -1,4 +1,5 @@
 import { Router, type Router as RouterType } from 'express';
+import type { Request } from 'express';
 import { asyncHandler } from '../../utils/async-handler.js';
 import { sendSuccess, sendCreated, sendNoContent } from '../../utils/response.js';
 import { authorize } from '../../middleware/authorize.js';
@@ -8,8 +9,22 @@ import {
   updateUserSchema,
   userListQuerySchema,
   assignRolesSchema,
+  resetUserPasswordSchema,
 } from './schema.js';
 import * as userService from './service.js';
+
+// Same shape as auth/router.ts. Inlined (not extracted) because the
+// surface is two lines and centralizing it here would invert the
+// dependency direction (users → auth utils).
+function auditContextFrom(req: Request): {
+  ipAddress: string | undefined;
+  userAgent: string | undefined;
+} {
+  return {
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'] ?? undefined,
+  };
+}
 
 const router: RouterType = Router();
 
@@ -85,6 +100,31 @@ router.put(
     const input = assignRolesSchema.parse(req.body);
     const roles = await userService.assignRoles(id, input, req.user!.id);
     sendSuccess(res, roles);
+  }),
+);
+
+// POST /api/users/:id/reset-password — Phase 17 v2.
+//
+// Admin-driven password override. Distinct from /api/auth/change-password
+// (self-service) — that endpoint verifies the user's OWN current password,
+// while this one verifies the ACTOR's password and lets them set a new
+// one on another account. Gated behind the dedicated
+// `users:reset-password` permission so it can be granted to SUPER_ADMIN
+// only without affecting the broader `users:manage` permission held by
+// ADMIN.
+router.post(
+  '/:id/reset-password',
+  authorize('users:reset-password'),
+  asyncHandler(async (req, res) => {
+    const id = req.params['id'] as string;
+    const input = resetUserPasswordSchema.parse(req.body);
+    await userService.resetUserPassword(
+      id,
+      input,
+      req.user!.id,
+      auditContextFrom(req),
+    );
+    sendNoContent(res);
   }),
 );
 
