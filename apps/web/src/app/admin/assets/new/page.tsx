@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import ProtectedRoute from "@/components/shared/protected-route";
 import MultiAssetCreateForm from "@/components/shared/multi-asset-create-form";
+import Breadcrumb from "@/components/shared/breadcrumb";
 
 function CreateAssetContent() {
   const router = useRouter();
@@ -20,6 +21,12 @@ function CreateAssetContent() {
 
   return (
     <div className="p-6" data-tour="asset-create">
+      <Breadcrumb
+        items={[
+          { label: "Assets", href: "/admin/assets" },
+          { label: "Add" },
+        ]}
+      />
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Add Assets</h1>
         <p className="text-sm text-muted-foreground">

@@ -11,6 +11,10 @@ export const createAssetSchema = z.object({
   purchaseDate: z.coerce.date().nullable().optional(),
   purchasePrice: z.number().nonnegative().nullable().optional(),
   currency: z.string().default('IDR'),
+  // Phase 17 v2 — vendorId is the preferred path (FK to Vendor table).
+  // `vendor` (legacy free-text) is still accepted for backwards
+  // compatibility with older clients but new flows should use vendorId.
+  vendorId: z.string().uuid().nullable().optional(),
   vendor: z.string().nullable().optional(),
   invoiceNumber: z.string().nullable().optional(),
   invoiceUrl: z.string().nullable().optional(),
@@ -37,6 +41,7 @@ export const updateAssetSchema = z.object({
   purchaseDate: z.coerce.date().nullable().optional(),
   purchasePrice: z.number().nonnegative().nullable().optional(),
   currency: z.string().optional(),
+  vendorId: z.string().uuid().nullable().optional(),
   vendor: z.string().nullable().optional(),
   invoiceNumber: z.string().nullable().optional(),
   invoiceUrl: z.string().nullable().optional(),
@@ -83,6 +88,10 @@ export const assetListFilterSchema = z.object({
   assignedToUserId: z.string().uuid().optional(),
   // Phase 17 — drill-down from batch detail page to its asset roster.
   procurementBatchId: z.string().uuid().optional(),
+  // Phase 17 v2 — drill-down from a PO to every asset created under
+  // ANY of its batches. Backend translates to:
+  //   procurementBatch: { purchaseOrderId: <id> }
+  purchaseOrderId: z.string().uuid().optional(),
   purchaseDateFrom: z.coerce.date().optional(),
   purchaseDateTo: z.coerce.date().optional(),
 });

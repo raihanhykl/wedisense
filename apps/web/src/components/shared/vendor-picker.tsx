@@ -29,6 +29,8 @@ interface VendorPickerProps {
   name?: string;
   /** Disable the quick-save affordance for read-only flows. */
   allowCreate?: boolean;
+  /** Pre-fill the search input — see AutocompletePicker docs. */
+  prefilledQuery?: string;
 }
 
 export default function VendorPicker({
@@ -40,6 +42,7 @@ export default function VendorPicker({
   id,
   name,
   allowCreate = true,
+  prefilledQuery,
 }: VendorPickerProps) {
   // Stable handlers — the AutocompletePicker only re-runs the search
   // effect when the query changes, so identity-stable callbacks aren't
@@ -74,6 +77,7 @@ export default function VendorPicker({
       id={id}
       name={name}
       emptyMessage="No vendors match. Type a name and click + to create."
+      {...(prefilledQuery && { prefilledQuery })}
     />
   );
 }

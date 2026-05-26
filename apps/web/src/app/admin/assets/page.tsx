@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { apiGetPaginated, apiDelete } from "@/lib/api";
+import { apiGet, apiGetPaginated, apiDelete } from "@/lib/api";
 import api from "@/lib/api";
 import type { PaginationMeta } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
@@ -183,6 +183,7 @@ const TOGGLEABLE_COLUMNS = [
   { key: "category", label: "Category", default: true },
   { key: "location", label: "Location", default: true },
   { key: "assignedTo", label: "Assigned To", default: true },
+  { key: "po", label: "PO", default: true },
   { key: "purchasePrice", label: "Purchase Price", default: true },
   { key: "serialNumber", label: "Serial Number", default: false },
   { key: "brand", label: "Brand", default: false },
@@ -260,6 +261,16 @@ export default function AssetsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  // Phase 17 v2 — filter by parent PO. UUID from the PO list endpoint;
+  // backend translates to `procurementBatch.purchaseOrderId = X`.
+  const [poFilter, setPoFilter] = useState("");
+  // Lazy-loaded PO options for the filter dropdown — top 100 most recent
+  // (no-arg paginate). For very large fleets we'd swap to autocomplete,
+  // but typing the PO number into the global Search box already works
+  // (backend matches it via the OR clause in service.buildWhereClause).
+  const [poOptions, setPoOptions] = useState<
+    Array<{ id: string; poNumber: string; name: string | null }>
+  >([]);
   const [page, setPage] = useState(1);
 
   // Reference data via TanStack Query — cached for the whole session via
@@ -405,6 +416,7 @@ export default function AssetsPage() {
       if (statusFilter) params.status = statusFilter;
       if (locationFilter) params.locationId = locationFilter;
       if (categoryFilter) params.categoryId = categoryFilter;
+      if (poFilter) params.purchaseOrderId = poFilter;
       if (sortField) {
         params.sort = sortField;
         params.order = sortOrder;
@@ -421,11 +433,31 @@ export default function AssetsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, statusFilter, locationFilter, categoryFilter, sortField, sortOrder]);
+  }, [page, search, statusFilter, locationFilter, categoryFilter, poFilter, sortField, sortOrder]);
 
   useEffect(() => {
     void fetchAssets();
   }, [fetchAssets]);
+
+  // Fetch PO options for the filter dropdown — one-shot on mount.
+  // No need to re-fetch when filters change; the PO list is small and
+  // stable enough that staleness here doesn't bite.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await apiGet<
+          Array<{ id: string; poNumber: string; name: string | null }>
+        >("/api/purchase-orders", { limit: 100 });
+        if (!cancelled) setPoOptions(rows);
+      } catch {
+        /* dropdown stays empty; user can still search by PO number */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Debounce search keystrokes → committed `search` state. 300ms is the
   // sweet spot per NN/G — fast enough that the result feels live, slow
@@ -477,6 +509,11 @@ export default function AssetsPage() {
   };
   const handleCategoryChange = (value: string) => {
     setCategoryFilter(value);
+    setPage(1);
+    setActiveViewId(null);
+  };
+  const handlePoChange = (value: string) => {
+    setPoFilter(value);
     setPage(1);
     setActiveViewId(null);
   };
@@ -791,6 +828,21 @@ export default function AssetsPage() {
             </option>
           ))}
         </select>
+        <select
+          value={poFilter}
+          onChange={(e) => handlePoChange(e.target.value)}
+          className="rounded-md border bg-background px-3 py-2 text-sm"
+          data-tour="po-filter"
+          title="Filter by Purchase Order"
+        >
+          <option value="">All POs</option>
+          {poOptions.map((po) => (
+            <option key={po.id} value={po.id}>
+              {po.poNumber}
+              {po.name ? ` — ${po.name}` : ""}
+            </option>
+          ))}
+        </select>
 
         {/* Density + Columns controls only affect the desktop table layout,
             so they're hidden on mobile (which uses cards). `ml-auto` pushes
@@ -987,6 +1039,11 @@ export default function AssetsPage() {
                   Assigned To
                 </th>
               )}
+              {visibleColumns.po && (
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
+                  PO
+                </th>
+              )}
               {visibleColumns.serialNumber && (
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">
                   Serial #
@@ -1107,6 +1164,21 @@ export default function AssetsPage() {
                   {visibleColumns.assignedTo && (
                     <td className="px-4 py-3 text-muted-foreground">
                       {asset.assignedTo?.name ?? "-"}
+                    </td>
+                  )}
+                  {visibleColumns.po && (
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {asset.procurementBatch ? (
+                        <Link
+                          href={`/admin/purchase-orders/${asset.procurementBatch.purchaseOrder.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-mono text-xs text-primary hover:underline"
+                        >
+                          {asset.procurementBatch.purchaseOrder.poNumber}
+                        </Link>
+                      ) : (
+                        <span className="text-xs">-</span>
+                      )}
                     </td>
                   )}
                   {visibleColumns.serialNumber && (

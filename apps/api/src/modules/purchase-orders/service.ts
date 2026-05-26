@@ -55,7 +55,56 @@ export async function getPurchaseOrder(id: string) {
   if (!po) {
     throw new AppError(404, 'PURCHASE_ORDER_NOT_FOUND', 'Purchase order not found');
   }
-  return po;
+  // Per-item receipt aggregates so the UI can render real progress
+  // ("1 / 1 received") and the new-batch form can disable items that
+  // are out of capacity. Two buckets:
+  //   - qtyReceived       : sum across RECEIVED + COMPLETED batches
+  //                         (what physically arrived)
+  //   - qtyInDraftBatches : sum across DRAFT + ITEMS_PENDING batches
+  //                         (reserved capacity — backend still rejects
+  //                         attempts to over-allocate via these)
+  // Run in parallel with the main fetch already done — two cheap
+  // groupBy queries scoped to this PO's items only.
+  const [receivedRaw, inDraftRaw] = await Promise.all([
+    prisma.batchItem.groupBy({
+      by: ['purchaseOrderItemId'],
+      where: {
+        purchaseOrderItem: { purchaseOrderId: id },
+        procurementBatch: {
+          deletedAt: null,
+          status: { in: ['RECEIVED', 'COMPLETED'] },
+        },
+      },
+      _sum: { qtyReceived: true },
+    }),
+    prisma.batchItem.groupBy({
+      by: ['purchaseOrderItemId'],
+      where: {
+        purchaseOrderItem: { purchaseOrderId: id },
+        procurementBatch: {
+          deletedAt: null,
+          status: { in: ['DRAFT', 'ITEMS_PENDING'] },
+        },
+      },
+      _sum: { qtyReceived: true },
+    }),
+  ]);
+
+  const receivedByItem = new Map<string, number>(
+    receivedRaw.map((r) => [r.purchaseOrderItemId, r._sum.qtyReceived ?? 0]),
+  );
+  const inDraftByItem = new Map<string, number>(
+    inDraftRaw.map((r) => [r.purchaseOrderItemId, r._sum.qtyReceived ?? 0]),
+  );
+
+  return {
+    ...po,
+    items: po.items.map((it) => ({
+      ...it,
+      qtyReceived: receivedByItem.get(it.id) ?? 0,
+      qtyInDraftBatches: inDraftByItem.get(it.id) ?? 0,
+    })),
+  };
 }
 
 // ── Item validation + row preparation ───────────────────────────────────────

@@ -26,6 +26,10 @@ export interface AssetListFilters {
   /** Phase 17: filter by procurement batch. The frontend uses this to
    *  power the "see all assets in batch" link on the batch detail page. */
   procurementBatchId?: string;
+  /** Phase 17 v2: filter by parent PO. Translates server-side to
+   *  `procurementBatch.purchaseOrderId = X`, returning every asset
+   *  created under any non-cancelled batch of that PO. */
+  purchaseOrderId?: string;
   purchaseDateFrom?: Date;
   purchaseDateTo?: Date;
   sort?: string;

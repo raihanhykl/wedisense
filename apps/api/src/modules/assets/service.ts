@@ -103,6 +103,14 @@ function buildWhereClause(
     where.procurementBatchId = filters.procurementBatchId;
   }
 
+  // Phase 17 v2 — filter by parent PO via the batch relation. Compatible
+  // with procurementBatchId (both can be set, narrowing further).
+  if (filters.purchaseOrderId) {
+    where.procurementBatch = {
+      purchaseOrderId: filters.purchaseOrderId,
+    };
+  }
+
   if (filters.purchaseDateFrom || filters.purchaseDateTo) {
     where.purchaseDate = {
       ...(filters.purchaseDateFrom && { gte: filters.purchaseDateFrom }),
@@ -115,6 +123,17 @@ function buildWhereClause(
       { name: { contains: filters.search, mode: 'insensitive' } },
       { assetNumber: { contains: filters.search, mode: 'insensitive' } },
       { serialNumber: { contains: filters.search, mode: 'insensitive' } },
+      // Phase 17 v2 — let users find assets by typing the PO number
+      // (SP-2026-0001) directly into the search box. Goes through the
+      // batch relation, so legacy assets without a batch are excluded
+      // naturally.
+      {
+        procurementBatch: {
+          purchaseOrder: {
+            poNumber: { contains: filters.search, mode: 'insensitive' },
+          },
+        },
+      },
     ];
   }
 
@@ -274,7 +293,11 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
         purchaseDate: input.purchaseDate ?? null,
         purchasePrice: input.purchasePrice != null ? new Prisma.Decimal(input.purchasePrice) : null,
         currency: input.currency ?? 'IDR',
-        vendor: input.vendor ?? null,
+        // Phase 17 v2: vendorId is preferred. `vendor` (legacy string)
+        // is only kept for backwards-compatibility — written to
+        // vendorLegacy when the caller doesn't supply a vendorId.
+        ...(input.vendorId && { vendor: { connect: { id: input.vendorId } } }),
+        vendorLegacy: input.vendor ?? null,
         invoiceNumber: input.invoiceNumber ?? null,
         invoiceUrl: input.invoiceUrl ?? null,
         warrantyStartDate: input.warrantyStartDate ?? null,
@@ -476,7 +499,8 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
           purchaseDate: input.purchaseDate ?? null,
           purchasePrice: input.purchasePrice != null ? new Prisma.Decimal(input.purchasePrice) : null,
           currency: input.currency ?? 'IDR',
-          vendor: input.vendor ?? null,
+          ...(input.vendorId && { vendor: { connect: { id: input.vendorId } } }),
+          vendorLegacy: input.vendor ?? null,
           invoiceNumber: input.invoiceNumber ?? null,
           invoiceUrl: input.invoiceUrl ?? null,
           warrantyStartDate: input.warrantyStartDate ?? null,
@@ -661,7 +685,15 @@ export async function updateAsset(id: string, input: UpdateAssetInput, userId: s
       : null;
   }
   if (input.currency !== undefined) updateData.currency = input.currency;
-  if (input.vendor !== undefined) updateData.vendor = input.vendor;
+  // Phase 17 v2 — vendorId is the canonical write path. The legacy
+  // `vendor` string is still accepted as an input but maps to the
+  // deprecated vendorLegacy column; new code should not rely on it.
+  if (input.vendorId !== undefined) {
+    updateData.vendor = input.vendorId
+      ? { connect: { id: input.vendorId } }
+      : { disconnect: true };
+  }
+  if (input.vendor !== undefined) updateData.vendorLegacy = input.vendor;
   if (input.invoiceNumber !== undefined) updateData.invoiceNumber = input.invoiceNumber;
   if (input.invoiceUrl !== undefined) updateData.invoiceUrl = input.invoiceUrl;
   if (input.warrantyStartDate !== undefined) updateData.warrantyStartDate = input.warrantyStartDate;

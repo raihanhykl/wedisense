@@ -26,6 +26,7 @@ import {
   ProcurementBatchStatusBadge,
   PurchaseOrderStatusBadge,
 } from "@/components/shared/procurement-status-badge";
+import Breadcrumb from "@/components/shared/breadcrumb";
 import type {
   PurchaseOrderBatchSummary,
   PurchaseOrderDetail,
@@ -420,12 +421,12 @@ export default function PurchaseOrderDetailPage() {
 
   return (
     <div className="space-y-6 p-6">
-      <Link
-        href="/admin/purchase-orders"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-4 w-4" /> Back to Purchase Orders
-      </Link>
+      <Breadcrumb
+        items={[
+          { label: "Purchase Orders", href: "/admin/purchase-orders" },
+          { label: po.poNumber },
+        ]}
+      />
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -639,6 +640,7 @@ export default function PurchaseOrderDetailPage() {
               <tr>
                 <th className="px-4 py-2 font-medium">Product</th>
                 <th className="px-4 py-2 text-right font-medium">Qty</th>
+                <th className="px-4 py-2 text-center font-medium">Received</th>
                 <th className="px-4 py-2 text-right font-medium">Unit price</th>
                 <th className="px-4 py-2 text-right font-medium">Disc %</th>
                 <th className="px-4 py-2 text-right font-medium">Tax %</th>
@@ -652,7 +654,7 @@ export default function PurchaseOrderDetailPage() {
                 <ItemRow key={item.id} item={item} currency={po.currency} />
               ))}
               <tr className="border-t bg-muted/30 text-sm font-medium">
-                <td className="px-4 py-3" colSpan={5}>
+                <td className="px-4 py-3" colSpan={6}>
                   Totals
                 </td>
                 <td className="px-4 py-3 text-right">
@@ -767,6 +769,15 @@ function ItemRow({
   item: PurchaseOrderItemRow;
   currency: string;
 }) {
+  // Progress: physical receipt vs ordered. Draft reservations are
+  // surfaced as a separate badge so the user understands why qty might
+  // be "locked" even if not yet physically arrived.
+  const received = item.qtyReceived;
+  const inDraft = item.qtyInDraftBatches;
+  const ordered = item.qty;
+  const pct = ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0;
+  const fullyReceived = received >= ordered && ordered > 0;
+  const partial = received > 0 && received < ordered;
   return (
     <tr className={cn("border-b transition-colors last:border-0 hover:bg-muted/30")}>
       <td className="px-4 py-3">
@@ -777,7 +788,40 @@ function ItemRow({
             .join(" · ") || item.product.category.name}
         </div>
       </td>
-      <td className="px-4 py-3 text-right">{item.qty}</td>
+      <td className="px-4 py-3 text-right">{ordered}</td>
+      <td className="px-4 py-3">
+        <div className="flex flex-col items-center gap-1">
+          <div className="flex items-baseline gap-1.5">
+            <span
+              className={cn(
+                "text-sm font-medium tabular-nums",
+                fullyReceived && "text-emerald-700",
+                partial && "text-amber-700",
+                received === 0 && "text-muted-foreground",
+              )}
+            >
+              {received} / {ordered}
+            </span>
+            {inDraft > 0 && (
+              <span
+                title={`${inDraft} unit${inDraft === 1 ? "" : "s"} reserved in a draft / pending batch`}
+                className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+              >
+                +{inDraft} pending
+              </span>
+            )}
+          </div>
+          <div className="h-1 w-full max-w-[80px] overflow-hidden rounded-full bg-muted">
+            <div
+              className={cn(
+                "h-full transition-all",
+                fullyReceived ? "bg-emerald-500" : "bg-amber-500",
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      </td>
       <td className="px-4 py-3 text-right">
         {formatCurrency(item.unitPrice, currency)}
       </td>

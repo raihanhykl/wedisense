@@ -6,11 +6,20 @@ import Link from "next/link";
 import { useForm, useFieldArray, Controller, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, FileUp, Info, Loader2, Plus, Trash2, X } from "lucide-react";
+import {
+  FileUp,
+  Info,
+  Loader2,
+  Plus,
+  RotateCcw,
+  Trash2,
+  X,
+} from "lucide-react";
 import api, { apiGet, apiPost } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import { usePermission } from "@/hooks/use-permission";
 import { formatCurrency } from "@/lib/utils";
+import Breadcrumb from "@/components/shared/breadcrumb";
 import VendorPicker from "@/components/shared/vendor-picker";
 import ProductPicker from "@/components/shared/product-picker";
 import CurrencySelect from "@/components/shared/currency-select";
@@ -206,9 +215,16 @@ export default function NewPurchaseOrderPage() {
   // Default to AI per user preference. Regex stays as offline fallback
   // for environments without an OpenRouter key.
   const [parseMode, setParseMode] = useState<ParseMode>("ai");
+  // Remembered File handle for the retry button. We keep the File
+  // object (not just the name) because the user-picked input is wiped
+  // in the `finally` block to allow re-selecting the same file by
+  // clicking — but on error we want to fire the same upload again
+  // without making them pick the file twice.
+  const [lastUploadedFile, setLastUploadedFile] = useState<File | null>(null);
 
   const handlePdfChange = async (file: File | null) => {
     if (!file) return;
+    setLastUploadedFile(file);
     setPdfState("parsing");
     setPdfError(null);
     setParsedPo(null);
@@ -232,9 +248,11 @@ export default function NewPurchaseOrderPage() {
       if (data.currency) setValue("currency", data.currency);
 
       // Try to resolve vendor name → existing registry entry.
-      // Exact (case-insensitive) match wins; otherwise we leave the
-      // picker empty and surface the parsed name in the banner so the
-      // user can click "+ Save new vendor" with one keystroke.
+      // Exact (case-insensitive) match wins — auto-selects the chip.
+      // Otherwise we stash the parsed name into `vendorLabel` so the
+      // VendorPicker can pre-fill its search input and surface the
+      // "+ Save '…' as new vendor" row. We never auto-create — the
+      // user must click that row themselves to confirm.
       if (data.vendor) {
         try {
           const vendorRows = await apiGet<
@@ -246,9 +264,14 @@ export default function NewPurchaseOrderPage() {
           if (exact) {
             setValue("vendorId", exact.id);
             setValue("vendorLabel", exact.name);
+          } else {
+            // No exact match — leave vendorId empty (so the picker
+            // stays in search mode) but stash the name as prefill.
+            setValue("vendorLabel", data.vendor);
           }
         } catch {
-          // Picker stays empty; user can resolve manually.
+          // Search failed; still prefill so the user can recover.
+          setValue("vendorLabel", data.vendor);
         }
       }
 
@@ -351,14 +374,12 @@ export default function NewPurchaseOrderPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <div>
-        <Link
-          href="/admin/purchase-orders"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back
-        </Link>
-      </div>
+      <Breadcrumb
+        items={[
+          { label: "Purchase Orders", href: "/admin/purchase-orders" },
+          { label: "New" },
+        ]}
+      />
 
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">New Purchase Order</h1>
@@ -438,8 +459,18 @@ export default function NewPurchaseOrderPage() {
         </div>
 
         {pdfState === "error" && (
-          <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
-            {pdfError ?? "Failed to parse PDF"}
+          <div className="mt-3 flex items-start justify-between gap-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+            <span className="flex-1">{pdfError ?? "Failed to parse PDF"}</span>
+            {lastUploadedFile && (
+              <button
+                type="button"
+                onClick={() => void handlePdfChange(lastUploadedFile)}
+                className="inline-flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Retry
+              </button>
+            )}
           </div>
         )}
 
@@ -503,9 +534,10 @@ export default function NewPurchaseOrderPage() {
             {parsedPo.vendor && !vendorIdWatched && (
               <div className="rounded-md bg-amber-100 px-3 py-2 text-[11px] text-amber-900">
                 Vendor &ldquo;<span className="font-medium">{parsedPo.vendor}</span>
-                &rdquo; isn&apos;t in your vendor registry yet. Click the
-                Vendor picker below to search for an existing match or save
-                it as a new vendor.
+                &rdquo; isn&apos;t in your registry yet. The Vendor picker
+                below is pre-filled — click <span className="font-medium">
+                &ldquo;Save &lsquo;{parsedPo.vendor}&rsquo; as new vendor&rdquo;
+                </span> to confirm.
               </div>
             )}
           </div>
@@ -538,6 +570,12 @@ export default function NewPurchaseOrderPage() {
                       labelField.onChange(next?.label ?? "");
                     }}
                     invalid={!!errors.vendorId}
+                    // When parse fills `vendorLabel` but no match was
+                    // found, this opens the picker with the name pre-
+                    // typed so the "Save as new" row is one click away.
+                    {...(!field.value && labelField.value
+                      ? { prefilledQuery: labelField.value }
+                      : {})}
                   />
                 )}
               />
@@ -783,6 +821,13 @@ function ItemRow({
                         labelField.onChange(next?.label ?? "");
                       }}
                       invalid={!!rowErrors?.productId}
+                      // When PDF parse populated productLabel with a
+                      // description that didn't match any registry
+                      // entry, pre-open the picker with the name so
+                      // the "Save as new" row is one click away.
+                      {...(!field.value && labelField.value
+                        ? { prefilledQuery: labelField.value }
+                        : {})}
                     />
                   </div>
                 )}

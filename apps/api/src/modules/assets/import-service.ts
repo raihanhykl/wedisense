@@ -455,7 +455,10 @@ export async function bulkImport(
           purchaseDate: row.purchaseDate ?? null,
           purchasePrice: row.purchasePrice != null ? new Prisma.Decimal(row.purchasePrice) : null,
           currency: row.currency ?? 'IDR',
-          vendor: row.vendor ?? null,
+          // Phase 17 v2 — Excel import stays on the legacy free-text
+          // column. A future tier will resolve names to vendor FKs
+          // (similar to product matching) and populate vendorId here.
+          vendorLegacy: row.vendor ?? null,
           invoiceNumber: row.invoiceNumber ?? null,
           warrantyStartDate: row.warrantyStartDate ?? null,
           warrantyEndDate: row.warrantyEndDate ?? null,

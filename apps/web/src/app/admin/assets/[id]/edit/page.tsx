@@ -99,7 +99,10 @@ function EditAssetContent() {
     condition: asset.condition,
     purchaseDate: asset.purchaseDate ?? "",
     purchasePrice: asset.purchasePrice ?? "",
-    vendor: asset.vendor ?? "",
+    // Edit form still uses the legacy free-text vendor field for now.
+    // VendorPicker integration into the single-asset edit form lands
+    // in a follow-up tier alongside MultiAssetCreateForm.
+    vendor: asset.vendor?.name ?? asset.vendorLegacy ?? "",
     invoiceNumber: asset.invoiceNumber ?? "",
     warrantyStartDate: asset.warrantyStartDate ?? "",
     warrantyEndDate: asset.warrantyEndDate ?? "",

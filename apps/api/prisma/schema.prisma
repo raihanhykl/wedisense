@@ -444,7 +444,20 @@ model Asset {
   purchaseDate      DateTime?      @map("purchase_date")
   purchasePrice     Decimal?       @map("purchase_price") @db.Decimal(15, 2)
   currency          String         @default("IDR") @map("currency")
-  vendor            String?        @map("vendor")
+  // Phase 17 v2: vendor migration to FK relation.
+  //   - `vendorId` + `vendor` relation (NEW, preferred): FK to Vendor
+  //     registry. Used by the create form (VendorPicker) and the detail
+  //     page's Procurement section. SetNull on vendor deletion so
+  //     soft-deleting a Vendor doesn't kill linked assets.
+  //   - `vendorLegacy` (DEPRECATED): free-text string kept for
+  //     backwards compatibility with assets created before the
+  //     migration. Maps to the existing `vendor` DB column to avoid a
+  //     data-loss migration. New writes should NOT populate this field;
+  //     code reads `vendor.name` (relation) first, falls back to
+  //     `vendorLegacy` only when vendorId is null. Will be dropped in a
+  //     follow-up migration once all rows have a vendorId.
+  vendorLegacy      String?        @map("vendor")
+  vendorId          String?        @map("vendor_id") @db.Uuid
   invoiceNumber     String?        @map("invoice_number")
   invoiceUrl        String?        @map("invoice_url")
   warrantyStartDate DateTime?      @map("warranty_start_date")
@@ -471,6 +484,7 @@ model Asset {
   assignedTo           User?                 @relation("AssetAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
   createdBy            User                  @relation("AssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   procurementBatch     ProcurementBatch?     @relation(fields: [procurementBatchId], references: [id], onDelete: SetNull)
+  vendor               Vendor?               @relation(fields: [vendorId], references: [id], onDelete: SetNull)
   movements            AssetMovement[]
   maintenanceSchedules MaintenanceSchedule[]
   maintenanceLogs      MaintenanceLog[]
@@ -486,6 +500,7 @@ model Asset {
   @@index([warrantyEndDate])
   @@index([createdByUserId])
   @@index([procurementBatchId])
+  @@index([vendorId])
   @@index([deletedAt])
   @@map("assets")
 }
@@ -756,6 +771,10 @@ model Vendor {
   deletedAt DateTime? @map("deleted_at")
 
   purchaseOrders PurchaseOrder[]
+  // Phase 17 v2: Asset.vendor (formerly free-text) is now an FK to this
+  // table — surfaces "which vendor supplied this asset" without scanning
+  // the parent PO for assets that came in via procurement.
+  assets         Asset[]
 
   @@index([name])
   @@index([isActive])

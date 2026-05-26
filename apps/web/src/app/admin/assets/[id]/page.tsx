@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
 import { Skeleton } from "@/components/ui/skeleton";
 import PrintDialog from "@/components/shared/print-dialog";
+import Breadcrumb from "@/components/shared/breadcrumb";
+import { ProcurementBatchStatusBadge } from "@/components/shared/procurement-status-badge";
 import type { AssetDetail } from "@/types/admin";
 
 // ── Skeleton matching the real detail layout so swap-in is non-jarring.
@@ -206,6 +208,12 @@ export default function AssetDetailPage() {
 
   return (
     <div className="p-4 md:p-6" data-tour="asset-detail">
+      <Breadcrumb
+        items={[
+          { label: "Assets", href: "/admin/assets" },
+          { label: asset.name },
+        ]}
+      />
       {/* Header — stacks vertically on mobile so the title doesn't get
           squashed and the 4 buttons have room to wrap. */}
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -216,12 +224,6 @@ export default function AssetDetailPage() {
           <p className="text-sm text-muted-foreground">{asset.assetNumber}</p>
         </div>
         <div className="-mx-1 flex flex-wrap gap-2 sm:mx-0">
-          <Link
-            href="/admin/assets"
-            className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent sm:px-4"
-          >
-            Back
-          </Link>
           {canUpdate && (
             <Link
               href={`/admin/assets/${asset.id}/edit`}
@@ -301,7 +303,18 @@ export default function AssetDetailPage() {
             <InfoRow label="Current Book Value">
               {formatIDR(asset.currentBookValue)}
             </InfoRow>
-            <InfoRow label="Vendor">{asset.vendor ?? "-"}</InfoRow>
+            <InfoRow label="Vendor">
+              {asset.vendor ? (
+                <Link
+                  href={`/admin/vendors/${asset.vendor.id}`}
+                  className="text-primary hover:underline"
+                >
+                  {asset.vendor.name}
+                </Link>
+              ) : (
+                asset.vendorLegacy ?? "-"
+              )}
+            </InfoRow>
             <InfoRow label="Invoice Number">
               {asset.invoiceNumber ?? "-"}
             </InfoRow>
@@ -345,6 +358,53 @@ export default function AssetDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Procurement provenance — only rendered for assets created via a
+          procurement batch. Two-link layout: jump straight to either the
+          batch (for receipt details) or the parent PO (for the original
+          order). */}
+      {asset.procurementBatch && (
+        <div className="mt-6 rounded-lg border bg-card p-4 md:p-5">
+          <h2 className="mb-4 text-lg font-semibold">Procurement</h2>
+          <dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2">
+            <InfoRow label="Purchase Order">
+              <Link
+                href={`/admin/purchase-orders/${asset.procurementBatch.purchaseOrder.id}`}
+                className="font-mono text-sm font-medium text-primary hover:underline"
+              >
+                {asset.procurementBatch.purchaseOrder.poNumber}
+              </Link>
+              <span className="ml-2 text-xs text-muted-foreground">
+                {asset.procurementBatch.purchaseOrder.vendor.name}
+              </span>
+            </InfoRow>
+            <InfoRow label="PO Date">
+              {formatDate(asset.procurementBatch.purchaseOrder.poDate)}
+            </InfoRow>
+            <InfoRow label="Batch">
+              <Link
+                href={`/admin/purchase-orders/${asset.procurementBatch.purchaseOrder.id}/batches/${asset.procurementBatch.id}`}
+                className="font-mono text-sm font-medium text-primary hover:underline"
+              >
+                {asset.procurementBatch.batchNumber}
+              </Link>
+              <span className="ml-2">
+                <ProcurementBatchStatusBadge
+                  status={asset.procurementBatch.status}
+                />
+              </span>
+            </InfoRow>
+            <InfoRow label="BAST">
+              {asset.procurementBatch.bastNumber ?? "-"}
+              {asset.procurementBatch.receivedDate && (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  ({formatDate(asset.procurementBatch.receivedDate)})
+                </span>
+              )}
+            </InfoRow>
+          </dl>
+        </div>
+      )}
 
       {/* Metadata */}
       <div className="mt-6 rounded-lg border bg-card p-4 md:p-5">

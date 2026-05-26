@@ -17,6 +17,22 @@ const listInclude = {
   },
   location: { select: { id: true, name: true, code: true } },
   assignedTo: { select: { id: true, name: true, email: true } },
+  // Phase 17 v2 — surface the originating PO inline so the asset list
+  // can render a "PO" column + power the PO filter dropdown without
+  // a per-row follow-up fetch. Null for legacy / manually-created assets.
+  procurementBatch: {
+    select: {
+      id: true,
+      batchNumber: true,
+      purchaseOrder: {
+        select: { id: true, poNumber: true },
+      },
+    },
+  },
+  // Vendor relation (replaces the deprecated free-text `vendorLegacy`
+  // column). Null when the asset has no vendor set OR predates the FK
+  // migration; the frontend falls back to vendorLegacy in that case.
+  vendor: { select: { id: true, name: true } },
 } as const;
 
 const detailInclude = {
@@ -24,6 +40,31 @@ const detailInclude = {
   location: { select: { id: true, name: true, code: true, type: true } },
   assignedTo: { select: { id: true, name: true, email: true, employeeId: true } },
   createdBy: { select: { id: true, name: true, email: true } },
+  // Phase 17 v2 — Vendor relation, replaces the free-text vendorLegacy.
+  vendor: { select: { id: true, name: true, taxId: true } },
+  // Phase 17 v2 — assets created via the procurement workflow carry a
+  // back-link to their batch and (via the batch) the originating PO so
+  // the asset detail page can render "Procured via SP-2026-0001 from
+  // PO/2026/04/00057" with deep links to both. Null for legacy assets
+  // created manually before procurement was introduced.
+  procurementBatch: {
+    select: {
+      id: true,
+      batchNumber: true,
+      status: true,
+      bastNumber: true,
+      receivedDate: true,
+      purchaseOrder: {
+        select: {
+          id: true,
+          poNumber: true,
+          poDate: true,
+          status: true,
+          vendor: { select: { id: true, name: true } },
+        },
+      },
+    },
+  },
   movements: {
     orderBy: { createdAt: 'desc' as const },
     take: 5,
