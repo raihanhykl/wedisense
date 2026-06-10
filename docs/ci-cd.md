@@ -30,8 +30,10 @@ PR / push ke main
 - Workflow: `.github/workflows/ci-cd.yml`
 - Deploy script (jalan di VPS): `scripts/deploy.sh`
 - Definisi proses PM2: `ecosystem.config.cjs` (root repo)
-- Port di VPS: API `4000`, web `3001` (3000 dipakai project lain di VPS yang sama;
-  keduanya hanya diakses lewat reverse proxy nginx — ufw tidak membuka port ini)
+- Port di VPS mengikuti vhost nginx yang sudah ada: API `4100`
+  (api-wedisense.wedison.tech), web `3100` (wedisense.wedison.tech).
+  3000/3001 milik project lain di VPS yang sama. Port-port ini hanya diakses
+  lewat reverse proxy nginx — ufw tidak membukanya keluar.
 - Deploy memakai `concurrency: deploy-production` — dua merge beruntun tidak akan
   deploy bersamaan; yang kedua antri.
 
