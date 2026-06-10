@@ -16,8 +16,8 @@ export interface AuditLogDto {
   action: AuditAction;
   resourceType: string;
   resourceId: string;
-  oldValues: unknown | null;
-  newValues: unknown | null;
+  oldValues: unknown;
+  newValues: unknown;
   ipAddress: string | null;
   userAgent: string | null;
   createdAt: string;

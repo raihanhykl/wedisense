@@ -30,7 +30,11 @@ export const createMovementSchema = z.object({
   toLocationId: z.string().uuid().nullable().optional(),
   notes: z.string().nullable().optional(),
   expectedReturnDate: z.coerce.date().nullable().optional(),
-  attachments: z.any().optional(),
+  attachments: z.array(z.object({
+    filename: z.string(),
+    url: z.string(),
+    uploadedAt: z.string().optional(),
+  })).optional(),
   // SWAP specific
   swapWithAssetId: z.string().uuid().optional(),
   // RESIGNATION_RETURN specific

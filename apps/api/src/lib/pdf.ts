@@ -66,7 +66,7 @@ async function generateQrBuffer(assetId: string): Promise<Buffer> {
   return QRCode.toBuffer(`${appUrl}/assets/${assetId}`, {
     type: 'png',
     width: 300,
-  }) as Promise<Buffer>;
+  });
 }
 
 /**

@@ -67,7 +67,6 @@ const mockProductFindMany = prisma.product.findMany as ReturnType<typeof vi.fn>;
 const mockLocationFindUnique = prisma.location.findUnique as ReturnType<typeof vi.fn>;
 const mockLocationFindMany = prisma.location.findMany as ReturnType<typeof vi.fn>;
 const mockAssetFindFirst = prisma.asset.findFirst as ReturnType<typeof vi.fn>;
-const mockAssetFindMany = prisma.asset.findMany as ReturnType<typeof vi.fn>;
 const mockAssetUpdate = prisma.asset.update as ReturnType<typeof vi.fn>;
 const mockAssetMovementCount = prisma.assetMovement.count as ReturnType<typeof vi.fn>;
 const mockAuditLogCreate = prisma.auditLog.create as ReturnType<typeof vi.fn>;
@@ -165,7 +164,7 @@ describe('createAsset()', () => {
     mockProductFindUnique.mockResolvedValue(PRODUCT);
     mockLocationFindUnique.mockResolvedValue(LOCATION);
     mockAssetFindFirst.mockResolvedValue(null); // no serial conflict
-    const tx = mockTxThatRuns();
+    mockTxThatRuns();
     mockRepoCreateInTx.mockResolvedValue(CREATED_ASSET);
     mockRepoCreateMovementInTx.mockResolvedValue({});
     mockGenerateBarcode.mockResolvedValue('/uploads/barcodes/asset-1.png');

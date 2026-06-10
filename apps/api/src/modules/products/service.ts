@@ -9,6 +9,14 @@ import type { PaginationQuery } from '@wedisense/shared';
 
 const EAN_LOOKUP_TIMEOUT = 3000; // 3 seconds per API
 
+/** Safely convert an unknown API field value to string, returning undefined for non-string/non-primitive values. */
+function asStr(v: unknown): string | undefined {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  return undefined;
+}
+
 // ── EAN Lookup Chain ──────────────────────────────────────────────────
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
@@ -43,10 +51,10 @@ async function lookupUpcItemDb(ean: string): Promise<EanLookupResult | null> {
     if (!item) return null;
 
     return {
-      name: String(item['title'] ?? ''),
-      brand: item['brand'] ? String(item['brand']) : null,
-      model: item['model'] ? String(item['model']) : null,
-      description: item['description'] ? String(item['description']) : null,
+      name: asStr(item['title']) ?? '',
+      brand: asStr(item['brand']) ?? null,
+      model: asStr(item['model']) ?? null,
+      description: asStr(item['description']) ?? null,
       imageUrl: (item['images'] as string[] | undefined)?.[0] ?? null,
       source: 'API_UPCITEMDB',
       rawApiResponse: data,
@@ -76,11 +84,11 @@ async function lookupGoUpc(ean: string): Promise<EanLookupResult | null> {
     if (!product) return null;
 
     return {
-      name: String(product['name'] ?? ''),
-      brand: product['brand'] ? String(product['brand']) : null,
+      name: asStr(product['name']) ?? '',
+      brand: asStr(product['brand']) ?? null,
       model: null,
-      description: product['description'] ? String(product['description']) : null,
-      imageUrl: product['imageUrl'] ? String(product['imageUrl']) : null,
+      description: asStr(product['description']) ?? null,
+      imageUrl: asStr(product['imageUrl']) ?? null,
       source: 'API_BARCODELOOKUP',
       rawApiResponse: data,
     };

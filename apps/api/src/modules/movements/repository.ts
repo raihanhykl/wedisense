@@ -68,7 +68,7 @@ export function createInTransaction(
   tx: PrismaTransactionClient,
   data: Prisma.AssetMovementCreateInput,
 ) {
-  return (tx as unknown as { assetMovement: typeof prisma.assetMovement }).assetMovement.create({
+  return tx.assetMovement.create({
     data,
     include: listInclude,
   });
@@ -79,7 +79,7 @@ export function updateAssetInTransaction(
   id: string,
   data: Prisma.AssetUpdateInput,
 ) {
-  return (tx as unknown as { asset: typeof prisma.asset }).asset.update({
+  return tx.asset.update({
     where: { id },
     data,
   });
@@ -89,7 +89,7 @@ export function findAssetById(
   tx: PrismaTransactionClient,
   id: string,
 ) {
-  return (tx as unknown as { asset: typeof prisma.asset }).asset.findUnique({
+  return tx.asset.findUnique({
     where: { id, deletedAt: null },
     include: {
       assignedTo: { select: { id: true, name: true } },
@@ -102,7 +102,7 @@ export function findAssetsByUserId(
   tx: PrismaTransactionClient,
   userId: string,
 ) {
-  return (tx as unknown as { asset: typeof prisma.asset }).asset.findMany({
+  return tx.asset.findMany({
     where: { assignedToUserId: userId, deletedAt: null },
     include: {
       assignedTo: { select: { id: true, name: true } },
@@ -115,14 +115,14 @@ export function createAuditLogInTransaction(
   tx: PrismaTransactionClient,
   data: Prisma.AuditLogCreateInput,
 ) {
-  return (tx as unknown as { auditLog: typeof prisma.auditLog }).auditLog.create({ data });
+  return tx.auditLog.create({ data });
 }
 
 export function createMaintenanceLogInTransaction(
   tx: PrismaTransactionClient,
   data: Prisma.MaintenanceLogCreateInput,
 ) {
-  return (tx as unknown as { maintenanceLog: typeof prisma.maintenanceLog }).maintenanceLog.create({ data });
+  return tx.maintenanceLog.create({ data });
 }
 
 export function updateUserInTransaction(
@@ -130,7 +130,7 @@ export function updateUserInTransaction(
   id: string,
   data: Prisma.UserUpdateInput,
 ) {
-  return (tx as unknown as { user: typeof prisma.user }).user.update({
+  return tx.user.update({
     where: { id },
     data,
   });

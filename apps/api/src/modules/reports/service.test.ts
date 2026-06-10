@@ -103,7 +103,6 @@ import { runImportJob, readImportStatus } from './service.js';
 const mockRedisGet = redis.get as ReturnType<typeof vi.fn>;
 const mockRedisSet = redis.set as ReturnType<typeof vi.fn>;
 const mockAuditLogCreate = prisma.auditLog.create as ReturnType<typeof vi.fn>;
-const mockRepoFindById = repo.findById as ReturnType<typeof vi.fn>;
 const mockRepoUpdateStatus = repo.updateStatus as ReturnType<typeof vi.fn>;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

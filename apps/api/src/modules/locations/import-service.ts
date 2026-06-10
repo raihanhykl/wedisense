@@ -4,7 +4,6 @@ import { AppError } from '../../middleware/error-handler.js';
 import * as locationRepo from './repository.js';
 import {
   parseLocationImportSheet,
-  type LocationImportRow,
   type ImportParseError,
 } from './import-excel.js';
 
