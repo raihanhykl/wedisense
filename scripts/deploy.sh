@@ -31,7 +31,9 @@ echo "==> Building (shared, api, web)"
 pnpm build
 
 echo "==> Reloading PM2 processes"
-pm2 startOrReload ecosystem.config.cjs
+# --update-env: without it PM2 keeps the env/args a process was first
+# started with and silently ignores ecosystem changes on reload.
+pm2 startOrReload ecosystem.config.cjs --update-env
 pm2 save
 
 echo "==> Waiting for API health check"
