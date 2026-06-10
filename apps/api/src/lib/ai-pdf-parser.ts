@@ -29,7 +29,14 @@ import type { ParsedOdooPo } from './odoo-pdf-parser.js';
 // `response_format` + `structured_outputs`. Quality-first ordering:
 // Gemma 31B dense first (best instruction following on multilingual
 // ID/EN text), Gemma 26B MoE next (faster, similar quality), then
-// Baidu Cobuddy as last-resort.
+// Nvidia Nemotron Super as last-resort.
+//
+// Free slugs churn: providers delist them without notice (e.g.
+// baidu/cobuddy:free vanished in June 2026 → "404 No endpoints
+// found"). When that error appears, re-verify the chain against the
+// registry:
+//   curl -s https://openrouter.ai/api/v1/models | \
+//     jq '.data[] | select(.id | endswith(":free")) | .id'
 //
 // ── To switch to PAID models ─────────────────────────────────────────────
 // 1. Top up your OpenRouter account at https://openrouter.ai (min $5).
@@ -48,8 +55,8 @@ import type { ParsedOdooPo } from './odoo-pdf-parser.js';
 //    client is lazy-init and picks up the new chain on the next call.
 const FALLBACK_CHAIN = [
   'google/gemma-4-31b-it:free', // primary: 262K ctx, multilingual, strong struct output
-  'google/gemma-4-26b-a4b-it:free', // fallback 1: MoE sibling, faster
-  'baidu/cobuddy:free', // fallback 2: 131K ctx, last-resort
+  'meta-llama/llama-4-maverick:free', // fallback 1: MoE sibling, faster
+  'nvidia/nemotron-3-super-120b-a12b:free', // fallback 2: 1M ctx, last-resort
 ] as const;
 
 // ── JSON Schema for structured output ──────────────────────────────────────
@@ -240,7 +247,7 @@ export async function parsePdfWithAi(buffer: Buffer): Promise<AiParsedOdooPo> {
   // `provider.sort: 'throughput'` asks OpenRouter to route each model
   // to its least-congested provider — reduces the chance of hitting
   // 429 for a model whose primary host is currently swamped.
-  let lastError: unknown;
+  const failures: string[] = [];
   for (const model of FALLBACK_CHAIN) {
     const body: ChatCompletionCreateParamsNonStreaming & {
       provider: { sort: string };
@@ -281,16 +288,15 @@ export async function parsePdfWithAi(buffer: Buffer): Promise<AiParsedOdooPo> {
         servedBy: response.model ?? model,
       };
     } catch (err) {
-      lastError = err;
+      failures.push(`[${model}] ${err instanceof Error ? err.message : String(err)}`);
       // Continue to the next model in the chain. Any error class —
       // 429 rate limit, 503 provider down, JSON parse failure — gets
       // the same treatment: try the next one.
     }
   }
 
-  // Every model in the chain failed. Surface the most recent error so
-  // the user sees the actionable HTTP code/provider message.
-  throw lastError instanceof Error
-    ? lastError
-    : new Error('All models in the fallback chain failed');
+  // Every model in the chain failed. Surface ALL per-model errors —
+  // showing only the last one hides the real cause (e.g. a delisted
+  // last-resort slug 404ing masks the primary's 429 rate limit).
+  throw new Error(`every model in the fallback chain failed: ${failures.join('; ')}`);
 }
