@@ -20,8 +20,11 @@ import { cn } from "@/lib/utils";
 //   - Click outside / Esc to close.
 //   - When canCreate is true AND query is non-empty AND nothing in the
 //     dropdown is an exact match, a "+ Create '{query}' as new …" row
-//     appears at the bottom. Clicking it calls onCreate(query), which
-//     resolves to a newly-created entity that becomes the selection.
+//     appears at the bottom. Clicking it either calls onCreate(query),
+//     which resolves to a newly-created entity that becomes the
+//     selection, or — when onCreateRequest is provided instead — hands
+//     the query to the parent so it can gather more input (e.g. a
+//     required category) in its own dialog before creating.
 //
 // The component is "controlled" — it owns the open/focus state but the
 // selected entity lives in the parent form (React Hook Form etc.) so
@@ -48,6 +51,12 @@ interface AutocompletePickerProps<T> {
    *  of the dropdown. The callback should persist the new entity and
    *  return the same raw shape `searchFn` returns. */
   onCreate?: (name: string) => Promise<T>;
+  /** Alternative to `onCreate` for flows that need more input than just
+   *  the name (e.g. a required category). The create row closes the
+   *  dropdown and hands the typed query to the parent, which owns the
+   *  rest of the flow and commits the selection via `onChange` itself.
+   *  Takes precedence over `onCreate` when both are set. */
+  onCreateRequest?: (name: string) => void;
   /** Label used in the create-row text ("Save 'X' as a new vendor"). */
   createNoun?: string;
   placeholder?: string;
@@ -78,6 +87,7 @@ export default function AutocompletePicker<T>({
   searchFn,
   toItem,
   onCreate,
+  onCreateRequest,
   createNoun = "item",
   placeholder = "Search…",
   disabled,
@@ -171,7 +181,10 @@ export default function AutocompletePicker<T>({
     (r) => r.label.toLowerCase() === trimmed.toLowerCase(),
   );
   const canShowCreate =
-    onCreate !== undefined && trimmed.length > 0 && !exactMatch && !loading;
+    (onCreate !== undefined || onCreateRequest !== undefined) &&
+    trimmed.length > 0 &&
+    !exactMatch &&
+    !loading;
 
   // Keyboard handler on the input.
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -211,7 +224,18 @@ export default function AutocompletePicker<T>({
   );
 
   const handleCreate = async () => {
-    if (!onCreate || !trimmed) return;
+    if (!trimmed) return;
+    if (onCreateRequest) {
+      // Parent-owned create flow: close the dropdown but keep the typed
+      // query, so cancelling the parent's dialog returns the user to
+      // their input. On success the parent calls onChange itself and
+      // the picker swaps to the selected-chip state.
+      setOpen(false);
+      setFocusedIndex(-1);
+      onCreateRequest(trimmed);
+      return;
+    }
+    if (!onCreate) return;
     setCreating(true);
     try {
       const created = await onCreate(trimmed);

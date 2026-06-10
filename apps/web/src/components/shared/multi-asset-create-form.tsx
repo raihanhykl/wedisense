@@ -12,13 +12,12 @@ import { cn } from "@/lib/utils";
 import BarcodeScanner from "@/components/barcode/barcode-scanner";
 import VendorPicker from "@/components/shared/vendor-picker";
 import ProductPicker from "@/components/shared/product-picker";
+import NewProductDialog from "@/components/shared/new-product-dialog";
 import {
   useLocations,
   useUsers,
-  useAssetCategories,
   type ProductOption,
 } from "@/hooks/use-reference-data";
-import type { AssetCategoryOption } from "@/types/admin";
 
 // ── Backend product-lookup response shape ──────────────────────────
 // The /api/products/lookup endpoint returns a wrapper, NOT the product
@@ -158,10 +157,11 @@ export default function MultiAssetCreateForm({
     { kind: "product" } | { kind: "serial"; rowIndex: number } | null
   >(null);
 
-  // Inline "create new product" dialog state. Opened by the [+ New product]
-  // button or by an EAN scan that found data upstream but no matching
-  // internal product. Pre-fillable so the EAN-scan flow can pre-populate
-  // name/brand/model/EAN before showing the dialog to the user for category.
+  // Inline "create new product" dialog state. Opened by an EAN scan that
+  // found data upstream but no matching internal product. Pre-fillable so
+  // the EAN-scan flow can pre-populate name/brand/model/EAN before showing
+  // the dialog to the user for category. (Typed-name quick-create lives
+  // inside ProductPicker, which owns its own dialog instance.)
   const [newProductDialog, setNewProductDialog] = useState<{
     open: boolean;
     initial: { name: string; brand: string; model: string; eanCode: string };
@@ -173,12 +173,11 @@ export default function MultiAssetCreateForm({
   // Reference data via TanStack Query. Each hook caches independently with
   // the 5-min staleTime configured at the QueryProvider — so navigating
   // away and back doesn't re-fetch. Products are NOT loaded here anymore
-  // (ProductPicker owns that fetch); we still need locations / users /
-  // categories for the dropdowns + new-product dialog.
+  // (ProductPicker owns that fetch), and categories live inside the
+  // shared NewProductDialog.
   const queryClient = useQueryClient();
   const { data: locations = [] } = useLocations();
   const { data: users = [] } = useUsers();
-  const { data: categories = [] } = useAssetCategories();
 
   const {
     control,
@@ -336,7 +335,7 @@ export default function MultiAssetCreateForm({
         );
       }
     },
-    [setValue, queryClient],
+    [setValue],
   );
 
   // ── EAN query-param prefill ───────────────────────────────────────
@@ -378,10 +377,9 @@ export default function MultiAssetCreateForm({
   );
 
   // ── New product creation handler ──────────────────────────────────
-  // Called by the inline dialog (either from the [+ New product] button or
-  // the EAN-scan fallback). POSTs to /api/products with the chosen category,
-  // seeds the empty-search cache so the product shows up in the listbox
-  // immediately, and auto-selects it.
+  // Called by the EAN-scan fallback dialog. POSTs to /api/products with
+  // the chosen category, seeds the empty-search cache so the product
+  // shows up in the listbox immediately, and auto-selects it.
   const handleCreateProduct = useCallback(
     async (input: {
       name: string;
@@ -916,7 +914,6 @@ export default function MultiAssetCreateForm({
       {newProductDialog.open && (
         <NewProductDialog
           initial={newProductDialog.initial}
-          categories={categories}
           onCancel={() =>
             setNewProductDialog((s) => ({ ...s, open: false }))
           }
@@ -927,170 +924,6 @@ export default function MultiAssetCreateForm({
   );
 }
 
-// ── New product dialog ──────────────────────────────────────────────
-// Small modal for adding a product the user couldn't find in the catalog.
-// Returning a boolean from onSubmit lets the parent close-on-success or
-// leave the dialog open on validation failure so the user can correct.
-interface NewProductDialogProps {
-  initial: { name: string; brand: string; model: string; eanCode: string };
-  categories: AssetCategoryOption[];
-  onCancel: () => void;
-  onSubmit: (input: {
-    name: string;
-    categoryId: string;
-    brand: string;
-    model: string;
-    eanCode: string;
-  }) => Promise<boolean>;
-}
-
-function NewProductDialog({
-  initial,
-  categories,
-  onCancel,
-  onSubmit,
-}: NewProductDialogProps) {
-  const [name, setName] = useState(initial.name);
-  const [categoryId, setCategoryId] = useState("");
-  const [brand, setBrand] = useState(initial.brand);
-  const [model, setModel] = useState(initial.model);
-  const [eanCode, setEanCode] = useState(initial.eanCode);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    setError(null);
-    if (!name.trim()) {
-      setError("Name is required.");
-      return;
-    }
-    if (!categoryId) {
-      setError("Category is required.");
-      return;
-    }
-    setSubmitting(true);
-    const ok = await onSubmit({ name, categoryId, brand, model, eanCode });
-    setSubmitting(false);
-    if (!ok) {
-      // onSubmit already toasted; just keep the dialog open so the user can retry.
-      setError("Save failed. See the toast for details.");
-    }
-  };
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="new-product-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-    >
-      <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
-        <h2 id="new-product-title" className="mb-1 text-lg font-semibold">
-          New product
-        </h2>
-        <p className="mb-4 text-sm text-muted-foreground">
-          Add this product to the catalog so you can link it to assets.
-        </p>
-
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor="np-name">
-              Name <span className="text-destructive">*</span>
-            </label>
-            <input
-              id="np-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor="np-cat">
-              Category <span className="text-destructive">*</span>
-            </label>
-            <select
-              id="np-cat"
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="">-- Select category --</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            {categories.length === 0 && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                No categories available. Ask an admin to create one first.
-              </p>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="np-brand">
-                Brand
-              </label>
-              <input
-                id="np-brand"
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="np-model">
-                Model
-              </label>
-              <input
-                id="np-model"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor="np-ean">
-              EAN code
-            </label>
-            <input
-              id="np-ean"
-              value={eanCode}
-              onChange={(e) => setEanCode(e.target.value)}
-              placeholder="13-digit barcode"
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-          </div>
-        </div>
-
-        {error && (
-          <p role="alert" className="mt-3 text-sm text-destructive">
-            {error}
-          </p>
-        )}
-
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={submitting}
-            className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void submit()}
-            disabled={submitting}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {submitting ? "Creating..." : "Create product"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// NewProductDialog now lives in @/components/shared/new-product-dialog —
+// shared with ProductPicker's inline "+ Save as new product" flow so both
+// paths require a category before the product is created.

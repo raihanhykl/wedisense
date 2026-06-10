@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
+import type { PrismaTransactionClient } from './types.js';
 
 export function findMany(args: {
   skip: number;
@@ -36,6 +37,16 @@ export function findByEan(eanCode: string) {
 
 export function create(data: Prisma.ProductCreateInput) {
   return prisma.product.create({
+    data,
+    include: { category: { select: { id: true, name: true, code: true } } },
+  });
+}
+
+export function createInTransaction(
+  tx: PrismaTransactionClient,
+  data: Prisma.ProductCreateInput,
+) {
+  return tx.product.create({
     data,
     include: { category: { select: { id: true, name: true, code: true } } },
   });
