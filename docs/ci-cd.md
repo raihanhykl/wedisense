@@ -73,14 +73,19 @@ cat github_deploy
 3. **File env** (tidak pernah dikirim lewat CI):
    - `apps/api/.env` — DATABASE_URL, REDIS, JWT secrets, dll.
    - `apps/web/.env.local` — `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_APP_URL` (URL publik asli)
-4. **Migrasi dari proses PM2 lama** ke ecosystem file (sekali saja):
+4. **Migrasi dari proses PM2 lama** ke ecosystem file (sekali saja).
+   PERINGATAN: jangan `pm2 delete all` kalau VPS dipakai project lain —
+   hapus hanya proses wedisense lama, by name/id:
    ```bash
-   pm2 delete all          # atau pm2 delete <nama-proses-lama> satu per satu
+   pm2 ls                  # catat nama/id proses wedisense LAMA
+   pm2 delete <nama-lama>  # hanya proses wedisense, satu per satu
    cd ~/wedisense
    bash scripts/deploy.sh  # build + start wedisense-api & wedisense-web
-   pm2 save
-   pm2 startup             # ikuti instruksi agar PM2 hidup lagi setelah reboot
+   pm2 save                # snapshot seluruh daftar proses (project lain ikut tersimpan)
+   pm2 startup             # lewati kalau sudah pernah di-setup di VPS ini
    ```
+   `pm2 startOrReload ecosystem.config.cjs` di deploy.sh hanya menyentuh
+   `wedisense-api` dan `wedisense-web` — proses project lain tidak terpengaruh.
 
 ## Operasional
 
