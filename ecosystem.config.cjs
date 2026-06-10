@@ -20,7 +20,8 @@ module.exports = {
       name: 'wedisense-web',
       cwd: './apps/web',
       script: 'node_modules/next/dist/bin/next',
-      args: 'start --port 3000',
+      // 3000 is taken by another project's PM2 app on this VPS
+      args: 'start --port 3001',
       instances: 1,
       autorestart: true,
       max_memory_restart: '768M',
