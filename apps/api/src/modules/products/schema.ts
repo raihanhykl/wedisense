@@ -10,11 +10,13 @@ export const createProductSchema = z.object({
   brand: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
-  // Phase 17 v2 — optional for the spec §2.5 "inline quick-save" path.
-  // When omitted, the service falls back to the first available
-  // category (alphabetical by name) so a PO line item can be created
-  // without forcing a category picker during the quick-add flow.
-  categoryId: z.string().uuid().optional(),
+  // Required — the category code is baked into the asset number
+  // (WDS-{CATEGORY_CODE}-…) at asset-creation time, so a product created
+  // with the wrong category silently mis-numbers every asset linked to
+  // it. The old "first category alphabetically" fallback did exactly
+  // that (everything landed in Electronics); the quick-save UX now asks
+  // for a category in NewProductDialog instead.
+  categoryId: z.string().uuid(),
   imageUrl: z.string().nullable().optional(),
   source: z.enum(['API_UPCITEMDB', 'API_BARCODELOOKUP', 'MANUAL']).default('MANUAL'),
   rawApiResponse: z.record(z.unknown()).nullable().optional(),

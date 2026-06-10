@@ -1,3 +1,11 @@
+import type { PrismaClient } from '@prisma/client';
+
+/** Transaction client type for use inside $transaction callbacks */
+export type PrismaTransactionClient = Omit<
+  PrismaClient,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
+
 export interface EanLookupResult {
   name: string;
   brand: string | null;

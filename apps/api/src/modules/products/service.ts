@@ -151,35 +151,17 @@ export async function getProduct(id: string) {
 }
 
 export async function createProduct(input: CreateProductInput, userId: string) {
-  // Resolve category: explicit FK when supplied; otherwise fall back to
-  // the first available category (alphabetical by name). The fallback
-  // supports spec §2.5's inline quick-save UX — the user only types a
-  // product name in the PO form and we want the row to land in *some*
-  // category they can re-categorise later from the catalog page.
-  let categoryId: string;
-  if (input.categoryId) {
-    const category = await prisma.assetCategory.findUnique({
-      where: { id: input.categoryId, deletedAt: null },
-    });
-    if (!category) {
-      throw new AppError(404, 'CATEGORY_NOT_FOUND', 'Asset category not found');
-    }
-    categoryId = category.id;
-  } else {
-    const fallback = await prisma.assetCategory.findFirst({
-      where: { deletedAt: null },
-      orderBy: { name: 'asc' },
-      select: { id: true },
-    });
-    if (!fallback) {
-      throw new AppError(
-        500,
-        'NO_DEFAULT_CATEGORY',
-        'Cannot quick-create a product: no asset categories exist. Seed at least one category first.',
-      );
-    }
-    categoryId = fallback.id;
+  // Category is required (schema-enforced). No fallback: the category
+  // code is baked into asset numbers at asset-creation time, so a
+  // silently-defaulted category mis-numbers every asset linked to the
+  // product. Quick-save flows collect the category in NewProductDialog.
+  const category = await prisma.assetCategory.findUnique({
+    where: { id: input.categoryId, deletedAt: null },
+  });
+  if (!category) {
+    throw new AppError(404, 'CATEGORY_NOT_FOUND', 'Asset category not found');
   }
+  const categoryId = category.id;
 
   // Check for duplicate EAN
   if (input.eanCode) {
@@ -189,29 +171,34 @@ export async function createProduct(input: CreateProductInput, userId: string) {
     }
   }
 
-  const product = await repo.create({
-    eanCode: input.eanCode ?? null,
-    name: input.name,
-    brand: input.brand ?? null,
-    model: input.model ?? null,
-    description: input.description ?? null,
-    category: { connect: { id: categoryId } },
-    imageUrl: input.imageUrl ?? null,
-    source: input.source ?? 'MANUAL',
-    rawApiResponse: input.rawApiResponse
-      ? (input.rawApiResponse as Prisma.InputJsonValue)
-      : Prisma.JsonNull,
-  });
+  // Product row + audit entry commit atomically — a failed audit write
+  // must not leave an untracked product behind.
+  const product = await prisma.$transaction(async (tx) => {
+    const created = await repo.createInTransaction(tx, {
+      eanCode: input.eanCode ?? null,
+      name: input.name,
+      brand: input.brand ?? null,
+      model: input.model ?? null,
+      description: input.description ?? null,
+      category: { connect: { id: categoryId } },
+      imageUrl: input.imageUrl ?? null,
+      source: input.source ?? 'MANUAL',
+      rawApiResponse: input.rawApiResponse
+        ? (input.rawApiResponse as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+    });
 
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      userId,
-      action: 'CREATE',
-      resourceType: 'Product',
-      resourceId: product.id,
-      newValues: { name: product.name, eanCode: product.eanCode },
-    },
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: 'CREATE',
+        resourceType: 'Product',
+        resourceId: created.id,
+        newValues: { name: created.name, eanCode: created.eanCode },
+      },
+    });
+
+    return created;
   });
 
   return product;

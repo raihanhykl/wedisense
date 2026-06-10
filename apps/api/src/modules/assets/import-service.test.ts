@@ -46,7 +46,6 @@ import type { AssetImportRow } from '../../lib/excel.js';
 const mockAssetFindMany = prisma.asset.findMany as ReturnType<typeof vi.fn>;
 const mockAssetCategoryFindMany = prisma.assetCategory.findMany as ReturnType<typeof vi.fn>;
 const mockProductFindMany = prisma.product.findMany as ReturnType<typeof vi.fn>;
-const mockProductCreate = prisma.product.create as ReturnType<typeof vi.fn>;
 const mockLocationFindMany = prisma.location.findMany as ReturnType<typeof vi.fn>;
 const mockAuditLogCreate = prisma.auditLog.create as ReturnType<typeof vi.fn>;
 const mockTransaction = prisma.$transaction as ReturnType<typeof vi.fn>;
@@ -216,7 +215,6 @@ describe('bulkImport()', () => {
     mockAssetCategoryFindMany.mockResolvedValue([{ id: 'cat-IT', name: 'IT', code: 'it' }]);
 
     // The pre-pass $transaction creates the product, then the asset tx runs
-    let txCallCount = 0;
     const productTx = {
       product: {
         create: vi.fn().mockResolvedValue({ id: 'new-prod-ThinkPad', name: 'Lenovo ThinkPad X1' }),
@@ -230,10 +228,9 @@ describe('bulkImport()', () => {
       $queryRaw: vi.fn().mockResolvedValue([{ current_sequence: 1 }]),
     };
 
-    mockTransaction.mockImplementation((cb: (tx: typeof productTx) => Promise<unknown>) => {
-      txCallCount++;
-      return cb(productTx);
-    });
+    mockTransaction.mockImplementation((cb: (tx: typeof productTx) => Promise<unknown>) =>
+      cb(productTx),
+    );
 
     // After the pre-pass the row's productId gets patched to 'new-prod-ThinkPad'
     mockProductFindMany.mockResolvedValue([
@@ -251,9 +248,17 @@ describe('bulkImport()', () => {
 
     const result = await bulkImport([rowWithSpec], USER_ID);
 
-    // Product create should have been invoked in pre-pass tx
+    // Product create should have been invoked in pre-pass tx, connected to
+    // the RESOLVED category — never a defaulted one. The category drives
+    // the asset-number prefix, so a silently wrong/missing connect here
+    // would regress the WDS-ELC-mis-numbering bug.
     expect(productTx.product.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ name: 'Lenovo ThinkPad X1' }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({
+          name: 'Lenovo ThinkPad X1',
+          category: { connect: { id: 'cat-IT' } },
+        }),
+      }),
     );
     expect(result.failed).toHaveLength(0);
     expect(result.created).toHaveLength(1);
