@@ -265,7 +265,7 @@ export async function createLog(input: CreateLogInput, userId: string) {
       invoiceUrl: input.invoiceUrl ?? null,
       conditionBefore: input.conditionBefore,
       conditionAfter: input.conditionAfter,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
       ...(input.maintenanceScheduleId && {
         schedule: { connect: { id: input.maintenanceScheduleId } },
       }),

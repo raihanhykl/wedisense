@@ -174,7 +174,7 @@ export async function parseLocationImportSheet(
   const headerRow = ws.getRow(1);
   const headerToCol = new Map<string, number>();
   headerRow.eachCell({ includeEmpty: false }, (cell, colNum) => {
-    const text = String(cell.value ?? '').trim();
+    const text = cellString(cell);
     if (text) headerToCol.set(normaliseHeader(text), colNum);
   });
 
@@ -296,12 +296,23 @@ function normaliseHeader(s: string): string {
 function cellString(cell: ExcelJS.Cell): string {
   const v = cell?.value;
   if (v === null || v === undefined) return '';
-  // ExcelJS returns objects for rich text, formulas, hyperlinks. The toString
-  // fallback handles them all without us caring which it is.
+  // ExcelJS returns objects for rich text, formulas, hyperlinks.
   if (typeof v === 'object') {
+    // Rich text: { richText: [...] } — ExcelJS resolves its .text property
     if ('text' in v && typeof v.text === 'string') return v.text.trim();
-    if ('result' in v && v.result != null) return String(v.result).trim();
-    return String(v).trim();
+    // Formula cell: extract result, which is a primitive or CellErrorValue
+    if ('result' in v && v.result != null) {
+      const r = v.result;
+      if (typeof r === 'object') {
+        // CellErrorValue: { error: '#N/A' | '#REF!' | ... }
+        return 'error' in r ? String(r.error) : '';
+      }
+      // r is number | string | boolean | Date
+      return String(r).trim();
+    }
+    // Hyperlink: { text: string, hyperlink: string } — already handled above,
+    // but as a final fallback for any other object shape return empty string.
+    return '';
   }
   return String(v).trim();
 }

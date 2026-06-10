@@ -270,6 +270,6 @@ describe('streamAuditCsv()', () => {
     // BOM + header line + audit (no data rows, no truncation notice)
     const lines = output.split('\n').filter((l) => l.length > 0);
     expect(lines).toHaveLength(1); // header only
-    expect(lines[0]).toMatch(/^﻿?timestamp/);
+    expect(lines[0]).toMatch(/^\uFEFF?timestamp/u);
   });
 });

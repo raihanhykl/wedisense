@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '../modules/auth/types.js';
 
 // Extend Express Request to include user
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- Express type augmentation requires namespace
   namespace Express {
     interface Request {
       user?: AuthenticatedUser;

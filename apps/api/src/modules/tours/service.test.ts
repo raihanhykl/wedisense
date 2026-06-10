@@ -376,7 +376,7 @@ describe('restartTour()', () => {
     // Audit log is written inside the same transaction so a partial failure
     // can't leave a reset tour with no audit trail.
     expect(mockTransaction).toHaveBeenCalledOnce();
-    const auditCreate = tx.auditLog.create as ReturnType<typeof vi.fn>;
+    const auditCreate = tx.auditLog.create;
     expect(auditCreate).toHaveBeenCalledOnce();
     const auditCall = auditCreate.mock.calls[0]?.[0] as { data: { resourceType: string; action: string } };
     expect(auditCall.data.resourceType).toBe('UserTourProgress');

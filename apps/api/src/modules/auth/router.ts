@@ -104,9 +104,7 @@ router.post(
 router.get(
   '/me',
   authenticate,
-  asyncHandler(async (req, res) => {
-    sendSuccess(res, { user: req.user });
-  }),
+  asyncHandler((req, res) => Promise.resolve(sendSuccess(res, { user: req.user }))),
 );
 
 // PUT /api/auth/change-password

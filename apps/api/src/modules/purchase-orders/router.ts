@@ -72,8 +72,9 @@ router.post(
     // anything other than the literal "regex" is treated as "ai" so
     // the default is the higher-quality path even if the client omits
     // the field entirely.
+    const body = req.body as Record<string, unknown>;
     const requestedMode =
-      typeof req.body?.['mode'] === 'string' ? req.body['mode'] : 'ai';
+      typeof body['mode'] === 'string' ? body['mode'] : 'ai';
     const mode: 'ai' | 'regex' = requestedMode === 'regex' ? 'regex' : 'ai';
 
     if (mode === 'ai') {

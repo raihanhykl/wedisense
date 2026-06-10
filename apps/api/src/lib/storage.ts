@@ -17,7 +17,7 @@ export class LocalStorageAdapter implements StorageAdapter {
     this.basePath = path.resolve(basePath ?? STORAGE_PATH);
   }
 
-  async save(relativePath: string, data: Buffer): Promise<string> {
+  save(relativePath: string, data: Buffer): Promise<string> {
     const fullPath = path.join(this.basePath, relativePath);
     const dir = path.dirname(fullPath);
 
@@ -26,19 +26,20 @@ export class LocalStorageAdapter implements StorageAdapter {
     }
 
     fs.writeFileSync(fullPath, data);
-    return `/uploads/${relativePath}`;
+    return Promise.resolve(`/uploads/${relativePath}`);
   }
 
-  async delete(relativePath: string): Promise<void> {
+  delete(relativePath: string): Promise<void> {
     const fullPath = path.join(this.basePath, relativePath);
     if (fs.existsSync(fullPath)) {
       fs.unlinkSync(fullPath);
     }
+    return Promise.resolve();
   }
 
-  async exists(relativePath: string): Promise<boolean> {
+  exists(relativePath: string): Promise<boolean> {
     const fullPath = path.join(this.basePath, relativePath);
-    return fs.existsSync(fullPath);
+    return Promise.resolve(fs.existsSync(fullPath));
   }
 
   getAbsolutePath(relativePath: string): string {

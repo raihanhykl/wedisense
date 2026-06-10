@@ -48,7 +48,6 @@ import { login, recordLogout, changePassword } from './service.js';
 type MockFn = ReturnType<typeof vi.fn>;
 
 const mockUserFind = prisma.user.findUnique as MockFn;
-const mockUserUpdate = prisma.user.update as MockFn;
 const mockAuditCreate = prisma.auditLog.create as MockFn;
 const mockLocationFind = prisma.location.findMany as MockFn;
 const mockTransaction = prisma.$transaction as MockFn;
@@ -243,7 +242,7 @@ describe('changePassword()', () => {
 
     // The new hash got written through the tx client, NOT the global prisma.
     expect(mockTransaction).toHaveBeenCalledOnce();
-    const txUserUpdate = tx.user.update as MockFn;
+    const txUserUpdate = tx.user.update;
     expect(txUserUpdate).toHaveBeenCalledOnce();
     const updateCall = txUserUpdate.mock.calls[0]?.[0] as {
       where: { id: string };
@@ -253,7 +252,7 @@ describe('changePassword()', () => {
     expect(updateCall.data.passwordHash).toBe('$2b$12$newhash');
 
     // Audit row written through the SAME tx — atomicity guarantee.
-    const txAuditCreate = tx.auditLog.create as MockFn;
+    const txAuditCreate = tx.auditLog.create;
     expect(txAuditCreate).toHaveBeenCalledOnce();
     expect(mockAuditCreate).not.toHaveBeenCalled(); // not the global one
   });
@@ -272,7 +271,7 @@ describe('changePassword()', () => {
       AUDIT_CTX,
     );
 
-    const txAuditCreate = tx.auditLog.create as MockFn;
+    const txAuditCreate = tx.auditLog.create;
     const auditCall = txAuditCreate.mock.calls[0]?.[0] as {
       data: { newValues: Record<string, unknown>; action: string };
     };

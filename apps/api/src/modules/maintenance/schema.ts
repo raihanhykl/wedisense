@@ -61,7 +61,11 @@ export const createLogSchema = z.object({
   invoiceUrl: z.string().url().nullable().optional(),
   conditionBefore: assetConditionEnum,
   conditionAfter: assetConditionEnum,
-  attachments: z.any().optional(),
+  attachments: z.array(z.object({
+    filename: z.string(),
+    url: z.string(),
+    uploadedAt: z.string().optional(),
+  })).optional(),
 });
 
 export const logListFilterSchema = z.object({

@@ -295,7 +295,7 @@ async function handleAssignment(input: CreateMovementInput, performedByUserId: s
       toUser: { connect: { id: toUserId } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -328,7 +328,7 @@ async function handleUnassignment(input: CreateMovementInput, performedByUserId:
       ...(asset.assignedToUserId && { fromUser: { connect: { id: asset.assignedToUserId } } }),
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -367,7 +367,7 @@ async function handleLocationTransfer(input: CreateMovementInput, performedByUse
       toLocation: { connect: { id: toLocationId } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -409,7 +409,7 @@ async function handleLoanOut(input: CreateMovementInput, performedByUserId: stri
       performedBy: { connect: { id: performedByUserId } },
       expectedReturnDate,
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -443,7 +443,7 @@ async function handleLoanReturn(input: CreateMovementInput, performedByUserId: s
       performedBy: { connect: { id: performedByUserId } },
       actualReturnDate: new Date(),
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -552,7 +552,7 @@ async function handleSendToMaintenance(input: CreateMovementInput, performedByUs
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -593,7 +593,7 @@ async function handleReturnFromMaintenance(input: CreateMovementInput, performed
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -637,7 +637,7 @@ async function handleDisposal(input: CreateMovementInput, performedByUserId: str
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: `${input.notes} | Final book value: ${asset.currentBookValue?.toString() ?? 'N/A'}`,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     movementId = created.id;
@@ -736,7 +736,7 @@ async function handleFound(input: CreateMovementInput, performedByUserId: string
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -776,7 +776,7 @@ async function handleLost(input: CreateMovementInput, performedByUserId: string)
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? null,
+      attachments: input.attachments ?? Prisma.DbNull,
     });
 
     movementId = created.id;

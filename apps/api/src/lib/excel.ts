@@ -254,6 +254,17 @@ export function detectColumnMapping(
   return { mapping, headers, requiredMissing };
 }
 
+/** Convert an unknown parse-error value to a display string for the error report sheet. */
+function cellValueToString(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'bigint') return String(v);
+  if (typeof v === 'symbol') return v.description ?? v.toString();
+  // object — includes Date, Array, plain object
+  return JSON.stringify(v);
+}
+
 // Shared helper for normalising a cell value to a trimmed string.
 // Pulled out so detectColumnMapping and parseAssetImportSheet's getCellValue
 // agree on what "empty" means.
@@ -879,12 +890,7 @@ export async function buildImportErrorReport(
       rowIndex: e.rowIndex,
       field: e.field || '',
       message: e.message,
-      value:
-        e.value == null
-          ? ''
-          : typeof e.value === 'object'
-            ? JSON.stringify(e.value)
-            : String(e.value),
+      value: cellValueToString(e.value),
     };
     if (e.rawValues) {
       for (const f of fieldList) {

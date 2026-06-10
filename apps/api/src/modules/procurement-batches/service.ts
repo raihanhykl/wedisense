@@ -10,7 +10,6 @@ import {
   decrementBatchCount,
   bumpAssetCount as bumpPoAssetCount,
 } from '../purchase-orders/service.js';
-import * as poRepo from '../purchase-orders/repository.js';
 import { computeItemAmounts } from '../purchase-orders/totals.js';
 import type { PrismaTransactionClient } from './types.js';
 import type {
