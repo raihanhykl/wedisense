@@ -9,7 +9,7 @@
 set -euo pipefail
 
 BRANCH="${DEPLOY_BRANCH:-main}"
-HEALTH_URL="${HEALTH_URL:-http://localhost:4000/api/health}"
+HEALTH_URL="${HEALTH_URL:-http://localhost:4100/api/health}"
 
 cd "$(dirname "$0")/.."
 
