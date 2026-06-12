@@ -10,6 +10,9 @@ const listInclude = {
       id: true,
       name: true,
       brand: true,
+      // model is surfaced on the list response so the frontend can
+      // display or filter by model without a separate detail fetch.
+      model: true,
       // Category is shown as a list column + powers the filter dropdown.
       // Selecting it here avoids an N+1 fetch from the frontend.
       category: { select: { id: true, name: true } },

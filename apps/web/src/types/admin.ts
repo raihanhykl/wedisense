@@ -141,6 +141,29 @@ export interface Permission {
   description: string;
 }
 
+// ── Product types ────────────────────────────────────────────────────
+// Matches the GET /api/products list envelope shape.
+export type ProductSource = 'API_UPCITEMDB' | 'API_BARCODELOOKUP' | 'MANUAL';
+
+export interface ProductListItem {
+  id: string;
+  eanCode: string | null;
+  name: string;
+  brand: string | null;
+  model: string | null;
+  description: string | null;
+  categoryId: string;
+  imageUrl: string | null;
+  source: ProductSource;
+  createdAt: string;
+  updatedAt: string;
+  category: { id: string; name: string; code: string };
+  /** Active assets that reference this product. */
+  assetCount: number;
+  /** Purchase order line items that reference this product. */
+  purchaseOrderItemCount: number;
+}
+
 // ── Asset types ──────────────────────────────────────────────────────
 export interface AssetListItem {
   id: string;
@@ -158,6 +181,7 @@ export interface AssetListItem {
     id: string;
     name: string;
     brand: string | null;
+    model: string | null;
     category: { id: string; name: string } | null;
   } | null;
   location: { id: string; name: string; code: string };
@@ -209,6 +233,8 @@ export interface AssetListViewConfig {
   statusFilter?: string;
   locationFilter?: string;
   categoryFilter?: string;
+  assignedToFilter?: string;
+  productFilter?: string;
   sortField?: string;
   sortOrder?: "asc" | "desc";
 }
