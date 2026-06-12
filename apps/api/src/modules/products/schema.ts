@@ -4,6 +4,11 @@ export const lookupEanSchema = z.object({
   ean: z.string().min(1),
 });
 
+export const productListQuerySchema = z.object({
+  search: z.string().optional(),
+  categoryId: z.string().uuid().optional(),
+});
+
 export const createProductSchema = z.object({
   eanCode: z.string().nullable().optional(),
   name: z.string().min(1),
@@ -25,5 +30,6 @@ export const createProductSchema = z.object({
 export const updateProductSchema = createProductSchema.partial().omit({ source: true, rawApiResponse: true });
 
 export type LookupEanInput = z.infer<typeof lookupEanSchema>;
+export type ProductListQueryInput = z.infer<typeof productListQuerySchema>;
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;

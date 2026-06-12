@@ -28,6 +28,8 @@ export const PERMISSIONS = {
   AUDIT_READ: 'audit:read',
   LABELS_MANAGE: 'labels:manage',
   TOURS_MANAGE: 'tours:manage',
+  PRODUCTS_MANAGE: 'products:manage',
+  PRODUCTS_DELETE: 'products:delete',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -53,6 +55,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.AUDIT_READ,
     PERMISSIONS.LABELS_MANAGE,
     PERMISSIONS.TOURS_MANAGE,
+    PERMISSIONS.PRODUCTS_MANAGE,
   ],
   [SYSTEM_ROLES.MANAGER]: [
     PERMISSIONS.ASSETS_CREATE,
@@ -81,7 +84,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
 // ── Asset Number Format ────────────────────────────────────
 
 export const ASSET_NUMBER_PREFIX = 'WDS';
-export const ASSET_NUMBER_FORMAT = `${ASSET_NUMBER_PREFIX}-{CATEGORY_CODE}-{YEAR}-{SEQ}`;
+// {CATEGORY_PATH} is the hierarchical category code path, parent codes
+// first, joined by "/" — e.g. "IT/NB" for a Notebook category under IT.
+export const ASSET_NUMBER_FORMAT = `${ASSET_NUMBER_PREFIX}-{CATEGORY_PATH}-{YEAR}-{SEQ}`;
 export const MOVEMENT_REF_PREFIX = 'MOV';
 
 // ── Pagination Defaults ────────────────────────────────────

@@ -15,3 +15,5 @@ export interface EanLookupResult {
   source: 'API_UPCITEMDB' | 'API_BARCODELOOKUP' | 'MANUAL';
   rawApiResponse: Record<string, unknown> | null;
 }
+
+export type ProductSortField = 'name' | 'brand' | 'createdAt' | 'assetCount';

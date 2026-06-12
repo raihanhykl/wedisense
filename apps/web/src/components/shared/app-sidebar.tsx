@@ -43,6 +43,7 @@ const navItems: NavItem[] = [
   { label: "Notifications", href: "/admin/notifications" },
   { label: "Locations", href: "/admin/locations" },
   { label: "Categories", href: "/admin/asset-categories", permission: "categories:manage" },
+  { label: "Products", href: "/admin/products", permission: "products:manage" },
   { label: "Tours", href: "/admin/tours", permission: "tours:manage", enabled: TOURS_ENABLED },
   { label: "Users", href: "/admin/users", permission: "users:manage" },
   { label: "Roles", href: "/admin/roles", permission: "roles:manage" },
