@@ -7,6 +7,8 @@ import {
   assertBatchAcceptsAssets,
   bumpBatchAssetCountWithCascade,
 } from '../procurement-batches/service.js';
+import { AppError } from '../../middleware/error-handler.js';
+import { loadCategoryCodePathResolver } from '../../utils/category-code-path.js';
 import type { AssetImportRow } from '../../lib/excel.js';
 import type { PrismaTransactionClient } from './types.js';
 
@@ -77,22 +79,28 @@ export async function previewImportDedup(
   return { willSkip };
 }
 
-// Thread-safe asset number generator (same pattern as main service)
-async function generateAssetNumber(categoryCode: string, tx: PrismaTransactionClient): Promise<string> {
+// Thread-safe asset number generator (same pattern as main service).
+// `categoryCodePath` is the full hierarchical code path (e.g. "IT/NB") —
+// see utils/category-code-path.ts. Sequences are keyed per (path, year).
+async function generateAssetNumber(categoryCodePath: string, tx: PrismaTransactionClient): Promise<string> {
+  // Defensive: an empty path would mint a malformed "WDS--YYYY-NNNNN".
+  if (!categoryCodePath) {
+    throw new AppError(500, 'CATEGORY_PATH_EMPTY', 'Could not resolve category code path for asset numbering');
+  }
   const year = new Date().getFullYear();
 
   const result = await (tx as unknown as { $queryRaw: typeof prisma.$queryRaw }).$queryRaw<
     Array<{ current_sequence: number }>
   >`
     INSERT INTO asset_number_sequences (id, category_code, year, current_sequence)
-    VALUES (gen_random_uuid(), ${categoryCode}, ${year}, 1)
+    VALUES (gen_random_uuid(), ${categoryCodePath}, ${year}, 1)
     ON CONFLICT (category_code, year)
     DO UPDATE SET current_sequence = asset_number_sequences.current_sequence + 1
     RETURNING current_sequence
   `;
 
   const seq = result[0]!.current_sequence;
-  return `WDS-${categoryCode}-${year}-${String(seq).padStart(5, '0')}`;
+  return `WDS-${categoryCodePath}-${year}-${String(seq).padStart(5, '0')}`;
 }
 
 function generateReferenceNumber(): string {
@@ -170,7 +178,7 @@ export async function bulkImport(
   // and resolve the asset's category-code dependency.
   const newProductBuckets = new Map<
     string,
-    { spec: Spec; rowIndices: number[]; categoryId: string; categoryCode: string }
+    { spec: Spec; rowIndices: number[]; categoryId: string }
   >();
   const newProductRowKey = new Map<number, string>(); // rowIndex → dedupe-key
 
@@ -223,7 +231,6 @@ export async function bulkImport(
         spec,
         rowIndices,
         categoryId: category.id,
-        categoryCode: category.code,
       });
     }
   }
@@ -241,9 +248,9 @@ export async function bulkImport(
 
   // Pre-load all referenced existing products and locations. Rows that
   // request a brand new product have a natural-key string in `productId` —
-  // they don't show up in this lookup; their category code comes from the
-  // bucket resolved above. Both lookups are read-only and safe to do
-  // outside the transaction.
+  // they don't show up in this lookup; their category id comes from the
+  // bucket resolved above. All lookups (including the category code-path
+  // resolver) are read-only and safe to do outside the transaction.
   const existingProductIds = [
     ...new Set(
       remainingRows
@@ -255,16 +262,16 @@ export async function bulkImport(
 
   // Note: `findMany({ where: { id: { in: [] } } })` is a no-op fast-path in
   // Prisma — no DB round-trip when the array is empty — so unconditionally
-  // calling it keeps the return type uniform (Product & category) without
-  // adding latency for the all-new-products case.
-  const [products, locations] = await Promise.all([
+  // calling it keeps the return type uniform without adding latency for
+  // the all-new-products case.
+  const [products, locations, resolveCategoryCodePath] = await Promise.all([
     prisma.product.findMany({
       where: { id: { in: existingProductIds } },
-      include: { category: { select: { code: true } } },
     }),
     prisma.location.findMany({
       where: { id: { in: locationIds }, deletedAt: null },
     }),
+    loadCategoryCodePathResolver(prisma),
   ]);
 
   const productMap = new Map(products.map((p) => [p.id, p]));
@@ -295,18 +302,18 @@ export async function bulkImport(
 
   const failed: ImportError[] = [...earlyFailed];
   const skipped: ImportSkip[] = [];
-  const validRows: Array<{ row: AssetImportRow; categoryCode: string; newProductKey?: string }> = [];
+  const validRows: Array<{ row: AssetImportRow; categoryCodePath: string; newProductKey?: string }> = [];
   // Within-file dedupe: if two rows share the same serial, only the first
   // succeeds — the second is reported as duplicate without hitting the DB.
   const seenSerialsInFile = new Set<string>();
 
   // Validate each row against pre-loaded data
   for (const row of remainingRows) {
-    // Resolve the category code: existing-product rows lookup against
+    // Resolve the category code path: existing-product rows lookup against
     // productMap; new-product rows pull from the bucket we resolved before
     // entering the transaction.
     const newProductKey = newProductRowKey.get(row.rowIndex);
-    let categoryCode: string;
+    let categoryCodePath: string;
     if (newProductKey) {
       const bucket = newProductBuckets.get(newProductKey);
       if (!bucket) {
@@ -320,14 +327,14 @@ export async function bulkImport(
         });
         continue;
       }
-      categoryCode = bucket.categoryCode;
+      categoryCodePath = resolveCategoryCodePath(bucket.categoryId);
     } else {
       const product = productMap.get(row.productId);
       if (!product) {
         failed.push({ rowIndex: row.rowIndex, field: 'productId', message: `Product not found: ${row.productId}`, value: row.productId });
         continue;
       }
-      categoryCode = product.category.code;
+      categoryCodePath = resolveCategoryCodePath(product.categoryId);
     }
 
     if (!locationSet.has(row.locationId)) {
@@ -365,7 +372,7 @@ export async function bulkImport(
       seenSerialsInFile.add(row.serialNumber);
     }
 
-    validRows.push({ row, categoryCode, ...(newProductKey && { newProductKey }) });
+    validRows.push({ row, categoryCodePath, ...(newProductKey && { newProductKey }) });
   }
 
   // Checkpoint after pre-validation: skipped & failed are now final, only
@@ -427,7 +434,7 @@ export async function bulkImport(
       }
 
       // Step C: insert assets + initial movements.
-      for (const { row, categoryCode, newProductKey } of validRows) {
+      for (const { row, categoryCodePath, newProductKey } of validRows) {
         // Resolve the productId for new-product rows from the freshly
         // inserted product. Existing-product rows already have a UUID.
         const productId = newProductKey
@@ -435,7 +442,7 @@ export async function bulkImport(
           : row.productId;
 
         const assetId = randomUUID();
-        const assetNumber = await generateAssetNumber(categoryCode, tx as PrismaTransactionClient);
+        const assetNumber = await generateAssetNumber(categoryCodePath, tx as PrismaTransactionClient);
 
         const created = await repo.createInTransaction(tx as PrismaTransactionClient, {
           id: assetId,

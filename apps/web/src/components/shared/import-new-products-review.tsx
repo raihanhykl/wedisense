@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Pencil, PackagePlus } from "lucide-react";
 import { useAssetCategories } from "@/hooks/use-reference-data";
+import CategoryTreePicker from "@/components/shared/category-tree-picker";
 import type { AssetImportRow } from "@/types/admin";
 
 // ── Aggregated view of a new product the import will create ──────────
@@ -260,28 +261,31 @@ function EditNewProductDialog({ entry, onCancel, onSave }: EditDialogProps) {
             <label className="mb-1 block text-sm font-medium" htmlFor="enp-cat">
               Category <span className="text-destructive">*</span>
             </label>
-            <select
+            {/* The import flow matches categories by NAME, so the picker is
+                bridged name↔id: an Excel-typed name that doesn't exist in
+                the catalog resolves to no selection and is surfaced through
+                the placeholder ("current — may not exist") instead of being
+                silently overwritten. Picking a node stores its exact name. */}
+            <CategoryTreePicker
               id="enp-cat"
-              value={categoryName}
-              onChange={(e) => setCategoryName(e.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              {/* Preserve user-typed value as a sentinel option so we don't
-                  silently overwrite it just because the dropdown's loaded list
-                  doesn't include it. The next category-name match (case
-                  insensitive) overrides — but if no match, user keeps typing
-                  freely. */}
-              {!categories.some((c) => c.name.toLowerCase() === categoryName.toLowerCase()) && (
-                <option value={categoryName}>
-                  {categoryName} (current — may not exist)
-                </option>
-              )}
-              {categories.map((c) => (
-                <option key={c.id} value={c.name}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              data-tour="import-product-category-picker"
+              value={
+                categories.find(
+                  (c) => c.name.toLowerCase() === categoryName.toLowerCase(),
+                )?.id ?? null
+              }
+              onChange={(id) => {
+                const cat = categories.find((c) => c.id === id);
+                setCategoryName(cat ? cat.name : "");
+              }}
+              categories={categories}
+              placeholder={
+                categoryName
+                  ? `${categoryName} (current — may not exist)`
+                  : "Select category"
+              }
+              clearLabel="— Clear selection —"
+            />
             {categories.length === 0 && (
               <p className="mt-1 text-xs text-muted-foreground">
                 Loading categories...

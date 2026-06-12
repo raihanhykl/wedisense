@@ -70,8 +70,13 @@ function makeRow(overrides: Partial<AssetImportRow> = {}): AssetImportRow {
 const PRODUCT = {
   id: 'prod-1',
   name: 'MacBook',
+  categoryId: 'cat-it',
   category: { code: 'IT' },
 };
+
+// Category list for the code-path resolver (utils/category-code-path.ts).
+// 'cat-it' is a root category so asset numbers keep the single "IT" segment.
+const CATEGORIES = [{ id: 'cat-it', code: 'IT', parentId: null }];
 
 const LOCATION = { id: 'loc-1', name: 'Head Office', deletedAt: null };
 
@@ -178,6 +183,7 @@ describe('previewImportDedup()', () => {
 describe('bulkImport()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAssetCategoryFindMany.mockResolvedValue(CATEGORIES);
   });
 
   it('returns empty result for empty rows', async () => {
@@ -212,7 +218,12 @@ describe('bulkImport()', () => {
       newProductSpec: { name: 'Lenovo ThinkPad X1', categoryName: 'IT' },
     };
 
-    mockAssetCategoryFindMany.mockResolvedValue([{ id: 'cat-IT', name: 'IT', code: 'it' }]);
+    // 'cat-IT' is nested under Electronics — the created asset's number must
+    // carry the full hierarchical code path ("ELC/it"), not just the leaf.
+    mockAssetCategoryFindMany.mockResolvedValue([
+      { id: 'cat-elc', name: 'Electronics', code: 'ELC', parentId: null },
+      { id: 'cat-IT', name: 'IT', code: 'it', parentId: 'cat-elc' },
+    ]);
 
     // The pre-pass $transaction creates the product, then the asset tx runs
     const productTx = {
@@ -262,6 +273,9 @@ describe('bulkImport()', () => {
     );
     expect(result.failed).toHaveLength(0);
     expect(result.created).toHaveLength(1);
+    // The new-product path must also resolve the hierarchical code path.
+    const year = new Date().getFullYear();
+    expect(result.created[0]!.assetNumber).toBe(`WDS-ELC/it-${year}-00001`);
   });
 
   it('newProductSpec with missing category → row goes to failed with productCategory error', async () => {
@@ -273,7 +287,8 @@ describe('bulkImport()', () => {
 
     mockAssetCategoryFindMany.mockResolvedValue([]); // category not found
 
-    // pre-pass $transaction runs but product.create is not called
+    // All rows fail the pre-flight → bulkImport early-returns before any
+    // $transaction; the stubs below exist only to prove nothing is called.
     const productTx = {
       product: { create: vi.fn() },
       asset: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },

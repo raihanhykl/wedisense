@@ -2,11 +2,12 @@
 
 import { useState, type KeyboardEvent } from "react";
 import { useAssetCategories } from "@/hooks/use-reference-data";
+import CategoryTreePicker from "@/components/shared/category-tree-picker";
 
 // ── New product dialog ──────────────────────────────────────────────
 // Small modal for adding a product the user couldn't find in the catalog.
 // Category is required — the product's category drives the asset-number
-// prefix (WDS-{CATEGORY_CODE}-…), so it must be correct at creation time;
+// prefix (WDS-{CATEGORY_PATH}-…), so it must be correct at creation time;
 // re-categorising later does NOT renumber existing assets.
 //
 // Used by:
@@ -109,19 +110,15 @@ export default function NewProductDialog({
             <label className="mb-1 block text-sm font-medium" htmlFor="np-cat">
               Category <span className="text-destructive">*</span>
             </label>
-            <select
+            <CategoryTreePicker
               id="np-cat"
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="">-- Select category --</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              data-tour="new-product-category-picker"
+              value={categoryId || null}
+              onChange={(id) => setCategoryId(id ?? "")}
+              categories={categories}
+              placeholder="-- Select category --"
+              clearLabel="-- Select category --"
+            />
             {categories.length === 0 && (
               <p className="mt-1 text-xs text-muted-foreground">
                 No categories available. Ask an admin to create one first.
