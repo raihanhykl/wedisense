@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import Breadcrumb from "@/components/shared/breadcrumb";
+import CategoryTreePicker from "@/components/shared/category-tree-picker";
 import { apiGet, apiPost } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import { usePermission } from "@/hooks/use-permission";
@@ -56,6 +57,7 @@ interface CategoryOption {
   id: string;
   name: string;
   code: string;
+  parentId: string | null;
 }
 
 export default function NewBatchPage() {
@@ -482,18 +484,15 @@ export default function NewBatchPage() {
           </div>
           <div>
             <label className="block text-sm font-medium">Default category</label>
-            <select
-              value={defaultCategoryId}
-              onChange={(e) => setDefaultCategoryId(e.target.value)}
-              className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
-            >
-              <option value="">— No default —</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code} · {c.name}
-                </option>
-              ))}
-            </select>
+            <CategoryTreePicker
+              className="mt-1"
+              data-tour="batch-default-category-picker"
+              value={defaultCategoryId || null}
+              onChange={(id) => setDefaultCategoryId(id ?? "")}
+              categories={categories}
+              placeholder="— No default —"
+              clearLabel="— No default —"
+            />
           </div>
         </div>
       </fieldset>

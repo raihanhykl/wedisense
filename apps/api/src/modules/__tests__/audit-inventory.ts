@@ -150,6 +150,12 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
   },
   { method: 'POST', path: '/api/products', module: 'products', decision: audited('products') },
   { method: 'PUT', path: '/api/products/:id', module: 'products', decision: audited('products') },
+  {
+    method: 'DELETE',
+    path: '/api/products/:id',
+    module: 'products',
+    decision: audited('products'),
+  },
 
   // ── asset-categories ────────────────────────────────────────────────────────
   {

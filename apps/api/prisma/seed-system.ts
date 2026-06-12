@@ -88,6 +88,12 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
     { resource: 'vendors', action: 'create' },
     { resource: 'vendors', action: 'update' },
     { resource: 'vendors', action: 'delete' },
+    // Phase 17 v2 — product catalog management. `manage` covers create/update
+    // on the products table (safe for ADMIN). `delete` is separated out because
+    // a hard delete of a product with existing assets is blocked by the FK, but
+    // the guard check + irreversibility warrants an extra gate (SUPER_ADMIN only).
+    { resource: 'products', action: 'manage' },
+    { resource: 'products', action: 'delete' },
   ];
 
   const permissions: Record<string, string> = {};
@@ -126,10 +132,15 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
 
   const rolePermissionMatrix: Record<string, string[]> = {
     SUPER_ADMIN: allPermKeys,
-    // ADMIN gets everything EXCEPT role management AND password reset.
-    // Password reset is intentionally SUPER_ADMIN-only — even broad
-    // user-admin shouldn't be able to take over arbitrary sessions.
-    ADMIN: allPermKeys.filter((k) => k !== 'roles:manage' && k !== 'users:reset-password'),
+    // ADMIN gets everything EXCEPT role management, password reset, and
+    // products hard-delete. Password reset is SUPER_ADMIN-only because it
+    // can take over any session. products:delete is SUPER_ADMIN-only because
+    // a hard delete is irreversible (no soft-delete on products) and the
+    // FK guard only prevents it when assets exist — an empty product can
+    // still be deleted accidentally by ADMIN without this extra gate.
+    ADMIN: allPermKeys.filter(
+      (k) => k !== 'roles:manage' && k !== 'users:reset-password' && k !== 'products:delete',
+    ),
     MANAGER: [
       'assets:create',
       'assets:read',

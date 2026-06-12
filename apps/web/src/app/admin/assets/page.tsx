@@ -11,12 +11,13 @@ import { getApiErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAssetCategories } from "@/hooks/use-reference-data";
+import { useAssetCategories, useUsers, useProducts } from "@/hooks/use-reference-data";
 import { useSavedViews } from "@/hooks/use-saved-views";
 import type { AssetListItem, SavedView, AssetListViewConfig } from "@/types/admin";
 import PrintDialog from "@/components/shared/print-dialog";
 import SavedViewsMenu from "@/components/shared/saved-views-menu";
 import LocationTreePicker from "@/components/shared/location-tree-picker";
+import CategoryTreePicker from "@/components/shared/category-tree-picker";
 import BulkActionsBar from "@/components/shared/bulk-actions-bar";
 import ColumnsMenu from "@/components/shared/columns-menu";
 import DensityToggle from "@/components/shared/density-toggle";
@@ -35,6 +36,8 @@ const SORTABLE_FIELDS = [
   "purchaseDate",
   "purchasePrice",
   "createdAt",
+  "assignedTo",
+  "product",
 ] as const;
 type SortField = (typeof SORTABLE_FIELDS)[number];
 type SortOrder = "asc" | "desc";
@@ -42,6 +45,11 @@ type SortOrder = "asc" | "desc";
 function isSortField(v: string | null): v is SortField {
   return v !== null && (SORTABLE_FIELDS as readonly string[]).includes(v);
 }
+
+// UUID guard for filter values arriving via the URL (?categoryId=...) —
+// anything malformed is ignored rather than sent to the API, which would
+// reject the whole list request with a 400.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Skeleton row used while the list is loading. Column count matches the
 //    real table so the layout doesn't shift when data arrives.
@@ -181,6 +189,7 @@ function densityTableClasses(density: Density): string {
 const TOGGLEABLE_COLUMNS = [
   { key: "condition", label: "Condition", default: true },
   { key: "category", label: "Category", default: true },
+  { key: "product", label: "Product", default: true },
   { key: "location", label: "Location", default: true },
   { key: "assignedTo", label: "Assigned To", default: true },
   { key: "po", label: "PO", default: true },
@@ -260,10 +269,25 @@ export default function AssetsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
+  // Category filter — seeded once from the URL (?categoryId=...) so the
+  // Categories page can deep-link "view assets in this category". The other
+  // filters stay in-memory by design; like `sort`, a link with params wins
+  // over the user's default saved view (see the default-view effect below).
+  const [categoryFilter, setCategoryFilter] = useState(() => {
+    const fromUrl = searchParams.get("categoryId");
+    return fromUrl && UUID_RE.test(fromUrl) ? fromUrl : "";
+  });
   // Phase 17 v2 — filter by parent PO. UUID from the PO list endpoint;
   // backend translates to `procurementBatch.purchaseOrderId = X`.
   const [poFilter, setPoFilter] = useState("");
+  const [assignedToFilter, setAssignedToFilter] = useState(() => {
+    const fromUrl = searchParams.get("assignedToUserId");
+    return fromUrl && UUID_RE.test(fromUrl) ? fromUrl : "";
+  });
+  const [productFilter, setProductFilter] = useState(() => {
+    const fromUrl = searchParams.get("productId");
+    return fromUrl && UUID_RE.test(fromUrl) ? fromUrl : "";
+  });
   // Lazy-loaded PO options for the filter dropdown — top 100 most recent
   // (no-arg paginate). For very large fleets we'd swap to autocomplete,
   // but typing the PO number into the global Search box already works
@@ -278,6 +302,11 @@ export default function AssetsPage() {
   // re-fetches these. Locations themselves come in via the tree picker
   // which has its own (cached) endpoint, so we don't fetch them flat here.
   const { data: categories = [] } = useAssetCategories();
+  const { data: users = [] } = useUsers();
+  // Product filter select is fed by a static all-products query (first 50).
+  // For fleets where >50 products exist, typing in the global Search box
+  // already matches product name/brand/model server-side.
+  const { data: productOptions = [] } = useProducts("");
   // Saved views — shared cache with SavedViewsMenu (same query key) so the
   // dropdown reflects the same data we use for the default-view-apply
   // effect below.
@@ -350,9 +379,11 @@ export default function AssetsPage() {
       ...(statusFilter && { statusFilter }),
       ...(locationFilter && { locationFilter }),
       ...(categoryFilter && { categoryFilter }),
+      ...(assignedToFilter && { assignedToFilter }),
+      ...(productFilter && { productFilter }),
       ...(sortField && { sortField, sortOrder }),
     }),
-    [search, statusFilter, locationFilter, categoryFilter, sortField, sortOrder],
+    [search, statusFilter, locationFilter, categoryFilter, assignedToFilter, productFilter, sortField, sortOrder],
   );
 
   // Apply a view's config to the page state. Resets pagination so the
@@ -364,6 +395,16 @@ export default function AssetsPage() {
     setStatusFilter(cfg.statusFilter ?? "");
     setLocationFilter(cfg.locationFilter ?? "");
     setCategoryFilter(cfg.categoryFilter ?? "");
+    setAssignedToFilter(
+      cfg.assignedToFilter && UUID_RE.test(cfg.assignedToFilter)
+        ? cfg.assignedToFilter
+        : "",
+    );
+    setProductFilter(
+      cfg.productFilter && UUID_RE.test(cfg.productFilter)
+        ? cfg.productFilter
+        : "",
+    );
     setSortField(
       cfg.sortField && (SORTABLE_FIELDS as readonly string[]).includes(cfg.sortField)
         ? (cfg.sortField as SortField)
@@ -381,6 +422,8 @@ export default function AssetsPage() {
     setStatusFilter("");
     setLocationFilter("");
     setCategoryFilter("");
+    setAssignedToFilter("");
+    setProductFilter("");
     setSortField(null);
     setSortOrder("desc");
     setPage(1);
@@ -417,6 +460,8 @@ export default function AssetsPage() {
       if (locationFilter) params.locationId = locationFilter;
       if (categoryFilter) params.categoryId = categoryFilter;
       if (poFilter) params.purchaseOrderId = poFilter;
+      if (assignedToFilter) params.assignedToUserId = assignedToFilter;
+      if (productFilter) params.productId = productFilter;
       if (sortField) {
         params.sort = sortField;
         params.order = sortOrder;
@@ -428,12 +473,12 @@ export default function AssetsPage() {
       );
       setAssets(result.data);
       setMeta(result.meta);
-    } catch {
-      // handle error silently
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Failed to load assets."));
     } finally {
       setLoading(false);
     }
-  }, [page, search, statusFilter, locationFilter, categoryFilter, poFilter, sortField, sortOrder]);
+  }, [page, search, statusFilter, locationFilter, categoryFilter, poFilter, assignedToFilter, productFilter, sortField, sortOrder]);
 
   useEffect(() => {
     void fetchAssets();
@@ -472,9 +517,8 @@ export default function AssetsPage() {
   }, [searchInput, search]);
 
   // Push sort + filter state into URL search params so the view is
-  // bookmarkable / shareable. We only mirror sort (the hottest piece of
-  // shared context); filters are intentionally not in the URL to avoid
-  // overwhelming param noise. This can be extended in Tier 4 (saved views).
+  // bookmarkable / shareable. Sort and the new assignee/product filters are
+  // mirrored; other filters remain in-memory (saved-views cover persistence).
   useEffect(() => {
     const next = new URLSearchParams(searchParams.toString());
     if (sortField) {
@@ -484,10 +528,20 @@ export default function AssetsPage() {
       next.delete("sort");
       next.delete("order");
     }
+    if (assignedToFilter) {
+      next.set("assignedToUserId", assignedToFilter);
+    } else {
+      next.delete("assignedToUserId");
+    }
+    if (productFilter) {
+      next.set("productId", productFilter);
+    } else {
+      next.delete("productId");
+    }
     const qs = next.toString();
     router.replace(qs ? `?${qs}` : "?", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortField, sortOrder]);
+  }, [sortField, sortOrder, assignedToFilter, productFilter]);
 
   // Reset to page 1 when filters change
   // Any manual change to filter/sort diverges from the saved view, so we
@@ -514,6 +568,16 @@ export default function AssetsPage() {
   };
   const handlePoChange = (value: string) => {
     setPoFilter(value);
+    setPage(1);
+    setActiveViewId(null);
+  };
+  const handleAssignedToChange = (value: string) => {
+    setAssignedToFilter(value);
+    setPage(1);
+    setActiveViewId(null);
+  };
+  const handleProductFilterChange = (value: string) => {
+    setProductFilter(value);
     setPage(1);
     setActiveViewId(null);
   };
@@ -669,6 +733,9 @@ export default function AssetsPage() {
       if (statusFilter) params.status = statusFilter;
       if (locationFilter) params.locationId = locationFilter;
       if (categoryFilter) params.categoryId = categoryFilter;
+      if (poFilter) params.purchaseOrderId = poFilter;
+      if (assignedToFilter) params.assignedToUserId = assignedToFilter;
+      if (productFilter) params.productId = productFilter;
 
       const queryString = new URLSearchParams(params).toString();
       const url = `/api/assets/export${queryString ? `?${queryString}` : ""}`;
@@ -791,7 +858,7 @@ export default function AssetsPage() {
         <input
           ref={searchInputRef}
           type="text"
-          placeholder="Search by name, asset #, or serial... (/)"
+          placeholder="Search by name, asset #, serial, assignee, product... (/)"
           value={searchInput}
           onChange={(e) => handleSearchChange(e.target.value)}
           className="w-full max-w-xs rounded-md border bg-background px-3 py-2 text-sm"
@@ -815,19 +882,15 @@ export default function AssetsPage() {
           onChange={(id) => handleLocationChange(id ?? "")}
           placeholder="All Locations"
         />
-        <select
-          value={categoryFilter}
-          onChange={(e) => handleCategoryChange(e.target.value)}
-          className="rounded-md border bg-background px-3 py-2 text-sm"
+        <CategoryTreePicker
+          className="w-52"
           data-tour="category-filter"
-        >
-          <option value="">All Categories</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+          value={categoryFilter || null}
+          onChange={(id) => handleCategoryChange(id ?? "")}
+          categories={categories}
+          placeholder="All Categories"
+          clearLabel="All Categories"
+        />
         <select
           value={poFilter}
           onChange={(e) => handlePoChange(e.target.value)}
@@ -842,6 +905,44 @@ export default function AssetsPage() {
               {po.name ? ` — ${po.name}` : ""}
             </option>
           ))}
+        </select>
+        <select
+          value={assignedToFilter}
+          onChange={(e) => handleAssignedToChange(e.target.value)}
+          className="rounded-md border bg-background px-3 py-2 text-sm"
+          data-tour="asset-filter-assignee"
+          title="Filter by Assigned User"
+        >
+          <option value="">All Assignees</option>
+          {[...users]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+        </select>
+        <select
+          value={productFilter}
+          onChange={(e) => handleProductFilterChange(e.target.value)}
+          className="rounded-md border bg-background px-3 py-2 text-sm"
+          data-tour="asset-filter-product"
+          title="Filter by Product"
+        >
+          <option value="">All Products</option>
+          {productOptions.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {p.brand ? ` (${p.brand})` : ""}
+            </option>
+          ))}
+          {/* useProducts caps at 50 rows — flag truncation instead of
+              silently omitting the tail of large catalogs. */}
+          {productOptions.length >= 50 && (
+            <option value="" disabled>
+              Showing first 50 — use search to narrow down
+            </option>
+          )}
         </select>
 
         {/* Density + Columns controls only affect the desktop table layout,
@@ -1029,15 +1130,28 @@ export default function AssetsPage() {
                   Category
                 </th>
               )}
+              {visibleColumns.product && (
+                <SortableHeader
+                  label="Product"
+                  field="product"
+                  currentSort={sortField}
+                  currentOrder={sortOrder}
+                  onSort={handleSort}
+                />
+              )}
               {visibleColumns.location && (
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">
                   Location
                 </th>
               )}
               {visibleColumns.assignedTo && (
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Assigned To
-                </th>
+                <SortableHeader
+                  label="Assigned To"
+                  field="assignedTo"
+                  currentSort={sortField}
+                  currentOrder={sortOrder}
+                  onSort={handleSort}
+                />
               )}
               {visibleColumns.po && (
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">
@@ -1154,6 +1268,24 @@ export default function AssetsPage() {
                   {visibleColumns.category && (
                     <td className="px-4 py-3 text-muted-foreground">
                       {asset.product?.category?.name ?? "-"}
+                    </td>
+                  )}
+                  {visibleColumns.product && (
+                    <td className="px-4 py-3">
+                      {asset.product ? (
+                        <>
+                          <span>{asset.product.name}</span>
+                          {(asset.product.brand ?? asset.product.model) && (
+                            <span className="block text-xs text-muted-foreground">
+                              {[asset.product.brand, asset.product.model]
+                                .filter(Boolean)
+                                .join(" ")}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
                     </td>
                   )}
                   {visibleColumns.location && (

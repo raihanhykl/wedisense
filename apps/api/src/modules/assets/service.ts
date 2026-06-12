@@ -4,6 +4,10 @@ import { AppError } from '../../middleware/error-handler.js';
 import { parsePagination, buildPaginationMeta } from '../../utils/pagination.js';
 import { generateBarcode, generateQrCode } from '../../lib/barcode.js';
 import { generateMovementRef } from '../../utils/movement-ref.js';
+import {
+  getCategoryCodePath,
+  loadCategoryCodePathResolver,
+} from '../../utils/category-code-path.js';
 import * as repo from './repository.js';
 import {
   assertBatchAcceptsAssets,
@@ -16,21 +20,32 @@ import { randomUUID } from 'crypto';
 
 // ── Asset Number Generation (thread-safe) ────────────────────────────
 
-async function generateAssetNumber(categoryCode: string, tx: PrismaTransactionClient): Promise<string> {
+// `categoryCodePath` is the full hierarchical code path (e.g. "IT/NB"),
+// see utils/category-code-path.ts. Sequences are keyed per (path, year):
+// root categories keep their pre-existing single-code sequence rows, while
+// a re-parented category starts a fresh sequence under its new path — safe
+// because the path is part of the unique asset number string.
+async function generateAssetNumber(categoryCodePath: string, tx: PrismaTransactionClient): Promise<string> {
+  // Defensive: an empty path would mint a malformed "WDS--YYYY-NNNNN".
+  // Unreachable via the API (categoryId is a non-null FK), so a hit here
+  // means the category list the resolver saw is out of sync.
+  if (!categoryCodePath) {
+    throw new AppError(500, 'CATEGORY_PATH_EMPTY', 'Could not resolve category code path for asset numbering');
+  }
   const year = new Date().getFullYear();
 
   const result = await (tx as unknown as { $queryRaw: typeof prisma.$queryRaw }).$queryRaw<
     Array<{ current_sequence: number }>
   >`
     INSERT INTO asset_number_sequences (id, category_code, year, current_sequence)
-    VALUES (gen_random_uuid(), ${categoryCode}, ${year}, 1)
+    VALUES (gen_random_uuid(), ${categoryCodePath}, ${year}, 1)
     ON CONFLICT (category_code, year)
     DO UPDATE SET current_sequence = asset_number_sequences.current_sequence + 1
     RETURNING current_sequence
   `;
 
   const seq = result[0]!.current_sequence;
-  return `WDS-${categoryCode}-${year}-${String(seq).padStart(5, '0')}`;
+  return `WDS-${categoryCodePath}-${year}-${String(seq).padStart(5, '0')}`;
 }
 
 function generateReferenceNumber(): string {
@@ -99,6 +114,13 @@ function buildWhereClause(
     where.assignedToUserId = filters.assignedToUserId;
   }
 
+  // Direct FK filter — composes with the categoryId relation filter above
+  // via Prisma's implicit AND (where.product and where.productId are
+  // distinct keys, so neither overwrites the other).
+  if (filters.productId) {
+    where.productId = filters.productId;
+  }
+
   if (filters.procurementBatchId) {
     where.procurementBatchId = filters.procurementBatchId;
   }
@@ -134,6 +156,14 @@ function buildWhereClause(
           },
         },
       },
+      // Assigned user name — lets callers type a person's name to find
+      // all assets currently held by that person.
+      { assignedTo: { name: { contains: filters.search, mode: 'insensitive' } } },
+      // Product fields — surface assets when the user searches by the
+      // product name, brand, or model string from the product catalog.
+      { product: { name: { contains: filters.search, mode: 'insensitive' } } },
+      { product: { brand: { contains: filters.search, mode: 'insensitive' } } },
+      { product: { model: { contains: filters.search, mode: 'insensitive' } } },
     ];
   }
 
@@ -148,6 +178,12 @@ function buildOrderBy(sort?: string, order?: 'asc' | 'desc'): Prisma.AssetOrderB
     purchaseDate: { purchaseDate: order ?? 'desc' },
     purchasePrice: { purchasePrice: order ?? 'desc' },
     createdAt: { createdAt: order ?? 'desc' },
+    // Relation sorts — Prisma resolves these to ORDER BY on the joined row.
+    // assignedTo is nullable: unassigned assets land where Postgres puts
+    // NULLs (last on asc, first on desc), which matches the "-" cells
+    // rendering at the list edges.
+    assignedTo: { assignedTo: { name: order ?? 'desc' } },
+    product: { product: { name: order ?? 'desc' } },
   };
 
   if (sort && sort in validSorts) {
@@ -220,10 +256,9 @@ export async function getAssetByBarcode(
 // ── Create Asset ─────────────────────────────────────────────────────
 
 export async function createAsset(input: CreateAssetInput, userId: string) {
-  // Validate product exists and get category code
+  // Validate product exists — its categoryId drives the asset-number path
   const product = await prisma.product.findUnique({
     where: { id: input.productId },
-    include: { category: { select: { code: true } } },
   });
   if (!product) {
     throw new AppError(404, 'PRODUCT_NOT_FOUND', 'Product not found');
@@ -237,7 +272,7 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
     throw new AppError(404, 'LOCATION_NOT_FOUND', 'Location not found');
   }
 
-  const categoryCode = product.category.code;
+  const categoryCodePath = await getCategoryCodePath(prisma, product.categoryId);
 
   let asset;
   try {
@@ -266,7 +301,7 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
         });
       }
 
-      const assetNumber = await generateAssetNumber(categoryCode, tx);
+      const assetNumber = await generateAssetNumber(categoryCodePath, tx);
       const assetId = randomUUID();
 
       // Phase 17: validate batch link inside the same transaction so a
@@ -393,14 +428,14 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
   const productIds = [...new Set(inputs.map((i) => i.productId))];
   const locationIds = [...new Set(inputs.map((i) => i.locationId))];
 
-  const [products, locations] = await Promise.all([
+  const [products, locations, resolveCategoryCodePath] = await Promise.all([
     prisma.product.findMany({
       where: { id: { in: productIds } },
-      include: { category: { select: { code: true } } },
     }),
     prisma.location.findMany({
       where: { id: { in: locationIds }, deletedAt: null },
     }),
+    loadCategoryCodePathResolver(prisma),
   ]);
 
   const productMap = new Map(products.map((p) => [p.id, p]));
@@ -477,8 +512,8 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
 
       for (const input of inputs) {
         const product = productMap.get(input.productId)!;
-        const categoryCode = product.category.code;
-        const assetNumber = await generateAssetNumber(categoryCode, tx);
+        const categoryCodePath = resolveCategoryCodePath(product.categoryId);
+        const assetNumber = await generateAssetNumber(categoryCodePath, tx);
         const assetId = randomUUID();
 
         const created = await repo.createInTransaction(tx, {

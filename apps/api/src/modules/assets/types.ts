@@ -13,7 +13,9 @@ export type AssetSortField =
   | 'status'
   | 'purchaseDate'
   | 'purchasePrice'
-  | 'createdAt';
+  | 'createdAt'
+  | 'assignedTo'
+  | 'product';
 
 /** Filters for asset list query */
 export interface AssetListFilters {
@@ -23,6 +25,8 @@ export interface AssetListFilters {
   categoryId?: string;
   locationId?: string;
   assignedToUserId?: string;
+  /** Filter assets to a single product entry. */
+  productId?: string;
   /** Phase 17: filter by procurement batch. The frontend uses this to
    *  power the "see all assets in batch" link on the batch detail page. */
   procurementBatchId?: string;

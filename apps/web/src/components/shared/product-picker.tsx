@@ -15,7 +15,7 @@ import { getApiErrorMessage } from "@/lib/error";
 //   - "+ Save as new product" opens NewProductDialog with the typed name
 //     prefilled; the dialog requires a category before POSTing
 //     /api/products. The category drives the asset-number prefix
-//     (WDS-{CATEGORY_CODE}-…), so it must be chosen explicitly — the
+//     (WDS-{CATEGORY_PATH}-…), so it must be chosen explicitly — the
 //     backend no longer accepts category-less product creation.
 //
 // Used in PO line-item rows (Tier 7.7) and the asset module (Tier 7.9).

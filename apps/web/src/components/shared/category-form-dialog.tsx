@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiPost, apiPut } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
+import CategoryTreePicker from "@/components/shared/category-tree-picker";
 import type {
   AssetCategoryDetail,
   DepreciationMethod,
@@ -65,9 +66,9 @@ interface CategoryFormDialogProps {
   onSuccess: () => void;
   /** Pass an existing category to switch the dialog into edit mode. */
   editing: AssetCategoryDetail | null;
-  /** All known categories — used to populate the Parent dropdown. The current
-   *  record (when editing) is hidden from this list so a category can't pick
-   *  itself as its own parent. */
+  /** All known categories — used to populate the Parent tree picker. When
+   *  editing, the current record and its whole subtree are hidden from the
+   *  tree so a category can never become its own ancestor. */
   allCategories: AssetCategoryDetail[];
 }
 
@@ -92,6 +93,7 @@ export default function CategoryFormDialog({
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<CategoryFormValues>({
     resolver: zodResolver(categoryFormSchema),
@@ -220,8 +222,10 @@ export default function CategoryFormDialog({
               className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              Used in asset numbers (WDS-{`{CODE}`}-2026-00001). Cannot be changed
-              after assets are assigned.
+              Used in asset numbers; sub-categories are prefixed by their
+              parent codes (WDS-{`{PARENT/CODE}`}-2026-00001, e.g.{" "}
+              <span className="font-mono">WDS-IT/NB-2026-00001</span>). Cannot
+              be changed after assets are assigned.
             </p>
             {errors.code && (
               <p className="mt-1 text-xs text-destructive">{errors.code.message}</p>
@@ -232,22 +236,21 @@ export default function CategoryFormDialog({
             <label className="mb-1 block text-sm font-medium" htmlFor="cat-parent">
               Parent category
             </label>
-            <select
+            {/* parentId stays in the RHF form state (seeded by reset above);
+                the tree picker is wired through watch/setValue instead of
+                register because it isn't a native form control. */}
+            <CategoryTreePicker
               id="cat-parent"
-              {...register("parentId", {
-                setValueAs: (v) => (v === "" ? null : v),
-              })}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="">— No parent (root) —</option>
-              {allCategories
-                .filter((c) => !editing || c.id !== editing.id)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.code})
-                  </option>
-                ))}
-            </select>
+              data-tour="category-tree-picker"
+              value={watch("parentId")}
+              onChange={(parentId) =>
+                setValue("parentId", parentId, { shouldValidate: true, shouldDirty: true })
+              }
+              categories={allCategories}
+              excludeId={editing?.id ?? null}
+              placeholder="— No parent (root) —"
+              clearLabel="— No parent (root) —"
+            />
           </div>
 
           <div>

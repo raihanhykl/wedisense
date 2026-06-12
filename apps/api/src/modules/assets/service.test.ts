@@ -19,6 +19,9 @@ vi.mock('../../lib/prisma.js', () => ({
       findMany: vi.fn(),
       update: vi.fn(),
     },
+    assetCategory: {
+      findMany: vi.fn(),
+    },
     assetMovement: {
       count: vi.fn(),
     },
@@ -58,6 +61,7 @@ import {
   updateAsset,
   deleteAsset,
   bulkCreateAssets,
+  listAssets,
 } from './service.js';
 
 // ── Typed mock helpers ────────────────────────────────────────────────────────
@@ -67,6 +71,7 @@ const mockProductFindMany = prisma.product.findMany as ReturnType<typeof vi.fn>;
 const mockLocationFindUnique = prisma.location.findUnique as ReturnType<typeof vi.fn>;
 const mockLocationFindMany = prisma.location.findMany as ReturnType<typeof vi.fn>;
 const mockAssetFindFirst = prisma.asset.findFirst as ReturnType<typeof vi.fn>;
+const mockAssetCategoryFindMany = prisma.assetCategory.findMany as ReturnType<typeof vi.fn>;
 const mockAssetUpdate = prisma.asset.update as ReturnType<typeof vi.fn>;
 const mockAssetMovementCount = prisma.assetMovement.count as ReturnType<typeof vi.fn>;
 const mockAuditLogCreate = prisma.auditLog.create as ReturnType<typeof vi.fn>;
@@ -74,6 +79,8 @@ const mockTransaction = prisma.$transaction as ReturnType<typeof vi.fn>;
 const mockGenerateBarcode = generateBarcode as ReturnType<typeof vi.fn>;
 const mockGenerateQrCode = generateQrCode as ReturnType<typeof vi.fn>;
 const mockRepoFindById = repo.findById as ReturnType<typeof vi.fn>;
+const mockRepoFindMany = repo.findMany as ReturnType<typeof vi.fn>;
+const mockRepoCount = repo.count as ReturnType<typeof vi.fn>;
 const mockRepoCreateInTx = repo.createInTransaction as ReturnType<typeof vi.fn>;
 const mockRepoCreateMovementInTx = repo.createMovementInTransaction as ReturnType<typeof vi.fn>;
 const mockRepoUpdate = repo.update as ReturnType<typeof vi.fn>;
@@ -83,8 +90,14 @@ const mockRepoUpdate = repo.update as ReturnType<typeof vi.fn>;
 const PRODUCT = {
   id: 'prod-1',
   name: 'MacBook Pro',
+  categoryId: 'cat-it',
   category: { code: 'IT' },
 };
+
+// Category list returned by prisma.assetCategory.findMany — the asset-number
+// generator resolves the hierarchical code path (utils/category-code-path.ts)
+// from this. 'cat-it' is a root category, so its path is just "IT".
+const CATEGORIES = [{ id: 'cat-it', code: 'IT', parentId: null }];
 
 const LOCATION = {
   id: 'loc-1',
@@ -158,6 +171,7 @@ function mockTxThatRuns(overrides: Record<string, unknown> = {}) {
 describe('createAsset()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAssetCategoryFindMany.mockResolvedValue(CATEGORIES);
   });
 
   it('happy path: returns the created asset with detail include', async () => {
@@ -263,6 +277,31 @@ describe('createAsset()', () => {
     const created = mockRepoCreateInTx.mock.calls[0]![1] as { assetNumber: string };
     const year = new Date().getFullYear();
     expect(created.assetNumber).toBe(`WDS-IT-${year}-00042`);
+  });
+
+  it('builds hierarchical code path for nested categories (parent/child/grandchild)', async () => {
+    // Notebook (NB) under IT, Sparepart (SP) under Notebook → "IT/NB/SP"
+    mockAssetCategoryFindMany.mockResolvedValue([
+      { id: 'cat-it', code: 'IT', parentId: null },
+      { id: 'cat-nb', code: 'NB', parentId: 'cat-it' },
+      { id: 'cat-sp', code: 'SP', parentId: 'cat-nb' },
+    ]);
+    mockProductFindUnique.mockResolvedValue({ ...PRODUCT, categoryId: 'cat-sp' });
+    mockLocationFindUnique.mockResolvedValue(LOCATION);
+    mockAssetFindFirst.mockResolvedValue(null);
+    mockTxThatRuns();
+    mockRepoCreateInTx.mockResolvedValue(CREATED_ASSET);
+    mockRepoCreateMovementInTx.mockResolvedValue({});
+    mockGenerateBarcode.mockResolvedValue('/b.png');
+    mockGenerateQrCode.mockResolvedValue('/q.png');
+    mockAssetUpdate.mockResolvedValue({});
+    mockAuditLogCreate.mockResolvedValue({});
+
+    await createAsset(VALID_CREATE_INPUT, USER_ID);
+
+    const created = mockRepoCreateInTx.mock.calls[0]![1] as { assetNumber: string };
+    const year = new Date().getFullYear();
+    expect(created.assetNumber).toBe(`WDS-IT/NB/SP-${year}-00001`);
   });
 
   it('calls generateBarcode and generateQrCode after transaction', async () => {
@@ -866,6 +905,7 @@ describe('deleteAsset()', () => {
 describe('bulkCreateAssets()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAssetCategoryFindMany.mockResolvedValue(CATEGORIES);
   });
 
   const BULK_INPUT = [
@@ -1033,5 +1073,150 @@ describe('bulkCreateAssets()', () => {
     await expect(bulkCreateAssets(BULK_INPUT, USER_ID)).rejects.toBeInstanceOf(
       Prisma.PrismaClientKnownRequestError,
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listAssets() — buildWhereClause and buildOrderBy behaviour
+//
+// These helpers are not exported; we test through listAssets() by checking
+// what args repo.findMany is called with. The accessible-location set is
+// fixed to ['loc-1'] throughout. We deliberately do NOT set filters.locationId
+// to avoid triggering the async getLocationAndDescendantIds CTE (which
+// requires a separate $queryRaw mock not needed for this suite).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('listAssets() — buildWhereClause & buildOrderBy', () => {
+  const ACCESSIBLE = ['loc-1'];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRepoFindMany.mockResolvedValue([]);
+    mockRepoCount.mockResolvedValue(0);
+  });
+
+  // ── productId filter ──────────────────────────────────────────────
+
+  it('productId filter lands in the where clause as where.productId', async () => {
+    await listAssets(
+      { page: 1, limit: 20, productId: 'prod-abc' },
+      ACCESSIBLE,
+    );
+
+    const whereArg = mockRepoFindMany.mock.calls[0]![0].where as Record<string, unknown>;
+    expect(whereArg).toHaveProperty('productId', 'prod-abc');
+  });
+
+  it('productId is absent from where when not provided', async () => {
+    await listAssets({ page: 1, limit: 20 }, ACCESSIBLE);
+
+    const whereArg = mockRepoFindMany.mock.calls[0]![0].where as Record<string, unknown>;
+    expect(whereArg).not.toHaveProperty('productId');
+  });
+
+  // ── search OR — assigned user + product fields ────────────────────
+
+  it('search OR includes assignedTo name match', async () => {
+    await listAssets({ page: 1, limit: 20, search: 'Alice' }, ACCESSIBLE);
+
+    const whereArg = mockRepoFindMany.mock.calls[0]![0].where as {
+      OR?: Array<Record<string, unknown>>;
+    };
+    expect(whereArg.OR).toEqual(
+      expect.arrayContaining([
+        { assignedTo: { name: { contains: 'Alice', mode: 'insensitive' } } },
+      ]),
+    );
+  });
+
+  it('search OR includes product.name match', async () => {
+    await listAssets({ page: 1, limit: 20, search: 'MacBook' }, ACCESSIBLE);
+
+    const whereArg = mockRepoFindMany.mock.calls[0]![0].where as {
+      OR?: Array<Record<string, unknown>>;
+    };
+    expect(whereArg.OR).toEqual(
+      expect.arrayContaining([
+        { product: { name: { contains: 'MacBook', mode: 'insensitive' } } },
+      ]),
+    );
+  });
+
+  it('search OR includes product.brand match', async () => {
+    await listAssets({ page: 1, limit: 20, search: 'Apple' }, ACCESSIBLE);
+
+    const whereArg = mockRepoFindMany.mock.calls[0]![0].where as {
+      OR?: Array<Record<string, unknown>>;
+    };
+    expect(whereArg.OR).toEqual(
+      expect.arrayContaining([
+        { product: { brand: { contains: 'Apple', mode: 'insensitive' } } },
+      ]),
+    );
+  });
+
+  it('search OR includes product.model match', async () => {
+    await listAssets({ page: 1, limit: 20, search: 'M2' }, ACCESSIBLE);
+
+    const whereArg = mockRepoFindMany.mock.calls[0]![0].where as {
+      OR?: Array<Record<string, unknown>>;
+    };
+    expect(whereArg.OR).toEqual(
+      expect.arrayContaining([
+        { product: { model: { contains: 'M2', mode: 'insensitive' } } },
+      ]),
+    );
+  });
+
+  it('search OR still contains the legacy asset-name and assetNumber members', async () => {
+    await listAssets({ page: 1, limit: 20, search: 'WDS-IT' }, ACCESSIBLE);
+
+    const whereArg = mockRepoFindMany.mock.calls[0]![0].where as {
+      OR?: Array<Record<string, unknown>>;
+    };
+    expect(whereArg.OR).toEqual(
+      expect.arrayContaining([
+        { name: { contains: 'WDS-IT', mode: 'insensitive' } },
+        { assetNumber: { contains: 'WDS-IT', mode: 'insensitive' } },
+      ]),
+    );
+  });
+
+  // ── sort=assignedTo and sort=product ─────────────────────────────
+
+  it('sort=assignedTo produces relation orderBy on assignedTo.name', async () => {
+    await listAssets(
+      { page: 1, limit: 20, sort: 'assignedTo', order: 'asc' },
+      ACCESSIBLE,
+    );
+
+    const orderByArg = mockRepoFindMany.mock.calls[0]![0].orderBy as Record<string, unknown>;
+    expect(orderByArg).toEqual({ assignedTo: { name: 'asc' } });
+  });
+
+  it('sort=product produces relation orderBy on product.name', async () => {
+    await listAssets(
+      { page: 1, limit: 20, sort: 'product', order: 'desc' },
+      ACCESSIBLE,
+    );
+
+    const orderByArg = mockRepoFindMany.mock.calls[0]![0].orderBy as Record<string, unknown>;
+    expect(orderByArg).toEqual({ product: { name: 'desc' } });
+  });
+
+  it('unknown sort value falls back to createdAt', async () => {
+    await listAssets(
+      { page: 1, limit: 20, sort: 'nonExistentField', order: 'asc' },
+      ACCESSIBLE,
+    );
+
+    const orderByArg = mockRepoFindMany.mock.calls[0]![0].orderBy as Record<string, unknown>;
+    expect(orderByArg).toEqual({ createdAt: 'asc' });
+  });
+
+  it('sort=assignedTo uses desc as default when order is omitted', async () => {
+    await listAssets({ page: 1, limit: 20, sort: 'assignedTo' }, ACCESSIBLE);
+
+    const orderByArg = mockRepoFindMany.mock.calls[0]![0].orderBy as Record<string, unknown>;
+    expect(orderByArg).toEqual({ assignedTo: { name: 'desc' } });
   });
 });

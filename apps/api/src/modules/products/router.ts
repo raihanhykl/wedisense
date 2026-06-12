@@ -3,7 +3,12 @@ import { asyncHandler } from '../../utils/async-handler.js';
 import { sendSuccess, sendCreated } from '../../utils/response.js';
 import { authorize } from '../../middleware/authorize.js';
 import { paginationSchema } from '@wedisense/shared';
-import { lookupEanSchema, createProductSchema, updateProductSchema } from './schema.js';
+import {
+  lookupEanSchema,
+  productListQuerySchema,
+  createProductSchema,
+  updateProductSchema,
+} from './schema.js';
 import * as productService from './service.js';
 
 const router: RouterType = Router();
@@ -18,23 +23,22 @@ router.post(
   }),
 );
 
-// GET /api/products — list products (paginated, searchable)
+// GET /api/products — list products (paginated, searchable, sortable)
 router.get(
   '/',
   asyncHandler(async (req, res) => {
     const pagination = paginationSchema.parse(req.query);
-    const search = req.query['search'] as string | undefined;
-    const categoryId = req.query['categoryId'] as string | undefined;
+    const filters = productListQuerySchema.parse(req.query);
     const { products, meta } = await productService.listProducts({
       ...pagination,
-      search,
-      categoryId,
+      ...filters,
     });
     sendSuccess(res, products, 200, meta);
   }),
 );
 
-// POST /api/products — create product
+// POST /api/products — create product (used by asset-creation and scan flow)
+// Stays on assets:create so the existing scan + quick-save flow keeps working.
 router.post(
   '/',
   authorize('assets:create'),
@@ -58,12 +62,23 @@ router.get(
 // PUT /api/products/:id — update product
 router.put(
   '/:id',
-  authorize('assets:update'),
+  authorize('products:manage'),
   asyncHandler(async (req, res) => {
     const id = req.params['id'] as string;
     const input = updateProductSchema.parse(req.body);
     const product = await productService.updateProduct(id, input, req.user!.id);
     sendSuccess(res, product);
+  }),
+);
+
+// DELETE /api/products/:id — hard delete (guarded: blocked when assets or PO items reference it)
+router.delete(
+  '/:id',
+  authorize('products:delete'),
+  asyncHandler(async (req, res) => {
+    const id = req.params['id'] as string;
+    await productService.deleteProduct(id, req.user!.id);
+    sendSuccess(res, { deleted: true });
   }),
 );
 

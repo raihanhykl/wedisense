@@ -110,8 +110,8 @@ export default function ManualEntryDialog({
             spellCheck={false}
           />
           <p className="mt-2 text-xs text-muted-foreground">
-            Accepts asset barcodes (e.g. WDS-IT-2024-00001), 13-digit EANs,
-            or pasted location URLs.
+            Accepts asset barcodes (e.g. WDS-IT-2024-00001 or
+            WDS-IT/NB-2026-00001), 13-digit EANs, or pasted location URLs.
           </p>
 
           <footer className="mt-4 flex justify-end gap-2">

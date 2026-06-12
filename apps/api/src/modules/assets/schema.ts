@@ -86,6 +86,8 @@ export const assetListFilterSchema = z.object({
   categoryId: z.string().uuid().optional(),
   locationId: z.string().uuid().optional(),
   assignedToUserId: z.string().uuid().optional(),
+  // Filter by product — shows all assets of a specific product entry.
+  productId: z.string().uuid().optional(),
   // Phase 17 — drill-down from batch detail page to its asset roster.
   procurementBatchId: z.string().uuid().optional(),
   // Phase 17 v2 — drill-down from a PO to every asset created under
