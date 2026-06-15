@@ -18,6 +18,21 @@ import type { AssetListFilters, AssetSortField, PrismaTransactionClient } from '
 import type { PaginationQuery } from '@wedisense/shared';
 import { randomUUID } from 'crypto';
 
+// ── Initial status rule ──────────────────────────────────────────────
+// A new asset's status is never taken from the client. It is derived from
+// whether the asset is being handed to someone at creation time:
+//   - assignee present → ACTIVE  (someone holds it)
+//   - no assignee      → IDLE    (in stock, not in productive use yet)
+// This keeps the invariant "ACTIVE ⟺ has a holder" true from the moment a
+// row is born, matching the ASSIGNMENT/UNASSIGNMENT movement handlers.
+// `condition` is intentionally NOT decided here — it is a physical fact and
+// stays whatever was entered (default NEW), only ever changed explicitly.
+export function resolveInitialStatus(
+  assignedToUserId: string | null | undefined,
+): Prisma.AssetCreateInput['status'] {
+  return assignedToUserId ? 'ACTIVE' : 'IDLE';
+}
+
 // ── Asset Number Generation (thread-safe) ────────────────────────────
 
 // `categoryCodePath` is the full hierarchical code path (e.g. "IT/NB"),
@@ -316,7 +331,7 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
         barcodeValue: assetNumber,
         barcodeType: 'CODE128',
         name: input.name,
-        status: input.status ?? 'ACTIVE',
+        status: resolveInitialStatus(input.assignedToUserId),
         condition: input.condition ?? 'NEW',
         product: { connect: { id: input.productId } },
         location: { connect: { id: input.locationId } },
@@ -522,7 +537,7 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
           barcodeValue: assetNumber,
           barcodeType: 'CODE128',
           name: input.name,
-          status: input.status ?? 'ACTIVE',
+          status: resolveInitialStatus(input.assignedToUserId),
           condition: input.condition ?? 'NEW',
           product: { connect: { id: input.productId } },
           location: { connect: { id: input.locationId } },

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { prisma } from '../../lib/prisma.js';
 import { generateBarcode, generateQrCode } from '../../lib/barcode.js';
 import * as repo from './repository.js';
+import { resolveInitialStatus } from './service.js';
 import {
   assertBatchAcceptsAssets,
   bumpBatchAssetCountWithCascade,
@@ -450,7 +451,7 @@ export async function bulkImport(
           barcodeValue: assetNumber,
           barcodeType: 'CODE128',
           name: row.name,
-          status: row.status ?? 'ACTIVE',
+          status: resolveInitialStatus(row.assignedToUserId),
           condition: row.condition ?? 'NEW',
           product: { connect: { id: productId } },
           location: { connect: { id: row.locationId } },

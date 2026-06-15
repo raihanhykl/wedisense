@@ -36,14 +36,6 @@ interface ProductLookupResult {
 
 // ── Constants ──────────────────────────────────────────────────────
 const MAX_ROWS = 100;
-const STATUS_OPTIONS = [
-  "ACTIVE",
-  "IDLE",
-  "IN_MAINTENANCE",
-  "DISPOSED",
-  "LOST",
-  "BORROWED",
-] as const;
 const CONDITION_OPTIONS = ["NEW", "GOOD", "FAIR", "POOR", "DAMAGED"] as const;
 
 // ── Schema ─────────────────────────────────────────────────────────
@@ -60,7 +52,9 @@ const multiAssetSchema = z
     productLabel: z.string().optional().default(""),
     locationId: z.string().min(1, "Location is required"),
     assignedToUserId: z.string().optional().default(""),
-    status: z.enum(STATUS_OPTIONS),
+    // No `status` field: a new asset's status is decided server-side from
+    // whether it's assigned (assignee → ACTIVE, none → IDLE). The user
+    // never picks it at creation time.
     condition: z.enum(CONDITION_OPTIONS),
     purchaseDate: z.string().optional().default(""),
     purchasePrice: z.string().optional().default(""),
@@ -195,7 +189,6 @@ export default function MultiAssetCreateForm({
       productLabel: "",
       locationId: "",
       assignedToUserId: "",
-      status: "ACTIVE",
       condition: "NEW",
       purchaseDate: "",
       purchasePrice: "",
@@ -425,7 +418,7 @@ export default function MultiAssetCreateForm({
       const sharedPayload = {
         productId: data.productId,
         locationId: data.locationId,
-        status: data.status,
+        // status omitted — the backend derives it from assignedToUserId.
         condition: data.condition,
         assignedToUserId: toNullableString(data.assignedToUserId),
         purchaseDate: data.purchaseDate === "" ? null : data.purchaseDate,
@@ -581,20 +574,6 @@ export default function MultiAssetCreateForm({
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name} ({u.email})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Status */}
-            <div>
-              <label htmlFor="status" className={labelClass}>
-                Status <span className="text-destructive">*</span>
-              </label>
-              <select id="status" {...register("status")} className={fieldClass}>
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s.replace(/_/g, " ")}
                   </option>
                 ))}
               </select>
