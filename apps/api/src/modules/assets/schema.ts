@@ -4,7 +4,11 @@ export const createAssetSchema = z.object({
   productId: z.string().uuid(),
   name: z.string().min(1).max(255),
   serialNumber: z.string().nullable().optional(),
-  status: z.enum(['ACTIVE', 'IDLE', 'IN_MAINTENANCE', 'DISPOSED', 'LOST', 'BORROWED']).default('ACTIVE'),
+  // Initial status is decided server-side from `assignedToUserId`, not the
+  // client: a brand-new asset is IDLE until someone holds it, and only an
+  // assignment makes it ACTIVE (see resolveInitialStatus in service.ts).
+  // Any status sent here is ignored on create.
+  status: z.enum(['ACTIVE', 'IDLE', 'IN_MAINTENANCE', 'DISPOSED', 'LOST', 'BORROWED']).optional(),
   condition: z.enum(['NEW', 'GOOD', 'FAIR', 'POOR', 'DAMAGED']).default('NEW'),
   locationId: z.string().uuid(),
   assignedToUserId: z.string().uuid().nullable().optional(),
