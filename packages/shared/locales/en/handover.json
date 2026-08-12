@@ -1,0 +1,62 @@
+{
+  "document": {
+    "title": "ASSET HANDOVER RECORD",
+    "numberLabel": "Number",
+    "openingParagraph": "On {day}, {date}, an asset handover was carried out with the following details:",
+    "firstParty": "FIRST PARTY (Handing Over)",
+    "secondParty": "SECOND PARTY (Receiving)",
+    "companyParty": "Company",
+    "fields": {
+      "name": "Name",
+      "employeeId": "Employee ID",
+      "location": "Location",
+      "purpose": "Purpose",
+      "notes": "Notes"
+    },
+    "table": {
+      "no": "No",
+      "assetNumber": "Asset Number",
+      "assetName": "Asset Name",
+      "serialNumber": "Serial Number",
+      "condition": "Condition",
+      "itemNotes": "Remarks"
+    },
+    "condition": {
+      "NEW": "New",
+      "GOOD": "Good",
+      "FAIR": "Fair",
+      "POOR": "Poor",
+      "DAMAGED": "Damaged"
+    },
+    "closingParagraph": {
+      "COMPANY_TO_EMPLOYEE": "By signing this record, the SECOND PARTY confirms receipt of the assets listed above in the stated condition, and accepts responsibility for their use and upkeep for as long as they are held.",
+      "EMPLOYEE_TO_EMPLOYEE": "By signing this record, the FIRST PARTY confirms handing over and the SECOND PARTY confirms receipt of the assets listed above in the stated condition. Responsibility for the assets transfers to the SECOND PARTY as of the date of this record.",
+      "EMPLOYEE_TO_COMPANY": "By signing this record, the FIRST PARTY confirms returning the assets listed above to the company in the stated condition, and is released from responsibility for them."
+    },
+    "signatures": {
+      "handedOverBy": "Handed Over By",
+      "receivedBy": "Received By",
+      "itOfficer": "IT Officer",
+      "acknowledgedBy": "Acknowledged By"
+    },
+    "footer": {
+      "page": "Page {current} of {total}",
+      "scanHint": "Scan to open asset record"
+    },
+    "days": ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+    "months": [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December"
+    ]
+  }
+}

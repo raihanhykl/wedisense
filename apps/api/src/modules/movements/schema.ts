@@ -35,6 +35,11 @@ export const createMovementSchema = z.object({
     url: z.string(),
     uploadedAt: z.string().optional(),
   })).optional(),
+  // Links this movement to the signed paper handover form (BAST) that
+  // authorised it. Optional: maintenance, disposal and found/lost movements
+  // have no handover document. The service validates that the form is
+  // issued (not draft/cancelled) and that it actually lists the asset.
+  handoverFormId: z.string().uuid().nullable().optional(),
   // SWAP specific
   swapWithAssetId: z.string().uuid().optional(),
   // RESIGNATION_RETURN specific

@@ -94,6 +94,18 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
     // the guard check + irreversibility warrants an extra gate (SUPER_ADMIN only).
     { resource: 'products', action: 'manage' },
     { resource: 'products', action: 'delete' },
+    // Handover forms (Berita Acara Serah Terima). `read` is granted broadly
+    // — STAFF and VIEWER need to open the signed scan attached to a movement
+    // they're looking at. `update` covers editing a DRAFT, uploading the
+    // signed scan, and cancelling; it is not split further because all three
+    // are the same job (the IT officer shepherding one document to signature).
+    { resource: 'handover-forms', action: 'read' },
+    { resource: 'handover-forms', action: 'create' },
+    { resource: 'handover-forms', action: 'update' },
+    // Company identity used on document letterheads. Gated separately from
+    // `roles:manage` so ADMIN can maintain the letterhead without holding
+    // the keys to the permission system.
+    { resource: 'settings', action: 'manage' },
   ];
 
   const permissions: Record<string, string> = {};
@@ -166,6 +178,12 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
       // edit + delete stays with ADMIN.
       'vendors:read',
       'vendors:create',
+      // BAST: MANAGER already holds movements:create, and a handover form is
+      // the paperwork for exactly that — issuing one without being able to
+      // record the movement (or vice versa) would be a dead end.
+      'handover-forms:read',
+      'handover-forms:create',
+      'handover-forms:update',
     ],
     STAFF: [
       'assets:read',
@@ -175,6 +193,9 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
       'purchase-orders:read',
       'procurement:read',
       'vendors:read',
+      // Read-only: STAFF can open the signed scan behind a movement they
+      // see, but issuing a BAST is an IT-officer task.
+      'handover-forms:read',
     ],
     VIEWER: [
       'assets:read',
@@ -182,6 +203,7 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
       'purchase-orders:read',
       'procurement:read',
       'vendors:read',
+      'handover-forms:read',
     ],
   };
 
@@ -407,7 +429,30 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
   }
   console.log(`  ✓ ${Object.keys(categories).length} asset categories`);
 
-  // ─── 6. First-admin bootstrap (production-critical) ──────────────────────
+  // ─── 6. Company setting (single row) ─────────────────────────────────────
+  // Guarantees a letterhead source exists before the first BAST is issued,
+  // so PDF generation can never fail on a missing setting. Created once and
+  // then left alone: re-running seed must not clobber a letterhead the
+  // operator has already customised through the admin UI.
+  console.log('Ensuring company setting row...');
+  const existingCompany = await prisma.companySetting.findFirst();
+  if (existingCompany) {
+    console.log(`  ✓ Company setting already present (${existingCompany.name}) — left unchanged`);
+  } else {
+    const created = await prisma.companySetting.create({
+      data: {
+        id: crypto.randomUUID(),
+        name: 'Wedison',
+        city: 'Jakarta Selatan',
+        province: 'DKI Jakarta',
+        documentCode: 'WDS',
+        divisionCode: 'IT',
+      },
+    });
+    console.log(`  ✓ Created company setting (${created.name})`);
+  }
+
+  // ─── 7. First-admin bootstrap (production-critical) ──────────────────────
   const adminBootstrap = await bootstrapAdminIfNeeded(prisma, roles);
 
   return { permissions, roles, locationMap, categories, adminBootstrap };

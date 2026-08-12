@@ -514,6 +514,61 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     module: 'saved-views',
     decision: skipped("Per-user UI preference (same rationale as POST)."),
   },
+
+  // ── handover-forms (Berita Acara Serah Terima) ──────────────────────────────
+  // Every mutation here is audited without exception: these forms are the
+  // legal paper trail behind asset movements, so who created, amended,
+  // issued, cancelled, or re-scanned one must always be reconstructable.
+  {
+    method: 'POST',
+    path: '/api/handover-forms',
+    module: 'handover-forms',
+    decision: audited('handover-forms'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/handover-forms/:id',
+    module: 'handover-forms',
+    decision: audited('handover-forms'),
+  },
+  {
+    method: 'DELETE',
+    path: '/api/handover-forms/:id',
+    module: 'handover-forms',
+    decision: audited('handover-forms'),
+  },
+  {
+    method: 'POST',
+    path: '/api/handover-forms/:id/cancel',
+    module: 'handover-forms',
+    decision: audited('handover-forms'),
+  },
+  {
+    method: 'POST',
+    path: '/api/handover-forms/:id/scan',
+    module: 'handover-forms',
+    decision: audited('handover-forms'),
+  },
+  {
+    method: 'DELETE',
+    path: '/api/handover-forms/:id/scan',
+    module: 'handover-forms',
+    decision: audited('handover-forms'),
+  },
+
+  // ── settings ────────────────────────────────────────────────────────────────
+  {
+    method: 'PUT',
+    path: '/api/settings/company',
+    module: 'settings',
+    decision: audited('settings'),
+  },
+  {
+    method: 'POST',
+    path: '/api/settings/company/logo',
+    module: 'settings',
+    decision: audited('settings'),
+  },
 ];
 
 /**

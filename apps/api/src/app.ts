@@ -26,6 +26,8 @@ import { auditRouter } from './modules/audit/router.js';
 import { purchaseOrderRouter } from './modules/purchase-orders/router.js';
 import { procurementBatchRouter } from './modules/procurement-batches/router.js';
 import { vendorRouter } from './modules/vendors/router.js';
+import { handoverFormRouter } from './modules/handover-forms/router.js';
+import { settingsRouter } from './modules/settings/router.js';
 import { authenticate } from './middleware/authenticate.js';
 
 const app: Express = express();
@@ -140,6 +142,8 @@ app.use('/api/audit-logs', authenticate, auditRouter);
 app.use('/api/purchase-orders', authenticate, purchaseOrderRouter);
 app.use('/api/procurement-batches', authenticate, procurementBatchRouter);
 app.use('/api/vendors', authenticate, vendorRouter);
+app.use('/api/handover-forms', authenticate, handoverFormRouter);
+app.use('/api/settings', authenticate, settingsRouter);
 
 // ── Static Files (barcode/QR images) ──────────────────────
 // Helmet's default `Cross-Origin-Resource-Policy: same-origin` would block
