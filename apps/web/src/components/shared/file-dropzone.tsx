@@ -1,19 +1,58 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { FileSpreadsheet, UploadCloud, X } from "lucide-react";
+import { FileSpreadsheet, FileText, UploadCloud, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Browsers are inconsistent about the MIME type they hand us for `.xlsx`:
-// Chrome reports the long OOXML string, Safari sometimes drops type entirely,
-// and a file copied from a Windows share can show up as
-// `application/octet-stream`. So we accept the extension as the source of truth
-// and only use MIME as a secondary signal when present.
-const ACCEPTED_EXTENSIONS = [".xlsx", ".xls"] as const;
-const ACCEPTED_MIME_HINTS = [
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-excel",
-] as const;
+/**
+ * Which family of files this dropzone accepts. Extending the union means
+ * adding one entry to KIND_CONFIG — nothing else in the component is
+ * type-specific.
+ */
+export type FileDropzoneKind = "excel" | "pdf";
+
+interface KindConfig {
+  extensions: readonly string[];
+  /**
+   * MIME types the browser is *expected* to report. Used only as a secondary
+   * signal — browsers are inconsistent (Chrome reports the long OOXML string
+   * for .xlsx, Safari sometimes drops type entirely, and a file copied from a
+   * Windows share arrives as application/octet-stream), so the extension is
+   * the source of truth and a generic/absent type is always tolerated.
+   */
+  mimeHints: readonly string[];
+  Icon: LucideIcon;
+  /** Human noun used in prompts and aria labels, e.g. "Excel file". */
+  noun: string;
+  /** Extension summary shown in the hint line, e.g. ".xlsx or .xls". */
+  extensionLabel: string;
+  wrongExtensionMessage: string;
+  wrongContentMessage: string;
+}
+
+const KIND_CONFIG: Record<FileDropzoneKind, KindConfig> = {
+  excel: {
+    extensions: [".xlsx", ".xls"],
+    mimeHints: [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+    ],
+    Icon: FileSpreadsheet,
+    noun: "Excel file",
+    extensionLabel: ".xlsx or .xls",
+    wrongExtensionMessage: "Only .xlsx or .xls files are accepted.",
+    wrongContentMessage: "This file doesn't appear to be a valid Excel file.",
+  },
+  pdf: {
+    extensions: [".pdf"],
+    mimeHints: ["application/pdf"],
+    Icon: FileText,
+    noun: "PDF",
+    extensionLabel: ".pdf",
+    wrongExtensionMessage: "Only .pdf files are accepted.",
+    wrongContentMessage: "This file doesn't appear to be a valid PDF.",
+  },
+};
 
 interface FileDropzoneProps {
   /** Currently-selected file (controlled by parent). */
@@ -24,30 +63,30 @@ interface FileDropzoneProps {
   onError: (message: string) => void;
   /** Max size in megabytes. */
   maxSizeMb: number;
+  /** File family to accept. Defaults to "excel" for existing callers. */
+  kind?: FileDropzoneKind;
   /** Optional disable (e.g. while uploading). */
   disabled?: boolean;
   "data-tour"?: string;
 }
 
-function hasAcceptedExtension(name: string): boolean {
+function hasAcceptedExtension(name: string, config: KindConfig): boolean {
   const lower = name.toLowerCase();
-  return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  return config.extensions.some((ext) => lower.endsWith(ext));
 }
 
-function isLikelyExcel(file: File): boolean {
-  if (!hasAcceptedExtension(file.name)) return false;
-  // If the browser gave us a MIME type, sanity-check it. We don't *require*
-  // a match — see comment at the top — but a confidently-wrong type (e.g.
-  // a PDF that's been renamed `.xlsx`) should be rejected.
-  if (file.type && file.type.length > 0) {
-    const looksRight = ACCEPTED_MIME_HINTS.includes(
-      file.type as (typeof ACCEPTED_MIME_HINTS)[number],
-    );
-    const looksGeneric =
-      file.type === "application/octet-stream" || file.type === "";
-    return looksRight || looksGeneric;
-  }
-  return true;
+/** True when the browser-reported type doesn't contradict the extension. */
+function hasPlausibleMime(type: string, config: KindConfig): boolean {
+  if (!type) return true;
+  if (type === "application/octet-stream") return true;
+  return config.mimeHints.includes(type);
+}
+
+function looksLikeAcceptedFile(file: File, config: KindConfig): boolean {
+  if (!hasAcceptedExtension(file.name, config)) return false;
+  // A confidently-wrong type (e.g. a PDF renamed to .xlsx) is rejected here;
+  // the server re-checks magic bytes regardless.
+  return hasPlausibleMime(file.type, config);
 }
 
 function formatBytes(bytes: number): string {
@@ -61,9 +100,12 @@ export default function FileDropzone({
   onChange,
   onError,
   maxSizeMb,
+  kind = "excel",
   disabled,
   "data-tour": dataTour,
 }: FileDropzoneProps) {
+  const config = KIND_CONFIG[kind];
+  const { Icon } = config;
   const inputRef = useRef<HTMLInputElement>(null);
   // `dragState` separates "something is being dragged over me" from the
   // sub-state of "...and it looks like a file we can accept". The latter
@@ -78,12 +120,12 @@ export default function FileDropzone({
         onChange(null);
         return;
       }
-      if (!hasAcceptedExtension(incoming.name)) {
-        onError("Only .xlsx or .xls files are accepted.");
+      if (!hasAcceptedExtension(incoming.name, config)) {
+        onError(config.wrongExtensionMessage);
         return;
       }
-      if (!isLikelyExcel(incoming)) {
-        onError("This file doesn't appear to be a valid Excel file.");
+      if (!looksLikeAcceptedFile(incoming, config)) {
+        onError(config.wrongContentMessage);
         return;
       }
       if (incoming.size > maxSizeMb * 1024 * 1024) {
@@ -92,7 +134,7 @@ export default function FileDropzone({
       }
       onChange(incoming);
     },
-    [maxSizeMb, onChange, onError],
+    [config, maxSizeMb, onChange, onError],
   );
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,16 +157,10 @@ export default function FileDropzone({
       setDragState("invalid");
       return;
     }
-    // We can only tell file type here, not name. So we accept any file with
-    // either an Excel MIME hint or no type at all (the actual name check
-    // happens on drop).
-    const looksValid =
-      ACCEPTED_MIME_HINTS.includes(
-        firstFile.type as (typeof ACCEPTED_MIME_HINTS)[number],
-      ) ||
-      firstFile.type === "" ||
-      firstFile.type === "application/octet-stream";
-    setDragState(looksValid ? "valid" : "invalid");
+    // We can only tell file type here, not name — so a matching or generic
+    // MIME is enough for the "looks valid" tint; the name check happens on
+    // drop.
+    setDragState(hasPlausibleMime(firstFile.type, config) ? "valid" : "invalid");
   };
 
   const handleDragLeave = () => setDragState("idle");
@@ -159,7 +195,7 @@ export default function FileDropzone({
       >
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-green-100">
-            <FileSpreadsheet className="h-5 w-5 text-green-700" />
+            <Icon className="h-5 w-5 text-green-700" />
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium" title={file.name}>
@@ -192,7 +228,7 @@ export default function FileDropzone({
         <input
           ref={inputRef}
           type="file"
-          accept={ACCEPTED_EXTENSIONS.join(",")}
+          accept={config.extensions.join(",")}
           onChange={handleInputChange}
           className="hidden"
         />
@@ -206,7 +242,7 @@ export default function FileDropzone({
       role="button"
       tabIndex={disabled ? -1 : 0}
       aria-disabled={disabled}
-      aria-label="Drop an Excel file here, or click to browse"
+      aria-label={`Drop a ${config.noun} here, or click to browse`}
       onClick={openPicker}
       onKeyDown={handleKeyDown}
       onDragOver={handleDragOver}
@@ -239,18 +275,18 @@ export default function FileDropzone({
           ? "That file type isn't supported"
           : dragState === "valid"
             ? "Drop to upload"
-            : "Drag & drop your Excel file here"}
+            : `Drag & drop your ${config.noun} here`}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
         or{" "}
         <span className="text-primary hover:underline">browse from your computer</span>
         {" · "}
-        .xlsx or .xls up to {maxSizeMb} MB
+        {config.extensionLabel} up to {maxSizeMb} MB
       </p>
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPTED_EXTENSIONS.join(",")}
+        accept={config.extensions.join(",")}
         onChange={handleInputChange}
         className="hidden"
       />

@@ -112,6 +112,30 @@ export async function apiDelete<T>(url: string): Promise<T> {
   return res.data.data;
 }
 
+/**
+ * Fetches a binary response (PDF) as a Blob.
+ *
+ * Needed because the handover-form PDF and its signed scan are behind
+ * `authorize()`, so they can't be opened with a plain `window.open(url)` the
+ * way public /uploads artifacts can — the browser would send no Authorization
+ * header and get a 401. Callers wrap the result in `URL.createObjectURL()`
+ * and MUST revoke it when done.
+ */
+export async function apiGetBlob(url: string): Promise<Blob> {
+  const res = await api.get<Blob>(url, { responseType: "blob" });
+  return res.data;
+}
+
+/**
+ * Posts multipart form data. Content-Type is deliberately left unset so the
+ * browser generates the multipart boundary itself; setting it by hand
+ * produces a body the server cannot parse.
+ */
+export async function apiPostForm<T>(url: string, formData: FormData): Promise<T> {
+  const res = await api.post<ApiEnvelope<T>>(url, formData);
+  return res.data.data;
+}
+
 export type PaginationMeta = NonNullable<ApiEnvelope<unknown>["meta"]>;
 
 export async function apiGetPaginated<T>(

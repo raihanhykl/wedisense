@@ -341,6 +341,16 @@ export interface MovementListItem {
   toLocation: { id: string; name: string } | null;
   performedBy: { id: string; name: string };
   approvedBy: { id: string; name: string } | null;
+  /** The signed BAST authorising this movement, when one was cited. */
+  handoverForm: MovementHandoverFormRef | null;
+}
+
+export interface MovementHandoverFormRef {
+  id: string;
+  formNumber: string;
+  status: HandoverFormStatus;
+  /** Present only once a signed scan has been uploaded. */
+  scanFileName: string | null;
 }
 
 // ── Maintenance types ──────────────────────────────────────────────
@@ -965,4 +975,89 @@ export interface BatchAuditEntry {
   ip_address: string | null;
   user_agent: string | null;
   created_at: string;
+}
+
+// ── Handover form (Berita Acara Serah Terima) types ────────────────
+
+export type HandoverType =
+  | "COMPANY_TO_EMPLOYEE"
+  | "EMPLOYEE_TO_EMPLOYEE"
+  | "EMPLOYEE_TO_COMPANY";
+
+export type HandoverFormStatus = "DRAFT" | "ISSUED" | "SIGNED" | "CANCELLED";
+
+export interface HandoverParty {
+  id: string;
+  name: string;
+  employeeId: string;
+  email: string;
+}
+
+export interface HandoverFormItem {
+  id: string;
+  assetId: string;
+  sortOrder: number;
+  /** Snapshot taken when the form was created — not the asset's live values. */
+  assetNumber: string;
+  assetName: string;
+  serialNumber: string | null;
+  condition: string;
+  itemNotes: string | null;
+  asset: {
+    id: string;
+    assetNumber: string;
+    name: string;
+    status: string;
+    condition: string;
+  } | null;
+}
+
+export interface HandoverFormListItem {
+  id: string;
+  formNumber: string;
+  handoverType: HandoverType;
+  status: HandoverFormStatus;
+  handoverDate: string;
+  purpose: string | null;
+  notes: string | null;
+  scanFileName: string | null;
+  scanUploadedAt: string | null;
+  pdfGeneratedAt: string | null;
+  createdAt: string;
+  itOfficer: HandoverParty | null;
+  fromUser: HandoverParty | null;
+  toUser: HandoverParty | null;
+  acknowledgedBy: HandoverParty | null;
+  createdBy: { id: string; name: string } | null;
+  fromLocation: { id: string; name: string } | null;
+  toLocation: { id: string; name: string } | null;
+  _count: { items: number; movements: number };
+}
+
+export interface HandoverFormDetail extends HandoverFormListItem {
+  scanUploadedBy: { id: string; name: string } | null;
+  items: HandoverFormItem[];
+  movements: Array<{
+    id: string;
+    referenceNumber: string;
+    movementType: string;
+    status: string;
+    createdAt: string;
+    asset: { id: string; assetNumber: string; name: string };
+  }>;
+}
+
+export interface CompanySetting {
+  id: string;
+  name: string;
+  address: string | null;
+  city: string | null;
+  province: string | null;
+  postalCode: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  logoUrl: string | null;
+  documentCode: string;
+  divisionCode: string;
 }

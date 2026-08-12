@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { usePermission } from "@/hooks/use-permission";
 import type { MovementListItem } from "@/types/admin";
 import MovementFormDialog from "@/components/shared/movement-form-dialog";
+import HandoverFormBadge from "@/components/handover/handover-form-badge";
 
 // ── Status badge colors ──────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
@@ -378,6 +379,16 @@ export default function MovementsPage() {
                                 <p className="text-muted-foreground">
                                   {formatDate(movement.actualReturnDate)}
                                 </p>
+                              </div>
+                            )}
+                            {movement.handoverForm && (
+                              <div className="col-span-2">
+                                <p className="font-medium">Handover Form</p>
+                                <div className="mt-0.5">
+                                  <HandoverFormBadge
+                                    form={movement.handoverForm}
+                                  />
+                                </div>
                               </div>
                             )}
                             {movement.notes && (

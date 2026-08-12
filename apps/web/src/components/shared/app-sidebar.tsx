@@ -37,6 +37,11 @@ const navItems: NavItem[] = [
     permission: "purchase-orders:read",
   },
   { label: "Movements", href: "/admin/movements" },
+  {
+    label: "Handover Forms",
+    href: "/admin/handover-forms",
+    permission: "handover-forms:read",
+  },
   { label: "Maintenance", href: "/admin/maintenance" },
   { label: "Print", href: "/admin/print" },
   { label: "Reports", href: "/admin/reports", permission: "reports:view" },
@@ -48,6 +53,7 @@ const navItems: NavItem[] = [
   { label: "Users", href: "/admin/users", permission: "users:manage" },
   { label: "Roles", href: "/admin/roles", permission: "roles:manage" },
   { label: "Audit", href: "/admin/audit", permission: "audit:read" },
+  { label: "Settings", href: "/admin/settings/company", permission: "settings:manage" },
 ];
 
 function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {

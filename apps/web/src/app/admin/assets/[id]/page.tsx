@@ -12,7 +12,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import PrintDialog from "@/components/shared/print-dialog";
 import Breadcrumb from "@/components/shared/breadcrumb";
 import { ProcurementBatchStatusBadge } from "@/components/shared/procurement-status-badge";
-import type { AssetDetail } from "@/types/admin";
+import HandoverFormBadge from "@/components/handover/handover-form-badge";
+import type { AssetDetail, MovementHandoverFormRef } from "@/types/admin";
 
 // ── Skeleton matching the real detail layout so swap-in is non-jarring.
 function DetailSkeleton() {
@@ -103,6 +104,8 @@ interface AssetMovement {
   performedBy: { id: string; name: string } | null;
   notes: string | null;
   createdAt: string;
+  /** Signed handover form (BAST) behind this movement, when one was cited. */
+  handoverForm: MovementHandoverFormRef | null;
 }
 
 // ── Info row ────────────────────────────────────────────────────────
@@ -447,6 +450,13 @@ export default function AssetDetailPage() {
                     ? ` by ${movement.performedBy.name}`
                     : ""}
                 </p>
+                {/* The signed handover form behind this movement — this is
+                    what turns the history into evidence rather than a claim. */}
+                {movement.handoverForm && (
+                  <div className="mt-1.5">
+                    <HandoverFormBadge form={movement.handoverForm} />
+                  </div>
+                )}
               </div>
             ))}
           </div>

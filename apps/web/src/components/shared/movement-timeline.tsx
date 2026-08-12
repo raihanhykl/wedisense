@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import HandoverFormBadge from "@/components/handover/handover-form-badge";
 import type { MovementListItem } from "@/types/admin";
 
 // ── Movement type badge colors ──────────────────────────────────────
@@ -96,6 +97,13 @@ export default function MovementTimeline({
               <p className="text-xs italic text-muted-foreground">
                 {movement.notes}
               </p>
+            )}
+
+            {/* The signed paper record behind this movement, when there is one. */}
+            {movement.handoverForm && (
+              <div className="pt-0.5">
+                <HandoverFormBadge form={movement.handoverForm} />
+              </div>
             )}
           </div>
         </div>
