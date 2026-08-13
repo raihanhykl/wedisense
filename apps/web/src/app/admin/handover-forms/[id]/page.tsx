@@ -6,12 +6,15 @@ import { useParams, useRouter } from "next/navigation";
 import {
   Ban,
   Download,
+  ExternalLink,
   FileCheck2,
   Loader2,
+  Maximize2,
   Pencil,
   RefreshCw,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import ProtectedRoute from "@/components/shared/protected-route";
@@ -48,6 +51,7 @@ function HandoverFormDetailContent() {
   // src>, which would send no Authorization header and 401.
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfFullscreen, setPdfFullscreen] = useState(false);
   const objectUrls = useRef<string[]>([]);
 
   const [scanFile, setScanFile] = useState<File | null>(null);
@@ -66,6 +70,18 @@ function HandoverFormDetailContent() {
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
+
+  // Escape closes the full-screen reader. The PDF viewer inside the iframe
+  // swallows key events once focused, so the listener sits on the document
+  // rather than the overlay element.
+  useEffect(() => {
+    if (!pdfFullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPdfFullscreen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [pdfFullscreen]);
 
   const fetchForm = useCallback(async () => {
     setLoading(true);
@@ -393,21 +409,46 @@ function HandoverFormDetailContent() {
         {/* ── Right: PDF + scan ── */}
         <div className="space-y-4">
           <section className="rounded-lg border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">Document preview</h2>
-              <button
-                type="button"
-                onClick={() => void loadPdf()}
-                disabled={pdfLoading || form.status === "CANCELLED"}
-                className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted/50 disabled:opacity-50"
-              >
-                {pdfLoading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
+              <div className="flex flex-wrap items-center gap-2">
+                {/* An A4 portrait page in a half-width column is unreadable,
+                    so the inline frame is only a thumbnail — these two are the
+                    real ways to read the document before printing it. */}
+                {pdfUrl && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setPdfFullscreen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted/50"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                      Full screen
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.open(pdfUrl, "_blank")}
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted/50"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      New tab
+                    </button>
+                  </>
                 )}
-                {pdfUrl ? "Refresh" : "Generate preview"}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => void loadPdf()}
+                  disabled={pdfLoading || form.status === "CANCELLED"}
+                  className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted/50 disabled:opacity-50"
+                >
+                  {pdfLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                  {pdfUrl ? "Refresh" : "Generate preview"}
+                </button>
+              </div>
             </div>
 
             {form.status === "DRAFT" && (
@@ -418,11 +459,22 @@ function HandoverFormDetailContent() {
             )}
 
             {pdfUrl ? (
-              <iframe
-                src={pdfUrl}
-                title={`Handover form ${form.formNumber}`}
-                className="h-[520px] w-full rounded-md border"
-              />
+              <button
+                type="button"
+                onClick={() => setPdfFullscreen(true)}
+                title="Open full screen"
+                className="group relative block w-full cursor-zoom-in overflow-hidden rounded-md border"
+              >
+                <iframe
+                  src={`${pdfUrl}#toolbar=0&view=FitH`}
+                  title={`Handover form ${form.formNumber}`}
+                  tabIndex={-1}
+                  className="pointer-events-none h-[560px] w-full"
+                />
+                <span className="absolute inset-x-0 bottom-0 bg-black/60 px-2 py-1 text-center text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                  Click to open full screen
+                </span>
+              </button>
             ) : (
               <div className="flex h-[240px] items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
                 {form.status === "CANCELLED"
@@ -510,6 +562,57 @@ function HandoverFormDetailContent() {
           </section>
         </div>
       </div>
+
+      {/* Full-screen reader. The document has to be legible before it is
+          printed and signed, and the half-width column can't do that. */}
+      {pdfFullscreen && pdfUrl && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Handover form ${form.formNumber}`}
+          // Above the sidebar (z-40) and the notification dropdown (z-50).
+          // The backdrop is near-opaque on purpose: at /80 the app chrome
+          // behind it (nav labels, the unread badge) bled through and read as
+          // part of the document.
+          className="fixed inset-0 z-[100] flex flex-col bg-black/95 p-2 sm:p-4"
+        >
+          <div className="mb-2 flex items-center justify-between gap-3 text-white">
+            <span className="truncate font-mono text-sm">{form.formNumber}</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.open(pdfUrl, "_blank")}
+                className="inline-flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium hover:bg-white/20"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                New tab
+              </button>
+              <button
+                type="button"
+                onClick={downloadPdf}
+                className="inline-flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium hover:bg-white/20"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </button>
+              <button
+                type="button"
+                onClick={() => setPdfFullscreen(false)}
+                aria-label="Close full screen preview"
+                className="inline-flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium hover:bg-white/20"
+              >
+                <X className="h-3.5 w-3.5" />
+                Close
+              </button>
+            </div>
+          </div>
+          <iframe
+            src={pdfUrl}
+            title={`Handover form ${form.formNumber} — full screen`}
+            className="min-h-0 flex-1 rounded-md bg-white"
+          />
+        </div>
+      )}
     </div>
   );
 }

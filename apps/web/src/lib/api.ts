@@ -127,12 +127,22 @@ export async function apiGetBlob(url: string): Promise<Blob> {
 }
 
 /**
- * Posts multipart form data. Content-Type is deliberately left unset so the
- * browser generates the multipart boundary itself; setting it by hand
- * produces a body the server cannot parse.
+ * Posts multipart form data.
+ *
+ * The `Content-Type: application/json` default on the axios instance MUST be
+ * cleared here. Axios does not merely mislabel the request when that header
+ * is present — it silently rewrites the body:
+ *
+ *   isFormData ? (hasJSONContentType ? JSON.stringify(formDataToJSON(data)) : data)
+ *
+ * so the file never leaves the browser and multer sees no multipart body at
+ * all. Passing `null` removes the header, which makes axios detect the
+ * FormData and let the browser set `multipart/form-data` with its boundary.
  */
 export async function apiPostForm<T>(url: string, formData: FormData): Promise<T> {
-  const res = await api.post<ApiEnvelope<T>>(url, formData);
+  const res = await api.post<ApiEnvelope<T>>(url, formData, {
+    headers: { "Content-Type": null },
+  });
   return res.data.data;
 }
 
