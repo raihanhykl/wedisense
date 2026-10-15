@@ -56,6 +56,27 @@ enum MovementStatus {
   CANCELLED
 }
 
+// Direction of a physical handover (Berita Acara Serah Terima). Distinct
+// from MovementType: one handover form can produce several movements of
+// possibly different types (a resignation return unassigns N assets), so
+// the form describes *who signed what*, not *how each asset moved*.
+enum HandoverType {
+  COMPANY_TO_EMPLOYEE // penyerahan: perusahaan → karyawan
+  EMPLOYEE_TO_EMPLOYEE // pemindahtanganan: karyawan A → karyawan B
+  EMPLOYEE_TO_COMPANY // pengembalian: karyawan → perusahaan (resign, mutasi)
+}
+
+// DRAFT → ISSUED happens the first time the PDF is generated: once a
+// document number is on paper heading for signatures, its content must
+// stop changing. ISSUED → SIGNED on scan upload. CANCELLED is terminal
+// and replaces deletion for forms that already reached ISSUED.
+enum HandoverFormStatus {
+  DRAFT
+  ISSUED
+  SIGNED
+  CANCELLED
+}
+
 enum LocationType {
   HEAD_OFFICE
   BRANCH
@@ -179,11 +200,17 @@ enum ProcurementBatchStatus {
 
 // ─── Models ─────────────────────────────────────────────────────────────────────
 
+// A User row is first and foremost an EMPLOYEE record (asset holder,
+// handover party, future HR module). A login account on top of it is
+// optional: `passwordHash` is NULL for employees who never sign in, and
+// `email` is NULL when the employee has none. Postgres allows multiple
+// NULLs under a UNIQUE constraint, so uniqueness still holds for every
+// employee who does have an email. Login requires BOTH to be present.
 model User {
   id                String     @id @default(uuid()) @db.Uuid
   name              String     @map("name")
-  email             String     @unique @map("email")
-  passwordHash      String     @map("password_hash")
+  email             String?    @unique @map("email")
+  passwordHash      String?    @map("password_hash")
   employeeId        String     @map("employee_id")
   phone             String?    @map("phone")
   avatarUrl         String?    @map("avatar_url")
@@ -216,6 +243,12 @@ model User {
   createdProcurementBatches   ProcurementBatch[]    @relation("ProcurementBatchCreatedBy")
   receivedProcurementBatches  ProcurementBatch[]    @relation("ProcurementBatchReceivedBy")
   completedProcurementBatches ProcurementBatch[]    @relation("ProcurementBatchCompletedBy")
+  handoverFormsAsItOfficer    HandoverForm[]        @relation("HandoverItOfficer")
+  handoverFormsAsFromUser     HandoverForm[]        @relation("HandoverFromUser")
+  handoverFormsAsToUser       HandoverForm[]        @relation("HandoverToUser")
+  handoverFormsAcknowledged   HandoverForm[]        @relation("HandoverAcknowledgedBy")
+  createdHandoverForms        HandoverForm[]        @relation("HandoverCreatedBy")
+  uploadedHandoverScans       HandoverForm[]        @relation("HandoverScanUploadedBy")
 
   @@index([status])
   @@index([deletedAt])
@@ -358,6 +391,8 @@ model Location {
   movementsFrom               AssetMovement[]    @relation("MovementFromLocation")
   movementsTo                 AssetMovement[]    @relation("MovementToLocation")
   procurementBatchesAsDefault ProcurementBatch[] @relation("ProcurementBatchDefaultLocation")
+  handoverFormsFrom           HandoverForm[]     @relation("HandoverFromLocation")
+  handoverFormsTo             HandoverForm[]     @relation("HandoverToLocation")
 
   @@index([parentId])
   @@index([type])
@@ -488,6 +523,7 @@ model Asset {
   movements            AssetMovement[]
   maintenanceSchedules MaintenanceSchedule[]
   maintenanceLogs      MaintenanceLog[]
+  handoverItems        HandoverFormItem[]
 
   @@index([assetNumber])
   @@index([serialNumber])
@@ -521,7 +557,20 @@ model AssetMovement {
   expectedReturnDate DateTime?      @map("expected_return_date")
   actualReturnDate   DateTime?      @map("actual_return_date")
   status             MovementStatus @default(COMPLETED) @map("status")
-  createdAt          DateTime       @default(now()) @map("created_at")
+
+  // Link to the signed paper document (Berita Acara Serah Terima) that
+  // authorised this movement. Nullable — most movement types (maintenance,
+  // disposal, found/lost) carry no handover form, and legacy rows have none.
+  //
+  // ALWAYS set at INSERT, never by UPDATE: asset_movements is append-only.
+  // That constraint is why the scanned PDF lives on HandoverForm rather
+  // than in this row's `attachments` — the scan arrives after the movement
+  // is written, and updating the movement to attach it would violate the
+  // append-only rule. One form → many movements (a resignation return
+  // writes one row per asset), so the FK points this way, not the reverse.
+  handoverFormId String? @map("handover_form_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
   asset        Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
@@ -531,6 +580,11 @@ model AssetMovement {
   toLocation   Location? @relation("MovementToLocation", fields: [toLocationId], references: [id], onDelete: SetNull)
   performedBy  User      @relation("MovementPerformedBy", fields: [performedByUserId], references: [id], onDelete: Restrict)
   approvedBy   User?     @relation("MovementApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  // Restrict: a form with movements against it is the legal record for
+  // those movements and must not disappear. Service-layer blocks deletion
+  // of a linked form before Postgres has to.
+  handoverForm HandoverForm? @relation(fields: [handoverFormId], references: [id], onDelete: Restrict)
 
   @@index([assetId])
   @@index([movementType])
@@ -1032,4 +1086,154 @@ model ProcurementBatchSequence {
   currentSequence Int    @default(0) @map("current_sequence")
 
   @@map("procurement_batch_sequences")
+}
+
+// ─── Handover forms (Berita Acara Serah Terima) ─────────────────────────────────
+
+// A printable, physically-signed handover document. Created BEFORE the
+// corresponding AssetMovement rows exist: IT fills the form, downloads the
+// PDF, collects wet signatures, scans it, and only then records the
+// movements — attaching this form to each of them.
+model HandoverForm {
+  id           String             @id @default(uuid()) @db.Uuid
+  // Indonesian letter format, e.g. "001/BAST-IT/WDS/VIII/2026". Contains
+  // slashes, so it is NEVER a URL segment — routes address forms by `id`.
+  formNumber   String             @unique @map("form_number")
+  handoverType HandoverType       @map("handover_type")
+  status       HandoverFormStatus @default(DRAFT) @map("status")
+  // Date the physical handover takes place; may differ from createdAt when
+  // the form is prepared ahead of time. Date-only — no meaningful time part.
+  handoverDate DateTime           @map("handover_date") @db.Date
+
+  // ── Parties ──
+  // The IT officer running the handover. Always present: even for an
+  // employee-to-employee transfer, IT witnesses and verifies.
+  itOfficerUserId      String  @map("it_officer_user_id") @db.Uuid
+  // Nullable per direction: COMPANY_TO_EMPLOYEE has no outgoing employee,
+  // EMPLOYEE_TO_COMPANY has no incoming one. Enforced in the Zod schema.
+  fromUserId           String? @map("from_user_id") @db.Uuid
+  toUserId             String? @map("to_user_id") @db.Uuid
+  // "Mengetahui" — supervisor countersigning. Optional: when absent the PDF
+  // still prints the block so it can be signed by hand.
+  acknowledgedByUserId String? @map("acknowledged_by_user_id") @db.Uuid
+  fromLocationId       String? @map("from_location_id") @db.Uuid
+  toLocationId         String? @map("to_location_id") @db.Uuid
+
+  // Names/employee-ids/locations of every party, frozen at creation time.
+  // A signed document must keep saying what was signed: renaming a user or
+  // moving a location later must not retroactively alter the PDF.
+  partySnapshot Json? @map("party_snapshot")
+
+  purpose String? @map("purpose")
+  notes   String? @map("notes")
+
+  // ── Signed scan ──
+  // Path relative to STORAGE_PATH, deliberately under `private/` so it is
+  // NOT reachable through the unauthenticated /uploads static mount. Served
+  // only via GET /api/handover-forms/:id/scan behind authenticate+authorize.
+  scanFilePath         String?   @map("scan_file_path")
+  scanFileName         String?   @map("scan_file_name")
+  scanFileSize         Int?      @map("scan_file_size")
+  scanUploadedAt       DateTime? @map("scan_uploaded_at")
+  scanUploadedByUserId String?   @map("scan_uploaded_by_user_id") @db.Uuid
+
+  // Stamped the first time the PDF is rendered, which also locks the form.
+  pdfGeneratedAt DateTime? @map("pdf_generated_at")
+
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  // Relations
+  itOfficer      User               @relation("HandoverItOfficer", fields: [itOfficerUserId], references: [id], onDelete: Restrict)
+  fromUser       User?              @relation("HandoverFromUser", fields: [fromUserId], references: [id], onDelete: SetNull)
+  toUser         User?              @relation("HandoverToUser", fields: [toUserId], references: [id], onDelete: SetNull)
+  acknowledgedBy User?              @relation("HandoverAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull)
+  createdBy      User               @relation("HandoverCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  scanUploadedBy User?              @relation("HandoverScanUploadedBy", fields: [scanUploadedByUserId], references: [id], onDelete: SetNull)
+  fromLocation   Location?          @relation("HandoverFromLocation", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocation     Location?          @relation("HandoverToLocation", fields: [toLocationId], references: [id], onDelete: SetNull)
+  items          HandoverFormItem[]
+  movements      AssetMovement[]
+
+  @@index([status])
+  @@index([handoverType])
+  @@index([handoverDate])
+  @@index([itOfficerUserId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([createdByUserId])
+  @@index([deletedAt])
+  @@map("handover_forms")
+}
+
+// One asset line on a handover form. Denormalises the asset's identifying
+// fields on purpose: the PDF must reflect the asset as it was at handover
+// time, and `condition` in particular is the whole point of the signature
+// (the receiver attests to the condition they accepted).
+model HandoverFormItem {
+  id             String @id @default(uuid()) @db.Uuid
+  handoverFormId String @map("handover_form_id") @db.Uuid
+  assetId        String @map("asset_id") @db.Uuid
+  sortOrder      Int    @default(0) @map("sort_order")
+
+  assetNumber  String  @map("asset_number")
+  assetName    String  @map("asset_name")
+  serialNumber String? @map("serial_number")
+  condition    String  @map("condition")
+  itemNotes    String? @map("item_notes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  form  HandoverForm @relation(fields: [handoverFormId], references: [id], onDelete: Cascade)
+  asset Asset        @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  // An asset can appear at most once per form — listing it twice would make
+  // the signed quantities ambiguous.
+  @@unique([handoverFormId, assetId])
+  @@index([assetId])
+  @@map("handover_form_items")
+}
+
+// Mirrors AssetNumberSequence/PurchaseOrderSequence. Keyed by document type
+// so future letter kinds (BAPB, BAP, …) share the table without a migration.
+// Bumped via INSERT … ON CONFLICT DO UPDATE RETURNING inside the creating
+// transaction, so concurrent creates serialise on the row and a failed
+// insert rolls the counter back.
+model DocumentNumberSequence {
+  id              String @id @default(uuid()) @db.Uuid
+  documentType    String @map("document_type")
+  year            Int    @map("year")
+  currentSequence Int    @default(0) @map("current_sequence")
+
+  @@unique([documentType, year])
+  @@map("document_number_sequences")
+}
+
+// Single-row table holding company identity for document letterheads.
+// Enforced as one row in service code (fixed well-known id) rather than by
+// a constraint — a CHECK on a singleton adds friction without adding safety
+// when nothing else writes the table.
+model CompanySetting {
+  id         String  @id @default(uuid()) @db.Uuid
+  name       String  @map("name")
+  address    String? @map("address")
+  city       String? @map("city")
+  province   String? @map("province")
+  postalCode String? @map("postal_code")
+  phone      String? @map("phone")
+  email      String? @map("email")
+  website    String? @map("website")
+  logoUrl    String? @map("logo_url")
+
+  // Segments of the generated document number: "…/BAST-{divisionCode}/{documentCode}/…"
+  documentCode String @default("WDS") @map("document_code")
+  divisionCode String @default("IT") @map("division_code")
+
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("company_settings")
 }

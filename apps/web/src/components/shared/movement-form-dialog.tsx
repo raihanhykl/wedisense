@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiGetPaginated, apiPost } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { getApiErrorMessage } from "@/lib/error";
+import { HANDOVER_STATUS_LABELS, HANDOVER_TYPE_LABELS } from "@/lib/handover";
+import type { HandoverFormListItem } from "@/types/admin";
 
 // ── Movement types ──────────────────────────────────────────────────
 const MOVEMENT_TYPES = [
@@ -48,6 +50,9 @@ function buildSchema(movementType: MovementType) {
   const base = {
     movementType: z.enum(MOVEMENT_TYPES),
     notes: z.string().optional(),
+    // Optional on every type: maintenance, disposal and found/lost movements
+    // have no signed handover document behind them.
+    handoverFormId: z.string().optional(),
   };
 
   switch (movementType) {
@@ -110,6 +115,7 @@ interface MovementFormValues {
   expectedReturnDate?: string;
   swapWithAssetId?: string;
   userId?: string;
+  handoverFormId?: string;
 }
 
 // ── Props ───────────────────────────────────────────────────────────
@@ -210,6 +216,7 @@ export default function MovementFormDialog({
   const [assets, setAssets] = useState<AssetOption[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [locations, setLocations] = useState<LocationOption[]>([]);
+  const [handoverForms, setHandoverForms] = useState<HandoverFormListItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
@@ -223,6 +230,7 @@ export default function MovementFormDialog({
     control,
     reset,
     setValue,
+    watch,
     formState: { errors },
   } = useForm<MovementFormValues>({
     resolver: zodResolver(schema as z.ZodType<MovementFormValues>),
@@ -236,7 +244,8 @@ export default function MovementFormDialog({
     try {
       const [assetData, userData, locationData] = await Promise.all([
         apiGet<AssetOption[]>("/api/assets"),
-        apiGet<UserOption[]>("/api/users"),
+        // Unpaginated feed — the list endpoint would only return page 1.
+        apiGet<UserOption[]>("/api/users/options"),
         apiGet<LocationOption[]>("/api/locations"),
       ]);
       setAssets(assetData);
@@ -247,11 +256,27 @@ export default function MovementFormDialog({
     }
   }, []);
 
+  // Only issued and signed forms can back a movement — a draft has never been
+  // printed, and a cancelled one is void. Fetched separately from the options
+  // above so a handover-forms permission gap doesn't break the whole dialog.
+  const fetchHandoverForms = useCallback(async () => {
+    try {
+      const result = await apiGetPaginated<HandoverFormListItem[]>(
+        "/api/handover-forms",
+        { status: "ISSUED,SIGNED", limit: 50 },
+      );
+      setHandoverForms(result.data);
+    } catch {
+      setHandoverForms([]);
+    }
+  }, []);
+
   useEffect(() => {
     if (open) {
       void fetchOptions();
+      void fetchHandoverForms();
     }
-  }, [open, fetchOptions]);
+  }, [open, fetchOptions, fetchHandoverForms]);
 
   const handleTypeChange = (type: MovementType) => {
     setSelectedType(type);
@@ -265,7 +290,12 @@ export default function MovementFormDialog({
     setSubmitting(true);
     setSubmitError("");
     try {
-      await apiPost("/api/movements", data);
+      await apiPost("/api/movements", {
+        ...data,
+        // The "— none —" option yields "", which fails the server's uuid
+        // check. Send null so the field reads as deliberately unset.
+        handoverFormId: data.handoverFormId ? data.handoverFormId : null,
+      });
       onCreated();
       onClose();
       reset({ movementType: "ASSIGNMENT", notes: "" });
@@ -292,6 +322,27 @@ export default function MovementFormDialog({
   const needsUserId = selectedType === "RESIGNATION_RETURN";
   // Disposal needs required notes
   const notesRequired = selectedType === "DISPOSAL";
+
+  // Only movements that involve a person taking or giving up custody have a
+  // handover document behind them. Maintenance, disposal and found/lost are
+  // internal state changes nobody signs for.
+  const supportsHandoverForm = (
+    [
+      "ASSIGNMENT",
+      "UNASSIGNMENT",
+      "LOCATION_TRANSFER",
+      "LOAN_OUT",
+      "LOAN_RETURN",
+      "SWAP",
+      "RESIGNATION_RETURN",
+    ] as MovementType[]
+  ).includes(selectedType);
+
+  const watchedHandoverFormId = watch("handoverFormId");
+  const selectedHandoverForm = useMemo(
+    () => handoverForms.find((f) => f.id === watchedHandoverFormId) ?? null,
+    [handoverForms, watchedHandoverFormId],
+  );
 
   const assetOptions = useMemo(
     () =>
@@ -465,6 +516,47 @@ export default function MovementFormDialog({
                 <p className="mt-1 text-xs text-destructive">
                   {errors.expectedReturnDate.message}
                 </p>
+              )}
+            </div>
+          )}
+
+          {/* Handover form (BAST) — the signed paper trail behind this move */}
+          {supportsHandoverForm && (
+            <div data-tour="movement-handover-form">
+              <label className="mb-1 block text-sm font-medium">
+                Handover form (optional)
+              </label>
+              {handoverForms.length === 0 ? (
+                <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                  No issued handover forms available. Create one under Handover
+                  Forms, download its PDF, and it will appear here.
+                </p>
+              ) : (
+                <>
+                  <select
+                    {...register("handoverFormId")}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">— none —</option>
+                    {handoverForms.map((form) => (
+                      <option key={form.id} value={form.id}>
+                        {form.formNumber} · {HANDOVER_TYPE_LABELS[form.handoverType]} ·{" "}
+                        {form._count.items} asset(s) ·{" "}
+                        {HANDOVER_STATUS_LABELS[form.status]}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    The asset you are moving must be listed on the form, or the
+                    submission is rejected.
+                    {selectedHandoverForm && !selectedHandoverForm.scanFileName && (
+                      <span className="mt-1 block text-amber-700">
+                        This form has no signed scan yet — upload it on the form&apos;s
+                        page so the movement has its evidence attached.
+                      </span>
+                    )}
+                  </p>
+                </>
               )}
             </div>
           )}

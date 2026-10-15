@@ -41,5 +41,7 @@ apps/api/prisma/*.db
 phase*.png
 .playwright-mcp/
 apps/api/uploads/
+# Signed handover-form scans — real employee signatures, never committed.
+apps/api/private-uploads/
 HANDOFF.md
 apps/web/dev-server.mjs

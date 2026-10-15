@@ -139,6 +139,19 @@ router.put(
   }),
 );
 
+// PUT /api/procurement-batches/:id/sync-asset-financials — fill the NULL
+// purchase date / price / vendor / invoice of linked assets from the
+// batch + PO. Never overwrites a value already on an asset.
+router.put(
+  '/:id/sync-asset-financials',
+  authorize('procurement:update'),
+  asyncHandler(async (req, res) => {
+    const id = req.params['id'] as string;
+    const result = await batchService.syncBatchAssetFinancials(id, req.user!.id);
+    sendSuccess(res, result);
+  }),
+);
+
 // GET /api/procurement-batches/:id/audit — aggregate audit trail
 // (batch's own audit_log rows + audit_log rows for every asset currently
 // linked to the batch). Capped at 500 rows per query in the repo.

@@ -21,7 +21,7 @@ import PasswordInput from "@/components/shared/password-input";
 interface ResetPasswordDialogProps {
   open: boolean;
   /** Target user — null acts as a closed-state placeholder. */
-  user: { id: string; name: string; email: string } | null;
+  user: { id: string; name: string; email: string | null } | null;
   onClose: () => void;
   /** Optional callback after a successful reset (e.g. for analytics
    *  or a parent-level toast). The dialog already toasts on success. */
@@ -107,9 +107,9 @@ export default function ResetPasswordDialog({
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Override the password for{" "}
-              <span className="font-medium text-foreground">{user.name}</span>{" "}
-              ({user.email}). The user will be signed out of any active
-              sessions on their next request.
+              <span className="font-medium text-foreground">{user.name}</span>
+              {user.email ? ` (${user.email})` : ""}. The user will be signed
+              out of any active sessions on their next request.
             </p>
           </div>
         </div>

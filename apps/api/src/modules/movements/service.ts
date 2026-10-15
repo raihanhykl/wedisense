@@ -8,6 +8,7 @@ import type { CreateMovementInput } from './schema.js';
 import type { MovementListFilters, PrismaTransactionClient } from './types.js';
 import type { PaginationQuery } from '@wedisense/shared';
 import { notifyRole } from '../notifications/index.js';
+import { assertFormCoversAsset } from '../handover-forms/service.js';
 
 // ── Build where clause ───────────────────────────────────────────────
 
@@ -143,8 +144,57 @@ export async function getMovement(id: string, accessibleLocationIds: string[]) {
 
 // ── Create Movement ─────────────────────────────────────────────────
 
+/**
+ * Resolves which assets a movement request will touch, so the handover-form
+ * guard can check every one of them. Mirrors what each handler does: SWAP
+ * moves two assets, a resignation return sweeps everything the user holds,
+ * and everything else moves the single named asset.
+ */
+async function resolveAffectedAssetIds(input: CreateMovementInput): Promise<string[]> {
+  if (input.movementType === 'SWAP') {
+    return [input.assetId, input.swapWithAssetId].filter((id): id is string => Boolean(id));
+  }
+
+  if (input.movementType === 'RESIGNATION_RETURN') {
+    if (!input.userId) return [];
+    const assets = await repo.findAssetsByUserId(prisma, input.userId);
+    return assets.map((asset) => asset.id);
+  }
+
+  return input.assetId ? [input.assetId] : [];
+}
+
+/**
+ * Rejects a movement that cites a handover form which doesn't actually cover
+ * the asset being moved — the mistake an operator makes by picking the wrong
+ * BAST from a dropdown, which would otherwise file a movement under someone
+ * else's signed paperwork.
+ *
+ * Runs before the handler's transaction rather than inside it. The window
+ * between this check and the insert is only reachable by someone cancelling
+ * the form mid-request, and the FK on `handover_form_id` still guarantees the
+ * form exists at insert time. Checking here keeps one guard in one place
+ * instead of twelve copies threaded through every handler.
+ */
+async function assertHandoverFormCoverage(input: CreateMovementInput): Promise<void> {
+  if (!input.handoverFormId) return;
+
+  const assetIds = await resolveAffectedAssetIds(input);
+  if (assetIds.length === 0) {
+    // Nothing to check yet — the handler will raise the specific
+    // "assetId is required" / "no assets found" error with better context.
+    return;
+  }
+
+  for (const assetId of assetIds) {
+    await assertFormCoversAsset(prisma, input.handoverFormId, assetId);
+  }
+}
+
 export async function createMovement(input: CreateMovementInput, performedByUserId: string) {
   const { movementType } = input;
+
+  await assertHandoverFormCoverage(input);
 
   // Dispatch to specific handler
   switch (movementType) {
@@ -258,6 +308,28 @@ function validateAssetStatusForMovement(asset: { id: string; status: string; ass
   }
 }
 
+/**
+ * Provenance fields every movement carries regardless of type: the free-form
+ * attachments blob and the link to the signed handover form.
+ *
+ * Centralised because spreading them by hand across twelve handlers is how
+ * SWAP silently ended up dropping `attachments` — a new provenance field
+ * should be impossible to forget on one branch.
+ *
+ * `handoverFormId` is only ever set here, at INSERT: `asset_movements` is
+ * append-only, so the link can never be patched on afterwards. That is also
+ * why the scanned PDF lives on HandoverForm rather than in `attachments` —
+ * the scan arrives after the movement row is already written.
+ */
+function provenanceFields(input: CreateMovementInput) {
+  return {
+    attachments: input.attachments ?? Prisma.DbNull,
+    ...(input.handoverFormId && {
+      handoverForm: { connect: { id: input.handoverFormId } },
+    }),
+  };
+}
+
 function createAuditLog(
   tx: PrismaTransactionClient,
   userId: string,
@@ -295,7 +367,7 @@ async function handleAssignment(input: CreateMovementInput, performedByUserId: s
       toUser: { connect: { id: toUserId } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -328,7 +400,7 @@ async function handleUnassignment(input: CreateMovementInput, performedByUserId:
       ...(asset.assignedToUserId && { fromUser: { connect: { id: asset.assignedToUserId } } }),
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -367,7 +439,7 @@ async function handleLocationTransfer(input: CreateMovementInput, performedByUse
       toLocation: { connect: { id: toLocationId } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -409,7 +481,7 @@ async function handleLoanOut(input: CreateMovementInput, performedByUserId: stri
       performedBy: { connect: { id: performedByUserId } },
       expectedReturnDate,
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -443,7 +515,7 @@ async function handleLoanReturn(input: CreateMovementInput, performedByUserId: s
       performedBy: { connect: { id: performedByUserId } },
       actualReturnDate: new Date(),
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -490,6 +562,7 @@ async function handleSwap(input: CreateMovementInput, performedByUserId: string)
       ...(userB && { toUser: { connect: { id: userB } } }),
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
+      ...provenanceFields(input),
     });
 
     // Movement 2: assetB from userB to userA
@@ -502,6 +575,7 @@ async function handleSwap(input: CreateMovementInput, performedByUserId: string)
       ...(userA && { toUser: { connect: { id: userA } } }),
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
+      ...provenanceFields(input),
     });
 
     // Update assetA: assign to userB
@@ -552,7 +626,7 @@ async function handleSendToMaintenance(input: CreateMovementInput, performedByUs
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -593,7 +667,7 @@ async function handleReturnFromMaintenance(input: CreateMovementInput, performed
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -637,7 +711,7 @@ async function handleDisposal(input: CreateMovementInput, performedByUserId: str
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: `${input.notes} | Final book value: ${asset.currentBookValue?.toString() ?? 'N/A'}`,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     movementId = created.id;
@@ -697,6 +771,9 @@ async function handleResignationReturn(input: CreateMovementInput, performedByUs
         fromUser: { connect: { id: input.userId! } },
         performedBy: { connect: { id: performedByUserId } },
         notes: input.notes ?? null,
+        // Every asset in a resignation return is covered by the SAME form —
+        // one BAST, one signature session, N movement rows.
+        ...provenanceFields(input),
       });
 
       await repo.updateAssetInTransaction(tx, asset.id, {
@@ -736,7 +813,7 @@ async function handleFound(input: CreateMovementInput, performedByUserId: string
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     await repo.updateAssetInTransaction(tx, asset.id, {
@@ -776,7 +853,7 @@ async function handleLost(input: CreateMovementInput, performedByUserId: string)
       asset: { connect: { id: asset.id } },
       performedBy: { connect: { id: performedByUserId } },
       notes: input.notes ?? null,
-      attachments: input.attachments ?? Prisma.DbNull,
+      ...provenanceFields(input),
     });
 
     movementId = created.id;

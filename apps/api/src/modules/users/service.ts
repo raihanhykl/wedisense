@@ -7,6 +7,8 @@ import type { UserListFilters } from './types.js';
 import type {
   CreateUserInput,
   UpdateUserInput,
+  BulkCreateUsersInput,
+  CreateUserAccountInput,
   AssignRolesInput,
   ResetUserPasswordInput,
 } from './schema.js';
@@ -30,11 +32,30 @@ export async function getUser(id: string) {
   return user;
 }
 
+/** Active employees for pickers — see repository.findOptions(). */
+export async function listUserOptions() {
+  return userRepo.findOptions();
+}
+
+function normaliseEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  return email.trim().toLowerCase();
+}
+
+/**
+ * Create an employee record, optionally with a login account. Without a
+ * password the row is a plain employee (asset holder / handover party)
+ * who never signs in; `hasAccount` on the response tells the UI which.
+ */
 export async function createUser(input: CreateUserInput, actorId: string) {
-  // Check unique email
-  const existingEmail = await userRepo.findByEmail(input.email);
-  if (existingEmail) {
-    throw new AppError(409, 'DUPLICATE_EMAIL', `Email "${input.email}" already exists`);
+  const email = normaliseEmail(input.email);
+
+  // Check unique email (only when one was given — NULL emails don't collide)
+  if (email) {
+    const existingEmail = await userRepo.findByEmail(email);
+    if (existingEmail) {
+      throw new AppError(409, 'DUPLICATE_EMAIL', `Email "${email}" already exists`);
+    }
   }
 
   // Check unique employeeId
@@ -43,13 +64,13 @@ export async function createUser(input: CreateUserInput, actorId: string) {
     throw new AppError(409, 'DUPLICATE_EMPLOYEE_ID', `Employee ID "${input.employeeId}" already exists`);
   }
 
-  const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+  const passwordHash = input.password ? await bcrypt.hash(input.password, BCRYPT_ROUNDS) : null;
 
   return prisma.$transaction(async (tx) => {
     const user = await userRepo.create(
       {
         name: input.name,
-        email: input.email,
+        email,
         passwordHash,
         employeeId: input.employeeId,
         phone: input.phone ?? null,
@@ -65,13 +86,180 @@ export async function createUser(input: CreateUserInput, actorId: string) {
         action: 'CREATE',
         resourceType: 'User',
         resourceId: user.id,
-        // Defensive: passwordHash is in the select set; spreading would
-        // leak the hash into the audit JSON. The bcrypt cost makes this
-        // a slow-but-feasible offline crack target; never log it.
-        newValues: { ...user, passwordHash: '[REDACTED]' } as unknown as Prisma.InputJsonValue,
+        // The repository already strips passwordHash (it only exposes the
+        // derived `hasAccount` flag), so spreading the row is hash-safe.
+        newValues: user as unknown as Prisma.InputJsonValue,
       },
     });
     return user;
+  });
+}
+
+interface BulkRowError {
+  index: number;
+  field: 'employeeId' | 'email';
+  message: string;
+}
+
+/**
+ * Bulk employee creation. All-or-nothing: every row is validated against
+ * the payload itself AND the database before a single INSERT runs, and
+ * the inserts share one transaction, so a duplicate in row 37 never
+ * leaves rows 1–36 half-created. Duplicates come back as a 409 with a
+ * per-row `details` array the UI can render inline.
+ */
+export async function bulkCreateUsers(input: BulkCreateUsersInput, actorId: string) {
+  const rows = input.users.map((row) => ({
+    ...row,
+    email: normaliseEmail(row.email),
+    phone: row.phone?.trim() || null,
+  }));
+
+  // 1. Duplicates inside the payload.
+  const errors: BulkRowError[] = [];
+  const seenEmployeeIds = new Map<string, number>();
+  const seenEmails = new Map<string, number>();
+  rows.forEach((row, index) => {
+    const empKey = row.employeeId.toLowerCase();
+    const firstEmp = seenEmployeeIds.get(empKey);
+    if (firstEmp !== undefined) {
+      errors.push({
+        index,
+        field: 'employeeId',
+        message: `Employee ID "${row.employeeId}" is repeated (also on row ${firstEmp + 1})`,
+      });
+    } else {
+      seenEmployeeIds.set(empKey, index);
+    }
+    if (row.email) {
+      const firstEmail = seenEmails.get(row.email);
+      if (firstEmail !== undefined) {
+        errors.push({
+          index,
+          field: 'email',
+          message: `Email "${row.email}" is repeated (also on row ${firstEmail + 1})`,
+        });
+      } else {
+        seenEmails.set(row.email, index);
+      }
+    }
+  });
+
+  // 2. Duplicates against existing employees.
+  const conflicts = await userRepo.findConflicts(
+    rows.map((r) => r.employeeId),
+    rows.flatMap((r) => (r.email ? [r.email] : [])),
+  );
+  if (conflicts.length > 0) {
+    const takenEmployeeIds = new Set(conflicts.map((c) => c.employeeId.toLowerCase()));
+    const takenEmails = new Set(
+      conflicts.flatMap((c) => (c.email ? [c.email.toLowerCase()] : [])),
+    );
+    rows.forEach((row, index) => {
+      if (takenEmployeeIds.has(row.employeeId.toLowerCase())) {
+        errors.push({
+          index,
+          field: 'employeeId',
+          message: `Employee ID "${row.employeeId}" already exists`,
+        });
+      }
+      if (row.email && takenEmails.has(row.email)) {
+        errors.push({ index, field: 'email', message: `Email "${row.email}" already exists` });
+      }
+    });
+  }
+
+  if (errors.length > 0) {
+    errors.sort((a, b) => a.index - b.index);
+    throw new AppError(
+      409,
+      'BULK_USERS_CONFLICT',
+      `${errors.length} row(s) conflict with existing or repeated employees`,
+      errors,
+    );
+  }
+
+  // 3. Insert everything in one transaction; one audit row per employee
+  //    so each user's own audit trail starts with its CREATE.
+  return prisma.$transaction(async (tx) => {
+    const created = [];
+    for (const row of rows) {
+      const user = await userRepo.create(
+        {
+          name: row.name,
+          email: row.email,
+          passwordHash: null,
+          employeeId: row.employeeId,
+          phone: row.phone,
+          preferredLanguage: 'id',
+          status: row.status ?? 'ACTIVE',
+        },
+        tx,
+      );
+      await tx.auditLog.create({
+        data: {
+          userId: actorId,
+          action: 'CREATE',
+          resourceType: 'User',
+          resourceId: user.id,
+          newValues: { ...user, bulk: true } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      created.push(user);
+    }
+    return created;
+  });
+}
+
+/**
+ * Grant a login account to an existing employee. Idempotency guard: an
+ * employee who already has an account gets a 409 — password changes go
+ * through /reset-password (audited distinctly, actor re-auth).
+ */
+export async function createUserAccount(
+  id: string,
+  input: CreateUserAccountInput,
+  actorId: string,
+) {
+  const existing = await userRepo.findSecretById(id);
+  if (!existing) {
+    throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
+  }
+  if (existing.passwordHash !== null) {
+    throw new AppError(
+      409,
+      'USER_ALREADY_HAS_ACCOUNT',
+      'This employee already has a login account. Use reset password instead.',
+    );
+  }
+
+  const email = normaliseEmail(input.email) ?? existing.email;
+  if (!email) {
+    throw new AppError(422, 'EMAIL_REQUIRED', 'An email address is required for a login account');
+  }
+  if (email !== existing.email) {
+    const duplicate = await userRepo.findByEmail(email, id);
+    if (duplicate) {
+      throw new AppError(409, 'DUPLICATE_EMAIL', `Email "${email}" already exists`);
+    }
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await userRepo.update(id, { email, passwordHash }, tx);
+    await tx.auditLog.create({
+      data: {
+        userId: actorId,
+        action: 'UPDATE',
+        resourceType: 'User',
+        resourceId: id,
+        oldValues: { hasAccount: false, email: existing.email },
+        // Only the FACT of account creation — never the hash.
+        newValues: { hasAccount: true, email },
+      },
+    });
+    return updated;
   });
 }
 
@@ -81,11 +269,23 @@ export async function updateUser(id: string, input: UpdateUserInput, actorId: st
     throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
   }
 
+  const email = input.email === undefined ? undefined : normaliseEmail(input.email);
+
+  // An account logs in by email, so it cannot be cleared while the
+  // account exists. Plain employees may drop their email freely.
+  if (email === null && existing.hasAccount) {
+    throw new AppError(
+      409,
+      'ACCOUNT_REQUIRES_EMAIL',
+      'This employee has a login account; the email cannot be removed',
+    );
+  }
+
   // Check unique email if changing
-  if (input.email && input.email !== existing.email) {
-    const duplicate = await userRepo.findByEmail(input.email, id);
+  if (email && email !== existing.email) {
+    const duplicate = await userRepo.findByEmail(email, id);
     if (duplicate) {
-      throw new AppError(409, 'DUPLICATE_EMAIL', `Email "${input.email}" already exists`);
+      throw new AppError(409, 'DUPLICATE_EMAIL', `Email "${email}" already exists`);
     }
   }
 
@@ -102,7 +302,7 @@ export async function updateUser(id: string, input: UpdateUserInput, actorId: st
       id,
       {
         ...(input.name !== undefined && { name: input.name }),
-        ...(input.email !== undefined && { email: input.email }),
+        ...(email !== undefined && { email }),
         ...(input.employeeId !== undefined && { employeeId: input.employeeId }),
         ...(input.phone !== undefined && { phone: input.phone }),
         ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
@@ -187,7 +387,7 @@ export async function resetUserPassword(
     where: { id: actorId, deletedAt: null },
     select: { id: true, passwordHash: true, status: true },
   });
-  if (!actor || actor.status !== 'ACTIVE') {
+  if (!actor || actor.status !== 'ACTIVE' || !actor.passwordHash) {
     throw new AppError(401, 'ACTOR_NOT_FOUND', 'Your session is no longer valid');
   }
 
@@ -200,9 +400,16 @@ export async function resetUserPassword(
     );
   }
 
-  const target = await userRepo.findById(targetUserId);
+  const target = await userRepo.findSecretById(targetUserId);
   if (!target) {
     throw new AppError(404, 'USER_NOT_FOUND', 'Target user not found');
+  }
+  if (target.passwordHash === null) {
+    throw new AppError(
+      409,
+      'USER_HAS_NO_ACCOUNT',
+      'This employee has no login account yet. Create the account first.',
+    );
   }
 
   const newHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);

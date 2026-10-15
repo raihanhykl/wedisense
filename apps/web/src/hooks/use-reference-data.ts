@@ -24,7 +24,16 @@ export interface LocationOption {
 export interface UserOption {
   id: string;
   name: string;
-  email: string;
+  employeeId: string;
+  /** Null for employee records without an email. */
+  email: string | null;
+  /** True when the employee can sign in. Pickers don't care, but it's cheap to carry. */
+  hasAccount: boolean;
+}
+
+/** "Name (email)" when there is an email, "Name (EMP-ID)" otherwise. */
+export function formatUserOption(u: Pick<UserOption, "name" | "email" | "employeeId">): string {
+  return `${u.name} (${u.email ?? u.employeeId})`;
 }
 
 // ── Query keys ──────────────────────────────────────────────────────
@@ -107,7 +116,10 @@ export function useUsers() {
   return useQuery({
     queryKey: referenceQueryKeys.users(),
     queryFn: async () => {
-      const data = await apiGet<UserOption[]>("/api/users", { limit: 100 });
+      // Unpaginated active-employee feed. The paginated /api/users list
+      // caps at 100 rows, which silently hid employees from every picker
+      // once the directory outgrew a single page.
+      const data = await apiGet<UserOption[]>("/api/users/options");
       return data;
     },
   });

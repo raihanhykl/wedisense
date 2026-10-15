@@ -30,6 +30,10 @@ export const PERMISSIONS = {
   TOURS_MANAGE: 'tours:manage',
   PRODUCTS_MANAGE: 'products:manage',
   PRODUCTS_DELETE: 'products:delete',
+  HANDOVER_FORMS_READ: 'handover-forms:read',
+  HANDOVER_FORMS_CREATE: 'handover-forms:create',
+  HANDOVER_FORMS_UPDATE: 'handover-forms:update',
+  SETTINGS_MANAGE: 'settings:manage',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -137,6 +141,7 @@ export const I18N_NAMESPACES = [
   'notifications',
   'tours',
   'errors',
+  'handover',
 ] as const;
 
 export type I18nNamespace = (typeof I18N_NAMESPACES)[number];

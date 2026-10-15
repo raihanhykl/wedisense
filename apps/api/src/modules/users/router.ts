@@ -7,6 +7,8 @@ import { parsePagination, buildPaginationMeta } from '../../utils/pagination.js'
 import {
   createUserSchema,
   updateUserSchema,
+  bulkCreateUsersSchema,
+  createUserAccountSchema,
   userListQuerySchema,
   assignRolesSchema,
   resetUserPasswordSchema,
@@ -39,6 +41,7 @@ router.get(
       status: query.status,
       roleId: query.roleId,
       search: query.search,
+      hasAccount: query.hasAccount,
     };
 
     const { data, total } = await userService.listUsers(filters, skip, take);
@@ -55,6 +58,27 @@ router.post(
     const input = createUserSchema.parse(req.body);
     const user = await userService.createUser(input, req.user!.id);
     sendCreated(res, user);
+  }),
+);
+
+// GET /api/users/options — unpaginated active-employee feed for pickers.
+// Declared before '/:id' so "options" is never read as a user id.
+router.get(
+  '/options',
+  asyncHandler(async (_req, res) => {
+    const options = await userService.listUserOptions();
+    sendSuccess(res, options);
+  }),
+);
+
+// POST /api/users/bulk — create many plain employees (no accounts) at once
+router.post(
+  '/bulk',
+  authorize('users:manage'),
+  asyncHandler(async (req, res) => {
+    const input = bulkCreateUsersSchema.parse(req.body);
+    const users = await userService.bulkCreateUsers(input, req.user!.id);
+    sendCreated(res, users);
   }),
 );
 
@@ -88,6 +112,18 @@ router.delete(
     const id = req.params['id'] as string;
     await userService.deleteUser(id, req.user!.id);
     sendNoContent(res);
+  }),
+);
+
+// POST /api/users/:id/account — grant a login account to an existing employee
+router.post(
+  '/:id/account',
+  authorize('users:manage'),
+  asyncHandler(async (req, res) => {
+    const id = req.params['id'] as string;
+    const input = createUserAccountSchema.parse(req.body);
+    const user = await userService.createUserAccount(id, input, req.user!.id);
+    sendSuccess(res, user);
   }),
 );
 

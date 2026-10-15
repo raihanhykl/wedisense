@@ -12,7 +12,12 @@ import * as repo from './repository.js';
 import {
   assertBatchAcceptsAssets,
   bumpBatchAssetCountWithCascade,
+  loadBatchFinancialDefaults,
 } from '../procurement-batches/service.js';
+import {
+  resolveAssetFinancials,
+  type BatchFinancialDefaults,
+} from '../../utils/asset-financials.js';
 import type { CreateAssetInput, UpdateAssetInput } from './schema.js';
 import type { AssetListFilters, AssetSortField, PrismaTransactionClient } from './types.js';
 import type { PaginationQuery } from '@wedisense/shared';
@@ -193,6 +198,10 @@ function buildOrderBy(sort?: string, order?: 'asc' | 'desc'): Prisma.AssetOrderB
     purchaseDate: { purchaseDate: order ?? 'desc' },
     purchasePrice: { purchasePrice: order ?? 'desc' },
     createdAt: { createdAt: order ?? 'desc' },
+    // `updatedAt` is bumped by Prisma on every write to the row (edits,
+    // movements that reassign/relocate, nightly depreciation) — so this
+    // sort surfaces "what changed most recently" without a join.
+    updatedAt: { updatedAt: order ?? 'desc' },
     // Relation sorts — Prisma resolves these to ORDER BY on the joined row.
     // assignedTo is nullable: unassigned assets land where Postgres puts
     // NULLs (last on asc, first on desc), which matches the "-" cells
@@ -321,9 +330,15 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
 
       // Phase 17: validate batch link inside the same transaction so a
       // rejection rolls back the asset-number sequence bump too.
+      // A batch-linked asset also inherits purchase date / unit price /
+      // vendor / invoice from the batch + PO for every field the client
+      // left empty (see utils/asset-financials.ts).
+      let batchDefaults: BatchFinancialDefaults | null = null;
       if (input.procurementBatchId) {
         await assertBatchAcceptsAssets(input.procurementBatchId, tx);
+        batchDefaults = await loadBatchFinancialDefaults(input.procurementBatchId, tx);
       }
+      const financials = resolveAssetFinancials(input, batchDefaults, input.productId);
 
       const created = await repo.createInTransaction(tx, {
         id: assetId,
@@ -340,15 +355,15 @@ export async function createAsset(input: CreateAssetInput, userId: string) {
         ...(input.procurementBatchId && {
           procurementBatch: { connect: { id: input.procurementBatchId } },
         }),
-        purchaseDate: input.purchaseDate ?? null,
-        purchasePrice: input.purchasePrice != null ? new Prisma.Decimal(input.purchasePrice) : null,
-        currency: input.currency ?? 'IDR',
+        purchaseDate: financials.purchaseDate,
+        purchasePrice: financials.purchasePrice,
+        currency: financials.currency,
         // Phase 17 v2: vendorId is preferred. `vendor` (legacy string)
         // is only kept for backwards-compatibility — written to
         // vendorLegacy when the caller doesn't supply a vendorId.
-        ...(input.vendorId && { vendor: { connect: { id: input.vendorId } } }),
+        ...(financials.vendorId && { vendor: { connect: { id: financials.vendorId } } }),
         vendorLegacy: input.vendor ?? null,
-        invoiceNumber: input.invoiceNumber ?? null,
+        invoiceNumber: financials.invoiceNumber,
         invoiceUrl: input.invoiceUrl ?? null,
         warrantyStartDate: input.warrantyStartDate ?? null,
         warrantyEndDate: input.warrantyEndDate ?? null,
@@ -486,8 +501,12 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
     assets = await prisma.$transaction(async (tx) => {
       // Phase 17: validate each distinct batch ID once inside the tx so
       // a rejection rolls back any asset-number sequence bumps below.
+      // The financial defaults are loaded once per batch here too — the
+      // "Add Assets" page ships every row with the same batchId.
+      const batchDefaultsById = new Map<string, BatchFinancialDefaults>();
       for (const batchId of batchDeltas.keys()) {
         await assertBatchAcceptsAssets(batchId, tx);
+        batchDefaultsById.set(batchId, await loadBatchFinancialDefaults(batchId, tx));
       }
 
       const serialsRequested = inputs
@@ -530,6 +549,13 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
         const categoryCodePath = resolveCategoryCodePath(product.categoryId);
         const assetNumber = await generateAssetNumber(categoryCodePath, tx);
         const assetId = randomUUID();
+        const financials = resolveAssetFinancials(
+          input,
+          input.procurementBatchId
+            ? (batchDefaultsById.get(input.procurementBatchId) ?? null)
+            : null,
+          input.productId,
+        );
 
         const created = await repo.createInTransaction(tx, {
           id: assetId,
@@ -546,12 +572,12 @@ export async function bulkCreateAssets(inputs: CreateAssetInput[], userId: strin
           ...(input.procurementBatchId && {
             procurementBatch: { connect: { id: input.procurementBatchId } },
           }),
-          purchaseDate: input.purchaseDate ?? null,
-          purchasePrice: input.purchasePrice != null ? new Prisma.Decimal(input.purchasePrice) : null,
-          currency: input.currency ?? 'IDR',
-          ...(input.vendorId && { vendor: { connect: { id: input.vendorId } } }),
+          purchaseDate: financials.purchaseDate,
+          purchasePrice: financials.purchasePrice,
+          currency: financials.currency,
+          ...(financials.vendorId && { vendor: { connect: { id: financials.vendorId } } }),
           vendorLegacy: input.vendor ?? null,
-          invoiceNumber: input.invoiceNumber ?? null,
+          invoiceNumber: financials.invoiceNumber,
           invoiceUrl: input.invoiceUrl ?? null,
           warrantyStartDate: input.warrantyStartDate ?? null,
           warrantyEndDate: input.warrantyEndDate ?? null,

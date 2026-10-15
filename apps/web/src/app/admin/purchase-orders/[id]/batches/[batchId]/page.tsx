@@ -14,10 +14,12 @@ import {
   Loader2,
   Package,
   PlayCircle,
+  RefreshCw,
   Trash2,
   Upload,
   XCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 import { apiDelete, apiGet, apiPut } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
 import { usePermission } from "@/hooks/use-permission";
@@ -541,7 +543,7 @@ export default function BatchDetailPage() {
     null | "receive" | "complete" | "cancel"
   >(null);
   const [busyAction, setBusyAction] = useState<
-    null | "submit" | "cancel" | "delete"
+    null | "submit" | "cancel" | "delete" | "sync-financials"
   >(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -570,15 +572,12 @@ export default function BatchDetailPage() {
     let cancelled = false;
     (async () => {
       try {
-        const rows = await apiGet<
-          Array<{ id: string; name: string; status: string }>
-        >("/api/users", { limit: 200 });
+        // Unpaginated active-employee feed (already filtered to ACTIVE).
+        const rows = await apiGet<Array<{ id: string; name: string }>>(
+          "/api/users/options",
+        );
         if (!cancelled) {
-          setUsers(
-            rows
-              .filter((u) => u.status === "ACTIVE")
-              .map((u) => ({ id: u.id, name: u.name })),
-          );
+          setUsers(rows.map((u) => ({ id: u.id, name: u.name })));
         }
       } catch {
         /* optional */
@@ -588,6 +587,31 @@ export default function BatchDetailPage() {
       cancelled = true;
     };
   }, []);
+
+  // Gap-filler: copy purchase date / unit price / vendor / invoice from
+  // this batch + PO onto linked assets that still have those fields
+  // empty. Never overwrites an existing value, so it is safe to re-run
+  // (e.g. after the invoice number is entered on the batch later).
+  const handleSyncFinancials = async () => {
+    if (!batch) return;
+    setBusyAction("sync-financials");
+    setActionError(null);
+    try {
+      const result = await apiPut<{
+        assetsChecked: number;
+        assetsUpdated: number;
+      }>(`/api/procurement-batches/${batch.id}/sync-asset-financials`, {});
+      toast.success(
+        result.assetsUpdated === 0
+          ? `All ${result.assetsChecked} linked asset(s) already have their financials`
+          : `Filled financials on ${result.assetsUpdated} of ${result.assetsChecked} linked asset(s)`,
+      );
+    } catch (err) {
+      setActionError(getApiErrorMessage(err, "Failed to sync asset financials"));
+    } finally {
+      setBusyAction(null);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!batch) return;
@@ -755,6 +779,22 @@ export default function BatchDetailPage() {
             >
               <Upload className="h-4 w-4" /> Import assets
             </Link>
+          )}
+          {canUpdate && batch.assets.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleSyncFinancials()}
+              disabled={busyAction !== null}
+              title="Fill empty purchase date / price / vendor / invoice on linked assets from this batch and its PO. Existing values are never overwritten."
+              className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+            >
+              {busyAction === "sync-financials" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Sync financials to assets
+            </button>
           )}
           {canUpdate && canEdit(batch.status) && (
             <button

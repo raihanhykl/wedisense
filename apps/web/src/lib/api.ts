@@ -112,6 +112,40 @@ export async function apiDelete<T>(url: string): Promise<T> {
   return res.data.data;
 }
 
+/**
+ * Fetches a binary response (PDF) as a Blob.
+ *
+ * Needed because the handover-form PDF and its signed scan are behind
+ * `authorize()`, so they can't be opened with a plain `window.open(url)` the
+ * way public /uploads artifacts can — the browser would send no Authorization
+ * header and get a 401. Callers wrap the result in `URL.createObjectURL()`
+ * and MUST revoke it when done.
+ */
+export async function apiGetBlob(url: string): Promise<Blob> {
+  const res = await api.get<Blob>(url, { responseType: "blob" });
+  return res.data;
+}
+
+/**
+ * Posts multipart form data.
+ *
+ * The `Content-Type: application/json` default on the axios instance MUST be
+ * cleared here. Axios does not merely mislabel the request when that header
+ * is present — it silently rewrites the body:
+ *
+ *   isFormData ? (hasJSONContentType ? JSON.stringify(formDataToJSON(data)) : data)
+ *
+ * so the file never leaves the browser and multer sees no multipart body at
+ * all. Passing `null` removes the header, which makes axios detect the
+ * FormData and let the browser set `multipart/form-data` with its boundary.
+ */
+export async function apiPostForm<T>(url: string, formData: FormData): Promise<T> {
+  const res = await api.post<ApiEnvelope<T>>(url, formData, {
+    headers: { "Content-Type": null },
+  });
+  return res.data.data;
+}
+
 export type PaginationMeta = NonNullable<ApiEnvelope<unknown>["meta"]>;
 
 export async function apiGetPaginated<T>(

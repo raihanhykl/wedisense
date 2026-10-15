@@ -5,7 +5,7 @@ import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { getApiErrorMessage } from "@/lib/error";
-import { useLocations, useUsers } from "@/hooks/use-reference-data";
+import { useLocations, useUsers, formatUserOption } from "@/hooks/use-reference-data";
 import ProductPicker from "@/components/shared/product-picker";
 import type { AssetFormData } from "@/types/admin";
 
@@ -265,7 +265,7 @@ export default function AssetForm({
               <option value="">-- Unassigned --</option>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.name} ({u.email})
+                  {formatUserOption(u)}
                 </option>
               ))}
             </select>

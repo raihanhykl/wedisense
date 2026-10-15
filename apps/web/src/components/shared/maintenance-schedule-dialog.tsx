@@ -167,7 +167,8 @@ export default function MaintenanceScheduleDialog({
     try {
       const [assetData, userData] = await Promise.all([
         apiGet<AssetOption[]>("/api/assets"),
-        apiGet<UserOption[]>("/api/users"),
+        // Unpaginated feed — the list endpoint would only return page 1.
+        apiGet<UserOption[]>("/api/users/options"),
       ]);
       setAssets(assetData);
       setUsers(userData);

@@ -12,6 +12,12 @@ const listInclude = {
   toLocation: { select: { id: true, name: true, code: true } },
   performedBy: { select: { id: true, name: true, email: true } },
   approvedBy: { select: { id: true, name: true, email: true } },
+  // Surfaced on the list so the movements table and the asset timeline can
+  // show the BAST number and offer a link to the signed scan without a
+  // second round-trip per row.
+  handoverForm: {
+    select: { id: true, formNumber: true, status: true, scanFileName: true },
+  },
 } as const;
 
 const detailInclude = {
@@ -34,6 +40,17 @@ const detailInclude = {
   toLocation: { select: { id: true, name: true, code: true, type: true } },
   performedBy: { select: { id: true, name: true, email: true } },
   approvedBy: { select: { id: true, name: true, email: true } },
+  handoverForm: {
+    select: {
+      id: true,
+      formNumber: true,
+      status: true,
+      handoverType: true,
+      handoverDate: true,
+      scanFileName: true,
+      scanUploadedAt: true,
+    },
+  },
 } as const;
 
 // ── Queries ──────────────────────────────────────────────────────────

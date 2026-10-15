@@ -8,6 +8,10 @@ type PrismaTransactionClient = Omit<
   '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
 >;
 
+// `passwordHash` is selected ONLY so `withHasAccount()` can derive the
+// boolean; every public function in this module strips it before
+// returning, so callers (and the audit rows that spread these objects)
+// never see the hash.
 const userSelectFields = {
   id: true,
   name: true,
@@ -19,13 +23,26 @@ const userSelectFields = {
   status: true,
   createdAt: true,
   updatedAt: true,
+  passwordHash: true,
 } as const;
+
+/** Replace the raw hash with the `hasAccount` flag the API exposes. */
+function withHasAccount<T extends { passwordHash: string | null }>(
+  row: T,
+): Omit<T, 'passwordHash'> & { hasAccount: boolean } {
+  const { passwordHash, ...rest } = row;
+  return { ...rest, hasAccount: passwordHash !== null };
+}
 
 function buildWhereClause(filters: UserListFilters): Prisma.UserWhereInput {
   const where: Prisma.UserWhereInput = { deletedAt: null };
 
   if (filters.status) {
     where.status = filters.status;
+  }
+
+  if (filters.hasAccount !== undefined) {
+    where.passwordHash = filters.hasAccount ? { not: null } : null;
   }
 
   if (filters.roleId) {
@@ -38,6 +55,7 @@ function buildWhereClause(filters: UserListFilters): Prisma.UserWhereInput {
     where.OR = [
       { name: { contains: filters.search, mode: 'insensitive' } },
       { email: { contains: filters.search, mode: 'insensitive' } },
+      { employeeId: { contains: filters.search, mode: 'insensitive' } },
     ];
   }
 
@@ -70,11 +88,55 @@ export async function findMany(
     prisma.user.count({ where }),
   ]);
 
-  return { data, total };
+  return { data: data.map(withHasAccount), total };
+}
+
+/**
+ * Lightweight, unpaginated picker feed: every active employee, with or
+ * without a login. Used by assignee / handover / signatory dropdowns,
+ * which previously hit the paginated list and silently saw only the
+ * first page (20–100 rows) once the employee directory grew.
+ */
+export async function findOptions() {
+  const rows = await prisma.user.findMany({
+    where: { deletedAt: null, status: 'ACTIVE' },
+    select: {
+      id: true,
+      name: true,
+      employeeId: true,
+      email: true,
+      status: true,
+      passwordHash: true,
+    },
+    orderBy: { name: 'asc' },
+    take: 2000,
+  });
+  return rows.map(withHasAccount);
+}
+
+/**
+ * Duplicate probe for bulk creation: one query for every employeeId /
+ * email in the payload. Email match is case-insensitive because the
+ * column is case-sensitive but humans aren't.
+ */
+export async function findConflicts(employeeIds: string[], emails: string[]) {
+  if (employeeIds.length === 0 && emails.length === 0) return [];
+  return prisma.user.findMany({
+    where: {
+      deletedAt: null,
+      OR: [
+        ...(employeeIds.length > 0 ? [{ employeeId: { in: employeeIds } }] : []),
+        ...(emails.length > 0
+          ? [{ email: { in: emails, mode: 'insensitive' as const } }]
+          : []),
+      ],
+    },
+    select: { id: true, employeeId: true, email: true },
+  });
 }
 
 export async function findById(id: string) {
-  return prisma.user.findFirst({
+  const user = await prisma.user.findFirst({
     where: { id, deletedAt: null },
     select: {
       ...userSelectFields,
@@ -92,10 +154,22 @@ export async function findById(id: string) {
       },
     },
   });
+  return user ? withHasAccount(user) : null;
+}
+
+/** Credential-bearing read for account grant / password reset. Never returned to clients. */
+export async function findSecretById(id: string) {
+  return prisma.user.findFirst({
+    where: { id, deletedAt: null },
+    select: { id: true, email: true, passwordHash: true, status: true },
+  });
 }
 
 export async function findByEmail(email: string, excludeId?: string) {
-  const where: Prisma.UserWhereInput = { email, deletedAt: null };
+  const where: Prisma.UserWhereInput = {
+    email: { equals: email, mode: 'insensitive' },
+    deletedAt: null,
+  };
   if (excludeId) {
     where.id = { not: excludeId };
   }
@@ -114,10 +188,11 @@ export async function create(
   data: Prisma.UserCreateInput,
   tx?: PrismaTransactionClient,
 ) {
-  return (tx ?? prisma).user.create({
+  const user = await (tx ?? prisma).user.create({
     data,
     select: userSelectFields,
   });
+  return withHasAccount(user);
 }
 
 export async function update(
@@ -125,11 +200,12 @@ export async function update(
   data: Prisma.UserUpdateInput,
   tx?: PrismaTransactionClient,
 ) {
-  return (tx ?? prisma).user.update({
+  const user = await (tx ?? prisma).user.update({
     where: { id },
     data,
     select: userSelectFields,
   });
+  return withHasAccount(user);
 }
 
 export async function softDelete(id: string, tx?: PrismaTransactionClient) {

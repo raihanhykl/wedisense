@@ -5,8 +5,13 @@ import { generateBarcode, generateQrCode } from '../../lib/barcode.js';
 import * as repo from './repository.js';
 import { resolveInitialStatus } from './service.js';
 import {
+  resolveAssetFinancials,
+  type BatchFinancialDefaults,
+} from '../../utils/asset-financials.js';
+import {
   assertBatchAcceptsAssets,
   bumpBatchAssetCountWithCascade,
+  loadBatchFinancialDefaults,
 } from '../procurement-batches/service.js';
 import { AppError } from '../../middleware/error-handler.js';
 import { loadCategoryCodePathResolver } from '../../utils/category-code-path.js';
@@ -399,8 +404,15 @@ export async function bulkImport(
       // Phase 17: validate batch acceptance up-front, inside the tx, so
       // a rejection rolls back any sequence bumps below. One round-trip
       // for the whole import — much better than per-row.
+      // Batch-linked imports inherit purchase date / unit price / vendor /
+      // invoice from the batch + PO for every column the sheet left blank.
+      let batchDefaults: BatchFinancialDefaults | null = null;
       if (procurementBatchId) {
         await assertBatchAcceptsAssets(procurementBatchId, tx as PrismaTransactionClient);
+        batchDefaults = await loadBatchFinancialDefaults(
+          procurementBatchId,
+          tx as PrismaTransactionClient,
+        );
       }
 
       // Step A: materialise new products in this transaction.
@@ -444,6 +456,7 @@ export async function bulkImport(
 
         const assetId = randomUUID();
         const assetNumber = await generateAssetNumber(categoryCodePath, tx as PrismaTransactionClient);
+        const financials = resolveAssetFinancials(row, batchDefaults, productId);
 
         const created = await repo.createInTransaction(tx as PrismaTransactionClient, {
           id: assetId,
@@ -460,14 +473,15 @@ export async function bulkImport(
           ...(procurementBatchId && {
             procurementBatch: { connect: { id: procurementBatchId } },
           }),
-          purchaseDate: row.purchaseDate ?? null,
-          purchasePrice: row.purchasePrice != null ? new Prisma.Decimal(row.purchasePrice) : null,
-          currency: row.currency ?? 'IDR',
+          purchaseDate: financials.purchaseDate,
+          purchasePrice: financials.purchasePrice,
+          currency: financials.currency,
           // Phase 17 v2 — Excel import stays on the legacy free-text
-          // column. A future tier will resolve names to vendor FKs
-          // (similar to product matching) and populate vendorId here.
+          // column for the sheet's own vendor name; the vendor FK is only
+          // set here when inherited from a linked batch's PO.
+          ...(financials.vendorId && { vendor: { connect: { id: financials.vendorId } } }),
           vendorLegacy: row.vendor ?? null,
-          invoiceNumber: row.invoiceNumber ?? null,
+          invoiceNumber: financials.invoiceNumber,
           warrantyStartDate: row.warrantyStartDate ?? null,
           warrantyEndDate: row.warrantyEndDate ?? null,
           usefulLifeMonths: row.usefulLifeMonths ?? null,

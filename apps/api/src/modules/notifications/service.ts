@@ -182,6 +182,9 @@ export async function notify(input: NotifyInput): Promise<{ count: number }> {
   const templateName = resolveEmailTemplateName(input.type);
   if (templateName) {
     for (const user of users) {
+      // In-app notification already landed above; only the email leg
+      // needs an address.
+      if (!user.email) continue;
       const lang = user.preferredLanguage ?? 'id';
       const subjectKey = `email.${templateName.replaceAll('-', '_')}.subject`;
       const subject = t(lang, subjectKey, input.vars) || input.titleKey;

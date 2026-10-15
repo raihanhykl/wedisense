@@ -1,0 +1,62 @@
+{
+  "document": {
+    "title": "BERITA ACARA SERAH TERIMA ASET",
+    "numberLabel": "Nomor",
+    "openingParagraph": "Pada hari ini, {day} tanggal {date}, telah dilaksanakan serah terima aset dengan rincian sebagai berikut:",
+    "firstParty": "PIHAK PERTAMA (Yang Menyerahkan)",
+    "secondParty": "PIHAK KEDUA (Yang Menerima)",
+    "companyParty": "Perusahaan",
+    "fields": {
+      "name": "Nama",
+      "employeeId": "NIK",
+      "location": "Lokasi",
+      "purpose": "Keperluan",
+      "notes": "Catatan"
+    },
+    "table": {
+      "no": "No",
+      "assetNumber": "Nomor Aset",
+      "assetName": "Nama Aset",
+      "serialNumber": "Nomor Seri",
+      "condition": "Kondisi",
+      "itemNotes": "Keterangan"
+    },
+    "condition": {
+      "NEW": "Baru",
+      "GOOD": "Baik",
+      "FAIR": "Cukup",
+      "POOR": "Kurang",
+      "DAMAGED": "Rusak"
+    },
+    "closingParagraph": {
+      "COMPANY_TO_EMPLOYEE": "Dengan ditandatanganinya berita acara ini, PIHAK KEDUA menyatakan telah menerima aset tersebut di atas dalam kondisi sebagaimana tercantum, dan bertanggung jawab atas penggunaan serta pemeliharaannya selama masa penguasaan.",
+      "EMPLOYEE_TO_EMPLOYEE": "Dengan ditandatanganinya berita acara ini, PIHAK PERTAMA menyatakan telah menyerahkan dan PIHAK KEDUA menyatakan telah menerima aset tersebut di atas dalam kondisi sebagaimana tercantum. Tanggung jawab atas aset beralih kepada PIHAK KEDUA terhitung sejak tanggal berita acara ini.",
+      "EMPLOYEE_TO_COMPANY": "Dengan ditandatanganinya berita acara ini, PIHAK PERTAMA menyatakan telah mengembalikan aset tersebut di atas kepada perusahaan dalam kondisi sebagaimana tercantum, dan dibebaskan dari tanggung jawab atas aset dimaksud."
+    },
+    "signatures": {
+      "handedOverBy": "Yang Menyerahkan",
+      "receivedBy": "Yang Menerima",
+      "itOfficer": "Petugas IT",
+      "acknowledgedBy": "Mengetahui"
+    },
+    "footer": {
+      "page": "Halaman {current} dari {total}",
+      "scanHint": "Pindai untuk membuka data aset"
+    },
+    "days": ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"],
+    "months": [
+      "Januari",
+      "Februari",
+      "Maret",
+      "April",
+      "Mei",
+      "Juni",
+      "Juli",
+      "Agustus",
+      "September",
+      "Oktober",
+      "November",
+      "Desember"
+    ]
+  }
+}

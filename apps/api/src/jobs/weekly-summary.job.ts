@@ -47,6 +47,8 @@ export const weeklySummaryWorker = new Worker<Record<string, never>>(
     });
 
     for (const user of adminUsers) {
+      // Employee records without an email can't receive the digest.
+      if (!user.email) continue;
       const lang = user.preferredLanguage ?? 'id';
       const vars: Record<string, string | number> = {
         name: user.name,

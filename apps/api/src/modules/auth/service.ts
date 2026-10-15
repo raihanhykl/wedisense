@@ -97,7 +97,10 @@ export async function resolveAuthenticatedUser(userId: string): Promise<Authenti
     },
   });
 
-  if (!user || user.status === 'RESIGNED') {
+  // A plain employee row (no passwordHash / email) can never have minted a
+  // token, but a stale token must still fail closed rather than build an
+  // AuthenticatedUser with a null email.
+  if (!user || user.status === 'RESIGNED' || !user.passwordHash || !user.email) {
     throw new AppError(401, 'USER_NOT_FOUND', 'User account not found or inactive');
   }
 
@@ -171,6 +174,13 @@ export async function login(input: LoginInput, ctx: AuthContext = {}) {
     throw new AppError(403, 'USER_INACTIVE', 'Account is inactive');
   }
 
+  // Employee record without a login account. Same generic 401 as a wrong
+  // password so the login form can't be used to probe which employees
+  // have accounts.
+  if (!user.passwordHash || !user.email) {
+    throw new AppError(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
+  }
+
   const isValidPassword = await bcrypt.compare(input.password, user.passwordHash);
   if (!isValidPassword) {
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
@@ -233,7 +243,7 @@ export async function refreshTokens(currentRefreshToken: string) {
     where: { id: payload.userId, deletedAt: null },
   });
 
-  if (!user || user.status !== 'ACTIVE') {
+  if (!user || user.status !== 'ACTIVE' || !user.passwordHash || !user.email) {
     throw new AppError(401, 'USER_NOT_FOUND', 'User account not found or inactive');
   }
 
@@ -252,7 +262,7 @@ export async function changePassword(
     where: { id: userId },
   });
 
-  if (!user) {
+  if (!user || !user.passwordHash) {
     throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
   }
 
