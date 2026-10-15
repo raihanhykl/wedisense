@@ -244,7 +244,8 @@ export default function MovementFormDialog({
     try {
       const [assetData, userData, locationData] = await Promise.all([
         apiGet<AssetOption[]>("/api/assets"),
-        apiGet<UserOption[]>("/api/users"),
+        // Unpaginated feed — the list endpoint would only return page 1.
+        apiGet<UserOption[]>("/api/users/options"),
         apiGet<LocationOption[]>("/api/locations"),
       ]);
       setAssets(assetData);

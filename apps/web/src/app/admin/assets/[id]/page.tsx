@@ -12,8 +12,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import PrintDialog from "@/components/shared/print-dialog";
 import Breadcrumb from "@/components/shared/breadcrumb";
 import { ProcurementBatchStatusBadge } from "@/components/shared/procurement-status-badge";
-import HandoverFormBadge from "@/components/handover/handover-form-badge";
-import type { AssetDetail, MovementHandoverFormRef } from "@/types/admin";
+import MovementTimeline, {
+  type MovementTimelineItem,
+} from "@/components/shared/movement-timeline";
+import type { AssetDetail } from "@/types/admin";
 
 // ── Skeleton matching the real detail layout so swap-in is non-jarring.
 function DetailSkeleton() {
@@ -92,21 +94,10 @@ function formatDate(value: string | null | undefined): string {
 }
 
 // ── Movement type ───────────────────────────────────────────────────
-interface AssetMovement {
-  id: string;
-  movementType: string;
-  referenceNumber: string;
-  status: string;
-  fromLocation: { id: string; name: string } | null;
-  toLocation: { id: string; name: string } | null;
-  fromUser: { id: string; name: string } | null;
-  toUser: { id: string; name: string } | null;
-  performedBy: { id: string; name: string } | null;
-  notes: string | null;
-  createdAt: string;
-  /** Signed handover form (BAST) behind this movement, when one was cited. */
-  handoverForm: MovementHandoverFormRef | null;
-}
+// Row shape of GET /api/assets/:id/movements — the shared timeline's input
+// type already matches it (the endpoint includes approvedBy, both parties,
+// both locations, return dates and the cited BAST).
+type AssetMovement = MovementTimelineItem;
 
 // ── Info row ────────────────────────────────────────────────────────
 // On mobile (<sm) the label sits ABOVE the value so long values aren't
@@ -280,10 +271,13 @@ export default function AssetDetailPage() {
             <InfoRow label="Assigned To">
               {asset.assignedTo ? (
                 <span>
-                  {asset.assignedTo.name}{" "}
-                  <span className="text-muted-foreground">
-                    ({asset.assignedTo.email})
-                  </span>
+                  {asset.assignedTo.name}
+                  {asset.assignedTo.email && (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      ({asset.assignedTo.email})
+                    </span>
+                  )}
                 </span>
               ) : (
                 "-"
@@ -421,45 +415,25 @@ export default function AssetDetailPage() {
         </dl>
       </div>
 
-      {/* Recent Movements */}
+      {/* Recent Movements — full who/where transition per row, newest first.
+          The shared timeline renders holder + location transitions, loan
+          due/return dates, approver and the cited BAST, so the history is
+          trackable without opening each movement. */}
       {movements.length > 0 && (
-        <div className="mt-6 rounded-lg border bg-card p-4 md:p-5">
-          <h2 className="mb-4 text-lg font-semibold">Recent Movements</h2>
-          <div className="space-y-4">
-            {movements.map((movement) => (
-              <div
-                key={movement.id}
-                className="relative border-l-2 border-muted pl-4"
-              >
-                <div className="absolute -left-1.5 top-1 h-3 w-3 rounded-full bg-primary" />
-                <p className="text-sm font-medium">
-                  {(movement.movementType ?? "").replace(/_/g, " ")}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {movement.fromLocation?.name ?? "N/A"} &rarr;{" "}
-                  {movement.toLocation?.name ?? "N/A"}
-                </p>
-                {movement.notes && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {movement.notes}
-                  </p>
-                )}
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatDate(movement.createdAt)}
-                  {movement.performedBy
-                    ? ` by ${movement.performedBy.name}`
-                    : ""}
-                </p>
-                {/* The signed handover form behind this movement — this is
-                    what turns the history into evidence rather than a claim. */}
-                {movement.handoverForm && (
-                  <div className="mt-1.5">
-                    <HandoverFormBadge form={movement.handoverForm} />
-                  </div>
-                )}
-              </div>
-            ))}
+        <div
+          className="mt-6 rounded-lg border bg-card p-4 md:p-5"
+          data-tour="asset-movement-history"
+        >
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">Recent Movements</h2>
+            <Link
+              href={`/admin/movements?assetId=${asset.id}`}
+              className="text-xs text-primary hover:underline"
+            >
+              View all movements
+            </Link>
           </div>
+          <MovementTimeline movements={movements} />
         </div>
       )}
 

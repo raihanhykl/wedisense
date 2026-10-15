@@ -36,6 +36,7 @@ const SORTABLE_FIELDS = [
   "purchaseDate",
   "purchasePrice",
   "createdAt",
+  "updatedAt",
   "assignedTo",
   "product",
 ] as const;
@@ -199,6 +200,7 @@ const TOGGLEABLE_COLUMNS = [
   { key: "purchaseDate", label: "Purchase Date", default: false },
   { key: "warrantyEndDate", label: "Warranty End", default: false },
   { key: "currentBookValue", label: "Book Value", default: false },
+  { key: "updatedAt", label: "Last Updated", default: true },
 ] as const;
 
 type ToggleableColumnKey = (typeof TOGGLEABLE_COLUMNS)[number]["key"];
@@ -239,6 +241,23 @@ function formatIDR(value: string | null): string {
   const num = Number(value);
   if (isNaN(num)) return "-";
   return idrFormatter.format(num);
+}
+
+// Date + time (WIB) for the "Last Updated" column. Time matters here:
+// several edits can land on the same day and the operator wants to see
+// which one was the latest without opening the audit log.
+function formatLocalDateTime(value: string | null): string {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("id-ID", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Jakarta",
+  });
 }
 
 // ── Page ────────────────────────────────────────────────────────────
@@ -1193,6 +1212,15 @@ export default function AssetsPage() {
                   Book Value
                 </th>
               )}
+              {visibleColumns.updatedAt && (
+                <SortableHeader
+                  label="Last Updated"
+                  field="updatedAt"
+                  currentSort={sortField}
+                  currentOrder={sortOrder}
+                  onSort={handleSort}
+                />
+              )}
               <th className="px-4 py-3 text-right font-medium text-muted-foreground">
                 Actions
               </th>
@@ -1341,6 +1369,14 @@ export default function AssetsPage() {
                   {visibleColumns.currentBookValue && (
                     <td className="px-4 py-3 text-right text-muted-foreground">
                       {formatIDR(asset.currentBookValue)}
+                    </td>
+                  )}
+                  {visibleColumns.updatedAt && (
+                    <td
+                      className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground"
+                      title={asset.updatedAt}
+                    >
+                      {formatLocalDateTime(asset.updatedAt)}
                     </td>
                   )}
                   <td className="px-4 py-3 text-right">

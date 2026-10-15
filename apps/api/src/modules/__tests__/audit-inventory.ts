@@ -69,6 +69,12 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
 
   // ── users ───────────────────────────────────────────────────────────────────
   { method: 'POST', path: '/api/users', module: 'users', decision: audited('users') },
+  // Bulk employee creation — one CREATE audit row per employee inside the
+  // same transaction as the inserts.
+  { method: 'POST', path: '/api/users/bulk', module: 'users', decision: audited('users') },
+  // Grant a login account to an existing employee. Audits an UPDATE row
+  // with { hasAccount: true, email } — never the hash.
+  { method: 'POST', path: '/api/users/:id/account', module: 'users', decision: audited('users') },
   { method: 'PUT', path: '/api/users/:id', module: 'users', decision: audited('users') },
   { method: 'DELETE', path: '/api/users/:id', module: 'users', decision: audited('users') },
   { method: 'PUT', path: '/api/users/:id/roles', module: 'users', decision: audited('users') },
@@ -489,6 +495,14 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
   {
     method: 'PUT',
     path: '/api/procurement-batches/:id/cancel',
+    module: 'procurement-batches',
+    decision: audited('procurement-batches'),
+  },
+  // Gap-filler for asset financials inherited from the batch/PO. Audits
+  // one UPDATE row per asset it touches (resource_type=Asset).
+  {
+    method: 'PUT',
+    path: '/api/procurement-batches/:id/sync-asset-financials',
     module: 'procurement-batches',
     decision: audited('procurement-batches'),
   },

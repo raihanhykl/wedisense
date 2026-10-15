@@ -435,6 +435,12 @@ export default function AddBatchAssetsPage() {
         </div>
       )}
 
+      <p className="text-xs text-muted-foreground">
+        Purchase date, unit price, vendor and invoice number are filled in
+        automatically from this batch and its purchase order. They can be
+        adjusted later on each asset.
+      </p>
+
       <div className="flex items-center justify-end gap-2">
         <Link
           href={`/admin/purchase-orders/${poId}/batches/${batch.id}`}

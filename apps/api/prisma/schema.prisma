@@ -200,11 +200,17 @@ enum ProcurementBatchStatus {
 
 // ─── Models ─────────────────────────────────────────────────────────────────────
 
+// A User row is first and foremost an EMPLOYEE record (asset holder,
+// handover party, future HR module). A login account on top of it is
+// optional: `passwordHash` is NULL for employees who never sign in, and
+// `email` is NULL when the employee has none. Postgres allows multiple
+// NULLs under a UNIQUE constraint, so uniqueness still holds for every
+// employee who does have an email. Login requires BOTH to be present.
 model User {
   id                String     @id @default(uuid()) @db.Uuid
   name              String     @map("name")
-  email             String     @unique @map("email")
-  passwordHash      String     @map("password_hash")
+  email             String?    @unique @map("email")
+  passwordHash      String?    @map("password_hash")
   employeeId        String     @map("employee_id")
   phone             String?    @map("phone")
   avatarUrl         String?    @map("avatar_url")

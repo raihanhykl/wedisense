@@ -6,7 +6,7 @@ import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost, apiPut } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
-import { useLocations, useUsers } from "@/hooks/use-reference-data";
+import { useLocations, useUsers, formatUserOption } from "@/hooks/use-reference-data";
 import {
   HANDOVER_TYPE_DESCRIPTIONS,
   HANDOVER_TYPE_LABELS,
@@ -328,7 +328,7 @@ function UserSelect({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  users: Array<{ id: string; name: string; email: string }>;
+  users: Array<{ id: string; name: string; email: string | null; employeeId: string }>;
   required?: boolean;
   hint?: string;
 }) {
@@ -343,7 +343,7 @@ function UserSelect({
         <option value="">— none —</option>
         {users.map((user) => (
           <option key={user.id} value={user.id}>
-            {user.name} ({user.email})
+            {formatUserOption(user)}
           </option>
         ))}
       </select>

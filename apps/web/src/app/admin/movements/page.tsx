@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { apiGetPaginated, apiPost } from "@/lib/api";
 import type { PaginationMeta } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -107,6 +109,11 @@ export default function MovementsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  // Deep link from an asset's detail page ("View all movements"): scope the
+  // list to that one asset. Cleared by navigating back to /admin/movements.
+  const searchParams = useSearchParams();
+  const assetIdFilter = searchParams?.get("assetId") ?? null;
+
   const fetchMovements = useCallback(async () => {
     setLoading(true);
     try {
@@ -114,6 +121,7 @@ export default function MovementsPage() {
       if (search.trim()) params.search = search.trim();
       if (typeFilter) params.movementType = typeFilter;
       if (statusFilter) params.status = statusFilter;
+      if (assetIdFilter) params.assetId = assetIdFilter;
 
       const result = await apiGetPaginated<MovementListItem[]>(
         "/api/movements",
@@ -126,7 +134,7 @@ export default function MovementsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, typeFilter, statusFilter]);
+  }, [page, search, typeFilter, statusFilter, assetIdFilter]);
 
   useEffect(() => {
     void fetchMovements();
@@ -182,6 +190,29 @@ export default function MovementsPage() {
           </button>
         )}
       </div>
+
+      {assetIdFilter && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+          <span>
+            Showing movements for one asset
+            {movements[0]?.asset ? (
+              <>
+                :{" "}
+                <Link
+                  href={`/admin/assets/${assetIdFilter}`}
+                  className="font-mono font-medium hover:underline"
+                >
+                  {movements[0].asset.assetNumber}
+                </Link>{" "}
+                {movements[0].asset.name}
+              </>
+            ) : null}
+          </span>
+          <Link href="/admin/movements" className="ml-auto font-medium hover:underline">
+            Clear filter
+          </Link>
+        </div>
+      )}
 
       {/* Filters bar */}
       <div className="mb-4 flex flex-wrap items-center gap-3">

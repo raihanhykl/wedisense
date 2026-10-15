@@ -168,8 +168,9 @@ export function findMovements(args: {
     include: {
       performedBy: { select: { id: true, name: true, email: true } },
       approvedBy: { select: { id: true, name: true } },
-      fromUser: { select: { id: true, name: true } },
-      toUser: { select: { id: true, name: true } },
+      // employeeId disambiguates same-name employees in the history view.
+      fromUser: { select: { id: true, name: true, employeeId: true } },
+      toUser: { select: { id: true, name: true, employeeId: true } },
       fromLocation: { select: { id: true, name: true, code: true } },
       toLocation: { select: { id: true, name: true, code: true } },
       // The signed handover form behind each movement. This endpoint — not

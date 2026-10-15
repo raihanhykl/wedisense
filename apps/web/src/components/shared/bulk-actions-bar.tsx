@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { apiPost } from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/error";
-import { useUsers } from "@/hooks/use-reference-data";
+import { useUsers, formatUserOption } from "@/hooks/use-reference-data";
 import { cn } from "@/lib/utils";
 import LocationTreePicker from "./location-tree-picker";
 
@@ -377,7 +377,7 @@ function AssignUserDialog({
         <option disabled>──────────────</option>
         {users.map((u) => (
           <option key={u.id} value={u.id}>
-            {u.name} ({u.email})
+            {formatUserOption(u)}
           </option>
         ))}
       </select>

@@ -24,7 +24,8 @@ export interface PartySnapshotEntry {
   userId: string;
   name: string;
   employeeId: string;
-  email: string;
+  /** Null for employees without an email (plain employee records). */
+  email: string | null;
 }
 
 export interface PartySnapshot {

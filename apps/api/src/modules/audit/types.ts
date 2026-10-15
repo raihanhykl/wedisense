@@ -12,7 +12,7 @@ import type { AuditAction } from '@prisma/client';
 export interface AuditLogDto {
   id: string;
   userId: string | null;
-  user: { id: string; name: string; email: string } | null;
+  user: { id: string; name: string; email: string | null } | null;
   action: AuditAction;
   resourceType: string;
   resourceId: string;

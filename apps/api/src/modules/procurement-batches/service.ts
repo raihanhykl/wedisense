@@ -11,6 +11,11 @@ import {
   bumpAssetCount as bumpPoAssetCount,
 } from '../purchase-orders/service.js';
 import { computeItemAmounts } from '../purchase-orders/totals.js';
+import {
+  buildUnitPriceMap,
+  buildFinancialBackfillPatch,
+  type BatchFinancialDefaults,
+} from '../../utils/asset-financials.js';
 import type { PrismaTransactionClient } from './types.js';
 import type {
   CreateProcurementBatchInput,
@@ -116,6 +121,123 @@ export async function bumpBatchAssetCountWithCascade(
   if (batch?.purchaseOrderId) {
     await bumpPoAssetCount(batch.purchaseOrderId, delta, tx);
   }
+}
+
+/**
+ * Load the financial facts a batch (and its parent PO) can hand down to
+ * the assets received under it. One query per batch; callers creating
+ * many assets cache the result per batchId. Throws 404 for an unknown or
+ * soft-deleted batch so a stale link can't silently create an asset with
+ * no provenance.
+ */
+export async function loadBatchFinancialDefaults(
+  batchId: string,
+  tx: PrismaTransactionClient,
+): Promise<BatchFinancialDefaults> {
+  const batch = await tx.procurementBatch.findFirst({
+    where: { id: batchId, deletedAt: null },
+    select: {
+      id: true,
+      purchaseDate: true,
+      currency: true,
+      invoiceNumber: true,
+      purchaseOrder: {
+        select: {
+          vendorId: true,
+          items: {
+            select: { productId: true, qty: true, totalAmount: true },
+            orderBy: { sortOrder: 'asc' },
+          },
+        },
+      },
+    },
+  });
+  if (!batch) {
+    throw new AppError(
+      404,
+      'PROCUREMENT_BATCH_NOT_FOUND',
+      `Procurement batch ${batchId} not found`,
+    );
+  }
+  return {
+    batchId: batch.id,
+    purchaseDate: batch.purchaseDate,
+    currency: batch.currency,
+    vendorId: batch.purchaseOrder.vendorId,
+    invoiceNumber: batch.invoiceNumber,
+    unitPriceByProductId: buildUnitPriceMap(batch.purchaseOrder.items),
+  };
+}
+
+export interface SyncAssetFinancialsResult {
+  batchId: string;
+  assetsChecked: number;
+  assetsUpdated: number;
+}
+
+/**
+ * Fill the NULL financial fields (purchase date, unit price, vendor,
+ * invoice number) of every asset linked to a batch from the batch/PO.
+ *
+ * Gap-filler only: a value already on the asset is never overwritten,
+ * so running this twice — or after an operator corrected a price by
+ * hand — is safe. Exposed as PUT /:id/sync-asset-financials for assets
+ * created before inheritance existed (or whose invoice number was
+ * entered on the batch after the assets were added), and reused by the
+ * standalone backfill script. `actorId` is null when run from the
+ * script; the audit row then records a system action.
+ */
+export async function syncBatchAssetFinancials(
+  batchId: string,
+  actorId: string | null,
+): Promise<SyncAssetFinancialsResult> {
+  return prisma.$transaction(async (tx) => {
+    const defaults = await loadBatchFinancialDefaults(batchId, tx);
+
+    const assets = await tx.asset.findMany({
+      where: { procurementBatchId: batchId, deletedAt: null },
+      select: {
+        id: true,
+        productId: true,
+        purchaseDate: true,
+        purchasePrice: true,
+        vendorId: true,
+        invoiceNumber: true,
+      },
+    });
+
+    let assetsUpdated = 0;
+    for (const asset of assets) {
+      const patch = buildFinancialBackfillPatch(asset, defaults);
+      if (!patch) continue;
+
+      await tx.asset.update({ where: { id: asset.id }, data: patch });
+
+      // Audit: one UPDATE row per asset, same resource_type the manual
+      // edit path uses, so the asset's audit trail shows exactly which
+      // fields the sync filled. Decimal → string for JSON.
+      const newValues: Record<string, string | null> = {};
+      const oldValues: Record<string, null> = {};
+      for (const key of Object.keys(patch) as Array<keyof typeof patch>) {
+        const value = patch[key];
+        newValues[key] = value instanceof Date ? value.toISOString() : (value?.toString() ?? null);
+        oldValues[key] = null;
+      }
+      await tx.auditLog.create({
+        data: {
+          ...(actorId && { userId: actorId }),
+          action: 'UPDATE',
+          resourceType: 'Asset',
+          resourceId: asset.id,
+          oldValues,
+          newValues: { ...newValues, source: `batch:${defaults.batchId}` },
+        },
+      });
+      assetsUpdated++;
+    }
+
+    return { batchId, assetsChecked: assets.length, assetsUpdated };
+  });
 }
 
 export async function getProcurementBatch(id: string) {

@@ -56,7 +56,7 @@ function isRolesManage(p: { resource: string; action: string }): boolean {
 interface AffectedUser {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   employeeId: string;
   locationScope: { id: string; name: string; code: string } | null;
 }
@@ -760,7 +760,8 @@ function PermissionEditor({
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">{u.name}</p>
                           <p className="truncate text-[11px] text-muted-foreground">
-                            {u.employeeId} · {u.email}
+                            {u.employeeId}
+                            {u.email ? ` · ${u.email}` : ""}
                           </p>
                         </div>
                         <span className="shrink-0 text-[11px] text-muted-foreground">

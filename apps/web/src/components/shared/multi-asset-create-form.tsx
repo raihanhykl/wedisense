@@ -16,6 +16,7 @@ import NewProductDialog from "@/components/shared/new-product-dialog";
 import {
   useLocations,
   useUsers,
+  formatUserOption,
   type ProductOption,
 } from "@/hooks/use-reference-data";
 
@@ -573,7 +574,7 @@ export default function MultiAssetCreateForm({
                 <option value="">-- Unassigned --</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
-                    {u.name} ({u.email})
+                    {formatUserOption(u)}
                   </option>
                 ))}
               </select>

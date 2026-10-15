@@ -45,40 +45,64 @@ function newDraftId(): string {
 const STATUS_OPTIONS = ["ACTIVE", "INACTIVE", "RESIGNED"] as const;
 type UserStatus = (typeof STATUS_OPTIONS)[number];
 
-const userCreateSchema = z.object({
+// A User row is an EMPLOYEE record; the login account on top of it is
+// optional. The base schema covers the employee fields; email + password
+// requirements are layered on by `buildSchema()` depending on whether an
+// account is being created / already exists.
+const employeeSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  email: z.string().email("Invalid email"),
-  // Match backend's BCRYPT-secured min (createUserSchema.password). The
-  // old "min(6)" let the form submit values the backend would reject.
-  password: z.string().min(8, "Password must be at least 8 characters"),
-  // Backend requires a non-empty employee ID (uniqueness key alongside
-  // email). Form-level guard so the user sees a clear error inline
-  // instead of a 422 reaching the silent-catch path.
+  // Empty string = no email. Validated as an address only when present
+  // (or when an account needs it — see buildSchema).
+  email: z
+    .string()
+    .trim()
+    .refine((v) => v === "" || z.string().email().safeParse(v).success, {
+      message: "Invalid email",
+    }),
+  password: z.string().optional().default(""),
+  // Backend requires a non-empty employee ID (uniqueness key). Form-level
+  // guard so the user sees a clear error inline instead of a 422.
   employeeId: z.string().min(1, "Employee ID is required").max(50),
   phone: z.string().max(20).optional().default(""),
   status: z.enum(STATUS_OPTIONS),
 });
 
-const userEditSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  email: z.string().email("Invalid email"),
-  // Password is intentionally not editable here — admins use the
-  // dedicated "Reset password" action for that flow (so it's audited
-  // distinctly and requires actor re-auth).
-  employeeId: z.string().min(1, "Employee ID is required").max(50),
-  phone: z.string().max(20).optional().default(""),
-  status: z.enum(STATUS_OPTIONS),
-});
+type UserFormValues = z.infer<typeof employeeSchema>;
 
-type UserCreateValues = z.infer<typeof userCreateSchema>;
-type UserEditValues = z.infer<typeof userEditSchema>;
-type UserFormValues = UserCreateValues | UserEditValues;
+/**
+ * - `needsEmail`   → the row has (or will get) an account: login is by
+ *                     email, so it can't be blank.
+ * - `needsPassword`→ an account is being CREATED in this submit. Edits of
+ *                     an existing account never carry a password here —
+ *                     that's the audited "Reset password" flow.
+ */
+function buildSchema(needsEmail: boolean, needsPassword: boolean) {
+  return employeeSchema.superRefine((value, ctx) => {
+    if (needsEmail && value.email === "") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["email"],
+        message: "Email is required for a login account",
+      });
+    }
+    // Match backend's min (createUserSchema.password).
+    if (needsPassword && value.password.length < 8) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["password"],
+        message: "Password must be at least 8 characters",
+      });
+    }
+  });
+}
 
 interface UserFormDialogProps {
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
   editingUser?: UserListItem | null;
+  /** Open with "Create login account" already ticked (users page "Grant login" action). */
+  initialCreateAccount?: boolean;
 }
 
 export default function UserFormDialog({
@@ -86,6 +110,7 @@ export default function UserFormDialog({
   onClose,
   onSuccess,
   editingUser,
+  initialCreateAccount = false,
 }: UserFormDialogProps) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [assignments, setAssignments] = useState<AssignmentDraft[]>([]);
@@ -107,6 +132,18 @@ export default function UserFormDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const isEditing = !!editingUser;
+  const hasExistingAccount = editingUser?.hasAccount ?? false;
+  // "Create login account" checkbox. Irrelevant (and hidden) when the
+  // employee already has one.
+  const [createAccount, setCreateAccount] = useState(false);
+  // Whether this submit ends with the employee holding an account — that
+  // decides whether email + roles are mandatory.
+  const willHaveAccount = hasExistingAccount || createAccount;
+
+  const schema = useMemo(
+    () => buildSchema(willHaveAccount, createAccount && !hasExistingAccount),
+    [willHaveAccount, createAccount, hasExistingAccount],
+  );
 
   const {
     register,
@@ -114,7 +151,7 @@ export default function UserFormDialog({
     reset,
     formState: { errors },
   } = useForm<UserFormValues>({
-    resolver: zodResolver(isEditing ? userEditSchema : userCreateSchema),
+    resolver: zodResolver(schema),
     defaultValues: {
       name: "",
       email: "",
@@ -124,14 +161,6 @@ export default function UserFormDialog({
       status: "ACTIVE",
     },
   });
-
-  // Bridge the discriminated union: `password` only exists on the
-  // create schema, so `errors.password` doesn't typecheck against the
-  // union. In create mode the create schema is in force, so the cast
-  // is safe — and isolating it here keeps the JSX clean.
-  const createOnlyPasswordError = !isEditing
-    ? (errors as { password?: { message?: string } }).password
-    : undefined;
 
   useEffect(() => {
     if (open) {
@@ -150,6 +179,7 @@ export default function UserFormDialog({
       setRolePermissionMap(new Map());
 
       setSubmitError(null);
+      setCreateAccount(initialCreateAccount && !(editingUser?.hasAccount ?? false));
       if (editingUser) {
         // Coerce the editing user's status to one of the known enum
         // members. Defensive: prevents a stale lowercased value (from
@@ -161,7 +191,8 @@ export default function UserFormDialog({
           : "ACTIVE";
         reset({
           name: editingUser.name,
-          email: editingUser.email,
+          email: editingUser.email ?? "",
+          password: "",
           employeeId: editingUser.employeeId ?? "",
           phone: editingUser.phone ?? "",
           status: editingStatus,
@@ -191,7 +222,7 @@ export default function UserFormDialog({
         setAssignments([{ localId: newDraftId(), roleId: null, locationId: null }]);
       }
     }
-  }, [open, editingUser, reset]);
+  }, [open, editingUser, reset, initialCreateAccount]);
 
   const addAssignment = () => {
     setAssignments((prev) => [
@@ -340,13 +371,17 @@ export default function UserFormDialog({
     [assignments],
   );
 
-  const canSave = validAssignments.length > 0 && duplicateLocalIds.size === 0;
+  // Roles only matter for someone who can sign in. A plain employee
+  // record is saved without any, and the role section is hidden.
+  const rolesRequired = willHaveAccount;
+  const canSave =
+    duplicateLocalIds.size === 0 && (!rolesRequired || validAssignments.length > 0);
 
   const onSubmit = async (data: UserFormValues) => {
     if (!canSave) {
       setSubmitError(
-        validAssignments.length === 0
-          ? "User must have at least one role assigned."
+        rolesRequired && validAssignments.length === 0
+          ? "A login account must have at least one role assigned."
           : "Resolve duplicate role/location pairs before saving.",
       );
       return;
@@ -355,39 +390,52 @@ export default function UserFormDialog({
     setSubmitError(null);
     try {
       // Build the payload to match the backend Zod schema:
-      // - phone is nullable; turn an empty form input into null so it
-      //   doesn't store as a literal empty string
-      // - password is only sent on create (edit flow uses the dedicated
-      //   reset-password dialog)
+      // - phone / email are nullable; turn an empty form input into null
+      //   so it doesn't store as a literal empty string
+      // - password is only sent when CREATING an account (edit flow for
+      //   an existing account uses the dedicated reset-password dialog)
       const trimmedPhone = data.phone.trim();
+      const email = data.email.trim() === "" ? null : data.email.trim();
       const payload: Record<string, unknown> = {
         name: data.name,
-        email: data.email,
+        email,
         employeeId: data.employeeId,
         phone: trimmedPhone === "" ? null : trimmedPhone,
         status: data.status,
       };
 
-      if (!isEditing && "password" in data && data.password) {
-        payload.password = data.password;
-      }
-
       let userId: string;
       if (editingUser) {
         await apiPut(`/api/users/${editingUser.id}`, payload);
         userId = editingUser.id;
+        if (createAccount && !hasExistingAccount) {
+          await apiPost(`/api/users/${userId}/account`, {
+            email,
+            password: data.password,
+          });
+        }
       } else {
+        if (createAccount) payload.password = data.password;
         const created = await apiPost<{ id: string }>("/api/users", payload);
         userId = created.id;
       }
 
-      // Assign roles — only valid (non-empty) cards.
-      await apiPut(`/api/users/${userId}/roles`, {
-        roles: validAssignments,
-      });
+      // Assign roles — only for someone who can sign in, and only the
+      // valid (non-empty) cards.
+      if (willHaveAccount) {
+        await apiPut(`/api/users/${userId}/roles`, {
+          roles: validAssignments,
+        });
+      }
 
       toast.success(
-        editingUser ? `User updated: ${data.name}` : `User created: ${data.name}`,
+        editingUser
+          ? createAccount && !hasExistingAccount
+            ? `Login account created for ${data.name}`
+            : `Employee updated: ${data.name}`
+          : createAccount
+            ? `Employee + login account created: ${data.name}`
+            : `Employee created: ${data.name}`,
       );
       onSuccess();
       onClose();
@@ -409,9 +457,14 @@ export default function UserFormDialog({
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
 
       <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border bg-card p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">
-          {isEditing ? "Edit User" : "Add User"}
+        <h2 className="mb-1 text-lg font-semibold">
+          {isEditing ? "Edit Employee" : "Add Employee"}
         </h2>
+        <p className="mb-4 text-xs text-muted-foreground">
+          {hasExistingAccount
+            ? "This employee has a login account."
+            : "Employee record for asset assignment and handover forms. A login account is optional."}
+        </p>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           {/* Name */}
@@ -430,44 +483,6 @@ export default function UserFormDialog({
               </p>
             )}
           </div>
-
-          {/* Email */}
-          <div>
-            <label className="mb-1 block text-sm font-medium">Email</label>
-            <input
-              type="email"
-              {...register("email")}
-              className={cn(
-                "w-full rounded-md border bg-background px-3 py-2 text-sm",
-                errors.email && "border-destructive",
-              )}
-            />
-            {errors.email && (
-              <p className="mt-1 text-xs text-destructive">
-                {errors.email.message}
-              </p>
-            )}
-          </div>
-
-          {/* Password (create only) */}
-          {!isEditing && (
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Password
-              </label>
-              <PasswordInput
-                autoComplete="new-password"
-                {...register("password" as keyof UserFormValues)}
-                invalid={!!createOnlyPasswordError}
-                className="py-2"
-              />
-              {createOnlyPasswordError && (
-                <p className="mt-1 text-xs text-destructive">
-                  {createOnlyPasswordError.message}
-                </p>
-              )}
-            </div>
-          )}
 
           {/* Employee ID + Phone */}
           <div className="grid grid-cols-2 gap-4">
@@ -514,10 +529,72 @@ export default function UserFormDialog({
             )}
           </div>
 
+          {/* Email — optional for a plain employee, required for an account. */}
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              Email
+              {!willHaveAccount && (
+                <span className="ml-1 font-normal text-muted-foreground">(optional)</span>
+              )}
+            </label>
+            <input
+              type="email"
+              {...register("email")}
+              className={cn(
+                "w-full rounded-md border bg-background px-3 py-2 text-sm",
+                errors.email && "border-destructive",
+              )}
+            />
+            {errors.email && (
+              <p className="mt-1 text-xs text-destructive">
+                {errors.email.message}
+              </p>
+            )}
+          </div>
+
+          {/* Login account — optional layer on top of the employee record. */}
+          {!hasExistingAccount && (
+            <div className="rounded-md border p-3" data-tour="user-create-account">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={createAccount}
+                  onChange={(e) => setCreateAccount(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300"
+                />
+                <span>
+                  <span className="font-medium">Create login account</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Most employees only hold assets and never sign in. Tick
+                    this for staff who need to use Wedisense.
+                  </span>
+                </span>
+              </label>
+              {createAccount && (
+                <div className="mt-3">
+                  <label className="mb-1 block text-sm font-medium">Password</label>
+                  <PasswordInput
+                    autoComplete="new-password"
+                    {...register("password")}
+                    invalid={!!errors.password}
+                    className="py-2"
+                  />
+                  {errors.password && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {errors.password.message}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Role assignments — card per (role, location) pair. The
               backend allows multiple assignments of the same role with
               different location scopes (DB unique on the tuple), so the
-              card model is more flexible than the previous checkbox UI. */}
+              card model is more flexible than the previous checkbox UI.
+              Only shown for someone who can sign in. */}
+          {willHaveAccount && (
           <div>
             <label className="mb-2 block text-sm font-medium">
               Role assignments
@@ -615,11 +692,13 @@ export default function UserFormDialog({
               </p>
             )}
           </div>
+          )}
 
           {/* Effective permissions preview — collapsible. Loaded lazily
               on first toggle. Shows the union of permissions across all
               assigned roles with source attribution. Helpful for admins
               checking "what does this user actually get?" before save. */}
+          {willHaveAccount && (
           <div className="rounded-md border">
             <button
               type="button"
@@ -679,6 +758,7 @@ export default function UserFormDialog({
               </div>
             )}
           </div>
+          )}
 
           {/* Server-side error surface. Sticks until the next submit
               attempt so the user can read the reason while editing. */}
@@ -702,8 +782,8 @@ export default function UserFormDialog({
               disabled={submitting || !canSave}
               title={
                 !canSave
-                  ? validAssignments.length === 0
-                    ? "User must have at least one role"
+                  ? rolesRequired && validAssignments.length === 0
+                    ? "A login account must have at least one role"
                     : "Resolve duplicate role/location pairs"
                   : undefined
               }

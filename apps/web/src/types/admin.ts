@@ -75,10 +75,13 @@ export interface UserRoleAssignment {
 export interface UserListItem {
   id: string;
   name: string;
-  email: string;
+  /** Null for employee records without an email. */
+  email: string | null;
   employeeId: string;
   phone: string | null;
   status: string;
+  /** True when the employee can sign in (has a password). Derived server-side. */
+  hasAccount: boolean;
   userRoles: {
     id: string;
     roleId: string;
@@ -90,7 +93,7 @@ export interface UserListItem {
 
 export interface UserFormData {
   name: string;
-  email: string;
+  email: string | null;
   password?: string;
   employeeId: string;
   phone: string;
@@ -177,6 +180,8 @@ export interface AssetListItem {
   purchasePrice: string | null;
   warrantyEndDate: string | null;
   currentBookValue: string | null;
+  /** Bumped by Prisma on every write to the row — the "Last Updated" column. */
+  updatedAt: string;
   product: {
     id: string;
     name: string;
@@ -185,7 +190,7 @@ export interface AssetListItem {
     category: { id: string; name: string } | null;
   } | null;
   location: { id: string; name: string; code: string };
-  assignedTo: { id: string; name: string; email: string } | null;
+  assignedTo: { id: string; name: string; email: string | null } | null;
   /** Procurement provenance summary — null for assets not created via
    *  a procurement batch. The PO summary is included inline so the list
    *  page can render a clickable PO column without a follow-up fetch. */
@@ -682,7 +687,7 @@ export type AuditAction =
 export interface AuditLogDto {
   id: string;
   userId: string | null;
-  user: { id: string; name: string; email: string } | null;
+  user: { id: string; name: string; email: string | null } | null;
   action: AuditAction;
   resourceType: string;
   resourceId: string;
@@ -990,7 +995,7 @@ export interface HandoverParty {
   id: string;
   name: string;
   employeeId: string;
-  email: string;
+  email: string | null;
 }
 
 export interface HandoverFormItem {

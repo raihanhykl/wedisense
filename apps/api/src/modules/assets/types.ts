@@ -14,6 +14,7 @@ export type AssetSortField =
   | 'purchaseDate'
   | 'purchasePrice'
   | 'createdAt'
+  | 'updatedAt'
   | 'assignedTo'
   | 'product';
 

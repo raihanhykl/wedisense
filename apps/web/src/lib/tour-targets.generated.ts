@@ -10,6 +10,7 @@
 export const TOUR_TARGETS = [
   "add-asset-btn",
   "add-asset-category-btn",
+  "add-employees-bulk-btn",
   "add-location-btn",
   "add-product-btn",
   "add-role-btn",
@@ -23,6 +24,7 @@ export const TOUR_TARGETS = [
   "asset-filter-product",
   "asset-import",
   "asset-list",
+  "asset-movement-history",
   "asset-rows",
   "asset-search",
   "audit-action-filter",
@@ -100,6 +102,7 @@ export const TOUR_TARGETS = [
   "sidebar-nav",
   "status-filter",
   "upload-validate-btn",
+  "user-create-account",
   "user-management",
   "user-search",
 ] as const;

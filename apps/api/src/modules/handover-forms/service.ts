@@ -76,7 +76,7 @@ function assertEditable(status: HandoverFormStatus): void {
 // ── Snapshot assembly ───────────────────────────────────────────────────────
 
 function toSnapshotEntry(
-  user: { id: string; name: string; employeeId: string; email: string } | undefined,
+  user: { id: string; name: string; employeeId: string; email: string | null } | undefined,
 ): PartySnapshotEntry | null {
   if (!user) return null;
   return { userId: user.id, name: user.name, employeeId: user.employeeId, email: user.email };

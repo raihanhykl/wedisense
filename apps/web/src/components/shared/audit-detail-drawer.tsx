@@ -310,8 +310,10 @@ export default function AuditDetailDrawer({
                       by{" "}
                       <span className="font-medium text-foreground">
                         {entry.user.name}
-                      </span>{" "}
-                      <span className="text-xs">({entry.user.email})</span>
+                      </span>
+                      {entry.user.email && (
+                        <span className="text-xs"> ({entry.user.email})</span>
+                      )}
                     </>
                   ) : (
                     "by system"

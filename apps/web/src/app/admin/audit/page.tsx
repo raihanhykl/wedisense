@@ -108,8 +108,10 @@ function MobileCard({
           </div>
           {entry.user && (
             <p className="text-xs text-muted-foreground">
-              {entry.user.name}{" "}
-              <span className="opacity-70">({entry.user.email})</span>
+              {entry.user.name}
+              {entry.user.email && (
+                <span className="opacity-70"> ({entry.user.email})</span>
+              )}
             </p>
           )}
           {!entry.user && (
@@ -334,7 +336,7 @@ export default function AuditPage() {
                       <div>
                         <p className="font-medium">{entry.user.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {entry.user.email}
+                          {entry.user.email ?? "—"}
                         </p>
                       </div>
                     ) : (
