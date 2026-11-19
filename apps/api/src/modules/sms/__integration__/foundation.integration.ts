@@ -235,9 +235,14 @@ describe('access — permissions are resolved per location (A13)', () => {
     expect(can(access, SMS_PERMISSIONS.ORDERS_MANAGE, world.bekasi.id)).toBe(true);
     expect(can(access, SMS_PERMISSIONS.ORDERS_MANAGE, world.jakarta.id)).toBe(false);
     expect(can(access, SMS_PERMISSIONS.RETURNS_DECIDE, world.jakarta.id)).toBe(false);
-    expect(() => assertCan(access, SMS_PERMISSIONS.ORDERS_MANAGE, world.jakarta.id)).toThrowError(
-      expect.objectContaining({ statusCode: 403, code: 'SMS_FORBIDDEN_AT_LOCATION' }),
-    );
+    let denied: unknown;
+    try {
+      assertCan(access, SMS_PERMISSIONS.ORDERS_MANAGE, world.jakarta.id);
+    } catch (error) {
+      denied = error;
+    }
+    expect(denied).toBeInstanceOf(AppError);
+    expect(denied).toMatchObject({ statusCode: 403, code: 'SMS_FORBIDDEN_AT_LOCATION' });
 
     expect(locationScope(access, SMS_PERMISSIONS.ORDERS_MANAGE)).toEqual([world.bekasi.id]);
     expect([...locationScope(access, SMS_PERMISSIONS.STOCK_VIEW)].sort()).toEqual(

@@ -57,6 +57,15 @@ export async function lockUnits(
   });
 }
 
+/** Lock a single unit row. Convenience wrapper around `lockUnits`. */
+export async function lockUnit(tx: PrismaTransactionClient, unitId: string): Promise<SmsUnit> {
+  const [unit] = await lockUnits(tx, [unitId]);
+  if (!unit) {
+    throw new AppError(404, 'SMS_UNIT_NOT_FOUND', 'Unit not found', [{ unitId }]);
+  }
+  return unit;
+}
+
 // ── Reducer input ⇄ stored columns ─────────────────────────────────────────
 
 type StoredEventShape = Pick<SmsUnitEvent, 'eventType' | 'locationId' | 'payload'>;
