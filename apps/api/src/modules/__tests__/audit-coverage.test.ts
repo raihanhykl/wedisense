@@ -71,6 +71,16 @@ const ROUTER_MOUNTS: Record<string, { mount: string; file: string }> = {
   vendors: { mount: '/api/vendors', file: 'vendors/router.ts' },
   'handover-forms': { mount: '/api/handover-forms', file: 'handover-forms/router.ts' },
   settings: { mount: '/api/settings', file: 'settings/router.ts' },
+  // SMS (Stock Management System) — one sub-router per slice under modules/sms.
+  'sms-master': { mount: '/api/sms/master', file: 'sms/master/router.ts' },
+  'sms-shipments': { mount: '/api/sms/shipments', file: 'sms/shipments/router.ts' },
+  'sms-units': { mount: '/api/sms/units', file: 'sms/units/router.ts' },
+  'sms-inspections': { mount: '/api/sms/inspections', file: 'sms/inspections/router.ts' },
+  'sms-opening-balance': {
+    mount: '/api/sms/opening-balance',
+    file: 'sms/opening-balance/router.ts',
+  },
+  'sms-dashboard': { mount: '/api/sms/dashboard', file: 'sms/dashboard/router.ts' },
 };
 
 interface DiscoveredRoute {

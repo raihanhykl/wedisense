@@ -16,6 +16,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { SMS_PERMISSION_LIST, SMS_PERMISSION_PREFIX, SMS_ROLE_PRESETS } from '@wedisense/shared';
 
 export interface SystemSeedResult {
   permissions: Record<string, string>;
@@ -106,6 +107,13 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
     // `roles:manage` so ADMIN can maintain the letterhead without holding
     // the keys to the permission system.
     { resource: 'settings', action: 'manage' },
+    // SMS (Stock Management System). Defined once in @wedisense/shared so the
+    // API, the seed and the web app cannot drift apart. Every SMS permission
+    // is evaluated together with a location — see modules/sms/lib/access.ts.
+    ...SMS_PERMISSION_LIST.map((key) => {
+      const [resource, action] = key.split(':') as [string, string];
+      return { resource, action };
+    }),
   ];
 
   const permissions: Record<string, string> = {};
@@ -150,8 +158,15 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
     // a hard delete is irreversible (no soft-delete on products) and the
     // FK guard only prevents it when assets exist — an empty product can
     // still be deleted accidentally by ADMIN without this extra gate.
+    // SMS permissions are excluded too: ADMIN is the asset-management admin
+    // (usually unscoped), and stock access is granted per showroom through
+    // the SMS preset roles instead.
     ADMIN: allPermKeys.filter(
-      (k) => k !== 'roles:manage' && k !== 'users:reset-password' && k !== 'products:delete',
+      (k) =>
+        k !== 'roles:manage' &&
+        k !== 'users:reset-password' &&
+        k !== 'products:delete' &&
+        !k.startsWith(SMS_PERMISSION_PREFIX),
     ),
     MANAGER: [
       'assets:create',
@@ -260,6 +275,42 @@ export async function seedSystem(prisma: PrismaClient): Promise<SystemSeedResult
     });
 
     roles[roleDef.name] = roleId;
+  }
+
+  // ─── SMS preset roles ────────────────────────────────────────────────────
+  // Created only when missing. They are editable (non-system) roles, so an
+  // existing preset is never overwritten — whatever the owner changed on the
+  // Roles screen wins over this file.
+  for (const preset of SMS_ROLE_PRESETS) {
+    const existing = await prisma.role.findUnique({ where: { name: preset.name } });
+    if (existing) {
+      roles[preset.name] = existing.id;
+      continue;
+    }
+    for (const permKey of preset.permissions) {
+      if (!permissions[permKey]) {
+        throw new Error(`Permission "${permKey}" referenced in ${preset.name} but not seeded`);
+      }
+    }
+    const roleId = await prisma.$transaction(async (tx) => {
+      const role = await tx.role.create({
+        data: {
+          id: crypto.randomUUID(),
+          name: preset.name,
+          description: preset.description,
+          isSystem: false,
+        },
+      });
+      await tx.rolePermission.createMany({
+        data: preset.permissions.map((permKey) => ({
+          roleId: role.id,
+          permissionId: permissions[permKey]!,
+        })),
+      });
+      return role.id;
+    });
+    roles[preset.name] = roleId;
+    console.log(`  ✓ Created SMS preset role ${preset.name}`);
   }
   console.log(`  ✓ ${Object.keys(roles).length} roles + permission matrix`);
 
