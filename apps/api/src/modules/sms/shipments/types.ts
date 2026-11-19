@@ -104,11 +104,16 @@ export interface ConfirmResponse {
 // ── Shipment list / detail ────────────────────────────────────────────────────
 
 export interface ShipmentCounts {
+  /** VINs listed on the manifest. Unexpected arrivals are NOT included. */
   expected: number;
   receivedOk: number;
   receivedDamaged: number;
+  /** Arrived with a different identity (expected lines and unexpected arrivals). */
   discrepancy: number;
+  /** Listed on the manifest and not arrived yet. */
   pending: number;
+  /** Motorcycles that arrived without being on the manifest. */
+  unexpected: number;
 }
 
 export interface ShipmentListItem {

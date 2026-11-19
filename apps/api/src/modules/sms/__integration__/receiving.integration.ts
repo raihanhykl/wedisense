@@ -15,6 +15,7 @@ import type {
   InspectResponse,
   PreviewResponse,
   ReceiveResponse,
+  ShipmentDetail,
 } from '../shipments/types.js';
 import {
   accessTokenFor,
@@ -321,6 +322,10 @@ describe('damaged unit → inspection → release', () => {
       identityMismatch: 1,
       expected: 1,
     });
+
+    // The unexpected arrival does not inflate the manifest's expected count.
+    const shipment = await get(world.bekasiAdmin, `/api/sms/shipments/${shipmentId}`).expect(200);
+    expect(dataOf<ShipmentDetail>(shipment).counts).toMatchObject({ expected: 1, pending: 1, unexpected: 1 });
 
     await post(world.bekasiAdmin, `/api/sms/units/${unitId}/resolve-identity`, {
       outcome: 'AVAILABLE',

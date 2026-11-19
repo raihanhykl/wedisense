@@ -149,9 +149,8 @@ export async function getOpenShipments(
         batchNumber: true,
         deliveryNoteNumber: true,
         createdAt: true,
-        _count: { select: { lines: true } },
         lines: {
-          select: { receiptStatus: true },
+          select: { receiptStatus: true, isExpected: true },
         },
       },
     }),
@@ -159,13 +158,16 @@ export async function getOpenShipments(
   ]);
 
   const data: OpenShipmentTask[] = shipments.map((s) => {
-    const pendingCount = s.lines.filter((l) => l.receiptStatus === 'PENDING').length;
-    const receivedCount = s.lines.filter((l) => l.receiptStatus !== 'PENDING').length;
+    // Progress is measured against the manifest: unexpected arrivals are
+    // extra and must not inflate "x of y received".
+    const expectedLines = s.lines.filter((l) => l.isExpected);
+    const pendingCount = expectedLines.filter((l) => l.receiptStatus === 'PENDING').length;
+    const receivedCount = expectedLines.length - pendingCount;
     return {
       id: s.id,
       batchNumber: s.batchNumber,
       deliveryNoteNumber: s.deliveryNoteNumber,
-      expectedCount: s._count.lines,
+      expectedCount: expectedLines.length,
       receivedCount,
       pendingCount,
       createdAt: s.createdAt,

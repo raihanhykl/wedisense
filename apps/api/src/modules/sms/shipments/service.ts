@@ -254,7 +254,7 @@ export async function previewManifest(
   if (existingShipment) {
     const countMap = await repo.getShipmentCounts([existingShipment.id]);
     const counts = countMap.get(existingShipment.id) ?? {
-      expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0,
+      expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0, unexpected: 0,
     };
     existingShipmentInfo = {
       id: existingShipment.id,
@@ -489,7 +489,7 @@ export async function listShipments(
 
   const data: ShipmentListItem[] = shipments.map((s) => {
     const counts = countMap.get(s.id) ?? {
-      expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0,
+      expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0, unexpected: 0,
     };
     return {
       id: s.id,
@@ -528,7 +528,7 @@ export async function getShipment(id: string, req: Request): Promise<ShipmentDet
   const lines = await repo.findLinesByShipmentId(id);
   const countMap = await repo.getShipmentCounts([id]);
   const counts = countMap.get(id) ?? {
-    expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0,
+    expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0, unexpected: 0,
   };
 
   return {
@@ -727,7 +727,7 @@ export async function receiveItems(
       // Recompute counts inside the transaction so they include this receipt.
       const countMap = await repo.getShipmentCounts([shipmentId], tx);
       const counts = countMap.get(shipmentId) ?? {
-        expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0,
+        expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0, unexpected: 0,
       };
 
       return { received, alreadyReceived, counts };

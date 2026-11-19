@@ -196,7 +196,7 @@ export async function getShipmentCounts(
   if (shipmentIds.length === 0) return new Map();
 
   const rows = await client.smsShipmentLine.groupBy({
-    by: ['shipmentId', 'receiptStatus'],
+    by: ['shipmentId', 'receiptStatus', 'isExpected'],
     _count: { _all: true },
     where: { shipmentId: { in: shipmentIds } },
   });
@@ -210,6 +210,7 @@ export async function getShipmentCounts(
       receivedDamaged: 0,
       discrepancy: 0,
       pending: 0,
+      unexpected: 0,
     });
   }
 
@@ -217,7 +218,10 @@ export async function getShipmentCounts(
     const counts = result.get(row.shipmentId);
     if (!counts) continue;
     const n = row._count._all;
-    counts.expected += n;
+    // Only manifest lines count as "expected"; an unexpected arrival must not
+    // inflate the denominator of "x of y received".
+    if (row.isExpected) counts.expected += n;
+    else counts.unexpected += n;
     switch (row.receiptStatus) {
       case 'RECEIVED_OK':
         counts.receivedOk += n;
