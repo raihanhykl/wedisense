@@ -11,6 +11,7 @@ import { AppError } from '../../../middleware/error-handler.js';
 import {
   getSmsAccess,
   assertCan,
+  can,
   locationScope,
 } from '../lib/access.js';
 import { createUnitWithEvent, recordUnitEvent, resolveEventDate } from '../lib/ledger.js';
@@ -324,7 +325,7 @@ export async function confirmImport(
       key: idempotencyKey,
       userId: actor.userId,
       operation: 'shipments.confirm-import',
-      payload: { destinationLocationId, batchNumber, deliveryNoteNumber, lines: lines.map((l) => l.vin) },
+      payload: body,
       statusCode: 201,
       transaction: { timeout: 60_000 },
     },
@@ -518,7 +519,11 @@ export async function getShipment(id: string, req: Request): Promise<ShipmentDet
     throw new AppError(404, 'SMS_SHIPMENT_NOT_FOUND', 'Shipment not found');
   }
 
-  assertCan(access, SMS_PERMISSIONS.STOCK_VIEW, shipment.destinationLocationId);
+  // A shipment the caller may not see is reported as missing, so its
+  // existence (and batch number) is not revealed.
+  if (!can(access, SMS_PERMISSIONS.STOCK_VIEW, shipment.destinationLocationId)) {
+    throw new AppError(404, 'SMS_SHIPMENT_NOT_FOUND', 'Shipment not found');
+  }
 
   const lines = await repo.findLinesByShipmentId(id);
   const countMap = await repo.getShipmentCounts([id]);
@@ -589,7 +594,7 @@ export async function receiveItems(
       key: idempotencyKey,
       userId: actor.userId,
       operation: 'shipments.receive',
-      payload: { shipmentId, items: body.items.map((i) => i.lineId) },
+      payload: { shipmentId, ...body },
       transaction: { timeout: 30_000 },
     },
     async (tx) => {
@@ -719,8 +724,8 @@ export async function receiveItems(
         });
       }
 
-      // Recompute counts
-      const countMap = await repo.getShipmentCounts([shipmentId]);
+      // Recompute counts inside the transaction so they include this receipt.
+      const countMap = await repo.getShipmentCounts([shipmentId], tx);
       const counts = countMap.get(shipmentId) ?? {
         expected: 0, receivedOk: 0, receivedDamaged: 0, discrepancy: 0, pending: 0,
       };
@@ -758,7 +763,7 @@ export async function recordFinding(
       key: idempotencyKey,
       userId: actor.userId,
       operation: 'shipments.record-finding',
-      payload: { shipmentId, vin },
+      payload: { shipmentId, ...body },
     },
     async (tx) => {
       // Create the unit with IDENTITY_MISMATCH_FOUND

@@ -77,6 +77,7 @@ export interface UnitDetail {
   physicalLocation: UnitLocationRef | null;
   responsibleShowroom: UnitLocationRef;
   shipment: {
+    id: string;
     batchNumber: string;
     deliveryNoteNumber: string;
     destination: UnitLocationRef;

@@ -114,6 +114,7 @@ export async function findById(id: string): Promise<UnitDetail | null> {
         select: {
           shipment: {
             select: {
+              id: true,
               batchNumber: true,
               deliveryNoteNumber: true,
               dispatchDate: true,
@@ -125,6 +126,7 @@ export async function findById(id: string): Promise<UnitDetail | null> {
       // Also include direct shipment relation as fallback (e.g. opening balance).
       shipment: {
         select: {
+          id: true,
           batchNumber: true,
           deliveryNoteNumber: true,
           dispatchDate: true,
@@ -193,6 +195,7 @@ export async function findById(id: string): Promise<UnitDetail | null> {
     responsibleShowroom: unit.responsibleShowroom,
     shipment: shipmentSource
       ? {
+          id: shipmentSource.id,
           batchNumber: shipmentSource.batchNumber,
           deliveryNoteNumber: shipmentSource.deliveryNoteNumber,
           dispatchDate: shipmentSource.dispatchDate,

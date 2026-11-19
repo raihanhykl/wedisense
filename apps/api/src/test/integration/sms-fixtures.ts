@@ -6,7 +6,12 @@
  * one product variant, and three users with location-scoped SMS roles.
  */
 import { SMS_PERMISSION_LIST, SMS_PERMISSIONS, type SmsPermission } from '@wedisense/shared';
+import express, { type Express } from 'express';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../../lib/prisma.js';
+import { authenticate } from '../../middleware/authenticate.js';
+import { errorHandler } from '../../middleware/error-handler.js';
+import { smsRouter } from '../../modules/sms/index.js';
 
 export interface SmsTestWorld {
   bekasi: { id: string };
@@ -83,7 +88,15 @@ export async function resetSmsDatabase(): Promise<SmsTestWorld> {
   const viewerRoleId = await createRole('TEST_SMS_VIEWER', [SMS_PERMISSIONS.STOCK_VIEW]);
 
   const user = (name: string, employeeId: string) =>
-    prisma.user.create({ data: { name, employeeId, email: `${employeeId.toLowerCase()}@example.test` } });
+    prisma.user.create({
+      data: {
+        name,
+        employeeId,
+        email: `${employeeId.toLowerCase()}@example.test`,
+        // Never used to log in — `authenticate` only requires that an account exists.
+        passwordHash: 'integration-test-account',
+      },
+    });
 
   const bekasiAdmin = await user('Bekasi Admin', 'T001');
   const jakartaAdmin = await user('Jakarta Admin', 'T002');
@@ -118,6 +131,27 @@ let vinCounter = 0;
 export function nextVin(): string {
   vinCounter += 1;
   return `MHWTEST${String(vinCounter).padStart(10, '0')}`;
+}
+
+/** A signed access token for `user`, as the login endpoint would issue it. */
+export function accessTokenFor(user: { id: string }): string {
+  const secret = process.env['JWT_ACCESS_SECRET'] ?? 'dev-access-secret';
+  return jwt.sign({ userId: user.id, email: 'integration@example.test', type: 'access' }, secret, {
+    expiresIn: '15m',
+  });
+}
+
+/**
+ * The SMS API mounted exactly as in app.ts (authenticate → smsRouter →
+ * errorHandler) but without the rest of the app, so these tests need
+ * PostgreSQL only — no Redis, queues or rate limiter.
+ */
+export function createSmsTestApp(): Express {
+  const app = express();
+  app.use(express.json({ limit: '10mb' }));
+  app.use('/api/sms', authenticate, smsRouter);
+  app.use(errorHandler);
+  return app;
 }
 
 export async function disconnect(): Promise<void> {

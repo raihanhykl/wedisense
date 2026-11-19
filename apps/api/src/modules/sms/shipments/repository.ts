@@ -188,10 +188,14 @@ export async function listShipments(opts: {
 /** Compute counts for a set of shipment IDs in one grouped query. */
 export async function getShipmentCounts(
   shipmentIds: string[],
+  // Pass the transaction client when counting inside a mutation: the global
+  // client reads from another connection and would not see the uncommitted
+  // changes, so the response would report the counts from BEFORE the write.
+  client: Pick<PrismaTransactionClient, 'smsShipmentLine'> = prisma,
 ): Promise<Map<string, ShipmentCounts>> {
   if (shipmentIds.length === 0) return new Map();
 
-  const rows = await prisma.smsShipmentLine.groupBy({
+  const rows = await client.smsShipmentLine.groupBy({
     by: ['shipmentId', 'receiptStatus'],
     _count: { _all: true },
     where: { shipmentId: { in: shipmentIds } },
