@@ -1,10 +1,12 @@
 name: CI/CD
 
+# Flow: feature branch → PR to `staging` (deploys staging) → PR `staging` → `main`
+# (deploys production). See docs/ci-cd.md.
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
-    branches: [main]
+    branches: [main, staging]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -53,14 +55,48 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost:4000/api
           NEXT_PUBLIC_APP_URL: http://localhost:3000
 
-  deploy:
-    name: Deploy to VPS
+  # Both environments build on the same 2-CPU VPS, so every deploy shares one
+  # concurrency group: a staging and a production deploy never build at once.
+  deploy-staging:
+    name: Deploy to staging
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging-wedisense.wedison.tech
+    concurrency:
+      group: deploy-vps
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 20m
+          # Staging lives next to production: <VPS_APP_DIR>-staging.
+          # Sync the checkout first so the deploy script and PM2 config that
+          # run are the ones from this commit, never a stale copy.
+          script: |
+            set -euo pipefail
+            cd ${{ secrets.VPS_APP_DIR }}-staging
+            git fetch origin staging
+            git reset --hard origin/staging
+            DEPLOY_ENV=staging bash scripts/deploy.sh
+
+  deploy-production:
+    name: Deploy to production
     needs: ci
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: production
+      url: https://wedisense.wedison.tech
     concurrency:
-      group: deploy-production
+      group: deploy-vps
       cancel-in-progress: false
     steps:
       - name: Deploy over SSH
