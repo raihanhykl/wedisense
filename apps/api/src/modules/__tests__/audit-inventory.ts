@@ -675,6 +675,30 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     module: 'sms-inspections',
     decision: audited('sms/inspections'),
   },
+
+  // ── sms opening-balance ───────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/opening-balance/inspect',
+    module: 'sms-opening-balance',
+    decision: skipped(
+      'Read-only spreadsheet analysis — detects sheets, header row and suggested column mapping. No DB writes.',
+    ),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/opening-balance/preview',
+    module: 'sms-opening-balance',
+    decision: skipped(
+      'Read-only validation pass against lookup maps. Returns row-level errors and warnings. No DB writes.',
+    ),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/opening-balance/confirm',
+    module: 'sms-opening-balance',
+    decision: audited('sms/opening-balance'),
+  },
 ];
 
 /**
