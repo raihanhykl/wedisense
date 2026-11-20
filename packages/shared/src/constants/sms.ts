@@ -100,3 +100,10 @@ export const SMS_STOCK_LOCATION_TYPES = ['SHOWROOM', 'BRANCH'] as const;
 
 /** Header carrying the client-generated key that makes a mutation exactly-once. */
 export const SMS_IDEMPOTENCY_HEADER = 'idempotency-key';
+
+/**
+ * Default number of calendar days after booking before the line is considered
+ * stale and a follow-up is expected. Used as the initial `followUpAt` value
+ * when an SPK line is booked.
+ */
+export const SMS_BOOKING_FOLLOW_UP_DAYS = 3;

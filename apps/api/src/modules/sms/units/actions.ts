@@ -14,6 +14,7 @@ export interface UnitForActions {
   activeOrderLineId: string | null;
   openRtoContractId: string | null;
   openReturnRequestId: string | null;
+  openShowLoanId: string | null;
 }
 
 export interface InspectionForActions {
@@ -49,6 +50,12 @@ export interface ComputeActionsResult {
  *   RECORD_INSPECTION  — status INSPECTION + INSPECTIONS_MANAGE
  *   RELEASE            — status INSPECTION + INSPECTIONS_MANAGE + no open
  *                        commitments + latest inspection PASSED
+ *   BOOK               — status AVAILABLE + no active order line + ORDERS_MANAGE
+ *                        at the physical location
+ *   DISPATCH_SHOW      — status AVAILABLE + no open show loan + SHOW_UNITS_MANAGE
+ *                        at the physical location
+ *   RETURN_SHOW        — status SHOW_UNIT + SHOW_UNITS_MANAGE at the responsible
+ *                        showroom
  */
 export function computeAvailableActions(ctx: ActionContext): ComputeActionsResult {
   const { unit, latestInspection, permissionsAtRelevantLocation: perms } = ctx;
@@ -93,6 +100,31 @@ export function computeAvailableActions(ctx: ActionContext): ComputeActionsResul
     if (can(SMS_PERMISSIONS.INSPECTIONS_MANAGE) && releaseBlockers.length === 0) {
       actions.push('RELEASE');
     }
+  }
+
+  // BOOK: unit is AVAILABLE, no active order line, caller holds ORDERS_MANAGE.
+  if (
+    unit.status === 'AVAILABLE' &&
+    unit.activeOrderLineId === null &&
+    can(SMS_PERMISSIONS.ORDERS_MANAGE)
+  ) {
+    actions.push('BOOK');
+  }
+
+  // DISPATCH_SHOW: unit is AVAILABLE, no open show loan, caller holds SHOW_UNITS_MANAGE.
+  if (
+    unit.status === 'AVAILABLE' &&
+    unit.openShowLoanId === null &&
+    can(SMS_PERMISSIONS.SHOW_UNITS_MANAGE)
+  ) {
+    actions.push('DISPATCH_SHOW');
+  }
+
+  // RETURN_SHOW: unit is SHOW_UNIT, caller holds SHOW_UNITS_MANAGE at responsible showroom.
+  // Note: for SHOW_UNIT the relevant location IS the responsible showroom, so perms already
+  // reflect the responsible showroom permissions.
+  if (unit.status === 'SHOW_UNIT' && can(SMS_PERMISSIONS.SHOW_UNITS_MANAGE)) {
+    actions.push('RETURN_SHOW');
   }
 
   return { availableActions: actions, releaseBlockers };

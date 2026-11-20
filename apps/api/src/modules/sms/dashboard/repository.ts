@@ -1,11 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../../lib/prisma.js';
+import { businessToday } from '../lib/ledger.js';
 import type {
   DashboardTotals,
   DashboardVariantRow,
   OpenShipmentTask,
   InspectionTask,
   IdentityMismatchTask,
+  StaleBookingTask,
+  AwaitingPickupTask,
+  OverdueShowUnitTask,
 } from './types.js';
 
 // ── Summary ──────────────────────────────────────────────────────────────────
@@ -36,6 +40,7 @@ export async function getVariantCounts(
       custody: bigint;
       identity_mismatch: bigint;
       outside: bigint;
+      show_unit: bigint;
     }>
   >`
     SELECT
@@ -46,14 +51,15 @@ export async function getVariantCounts(
       m.id                                                                                 AS model_id,
       m.code                                                                               AS model_code,
       m.name                                                                               AS model_name,
-      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid)                                               AS physical,
-      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'AVAILABLE')                   AS ready,
-      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'BOOKED')                      AS booked,
-      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'SOLD_PENDING_PICKUP')         AS sold_pending_pickup,
-      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'INSPECTION')                  AS inspection,
-      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'CUSTODY')                     AS custody,
-      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'IDENTITY_MISMATCH')           AS identity_mismatch,
-      COUNT(u.id) FILTER (WHERE u.responsible_showroom_id = ${showroomId}::uuid AND u.physical_location_id IS NULL AND u.status IN ('SHOW_UNIT', 'ACTIVE_RTO')) AS outside
+      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid)                                                        AS physical,
+      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'AVAILABLE')                            AS ready,
+      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'BOOKED')                               AS booked,
+      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'SOLD_PENDING_PICKUP')                  AS sold_pending_pickup,
+      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'INSPECTION')                           AS inspection,
+      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'CUSTODY')                              AS custody,
+      COUNT(u.id) FILTER (WHERE u.physical_location_id = ${showroomId}::uuid AND u.status = 'IDENTITY_MISMATCH')                    AS identity_mismatch,
+      COUNT(u.id) FILTER (WHERE u.responsible_showroom_id = ${showroomId}::uuid AND u.physical_location_id IS NULL AND u.status IN ('SHOW_UNIT', 'ACTIVE_RTO')) AS outside,
+      COUNT(u.id) FILTER (WHERE u.responsible_showroom_id = ${showroomId}::uuid AND u.physical_location_id IS NULL AND u.status = 'SHOW_UNIT') AS show_unit
     FROM sms_vehicle_variants v
     JOIN sms_vehicle_models m ON m.id = v.model_id
     LEFT JOIN sms_units u ON u.variant_id = v.id
@@ -84,6 +90,7 @@ export async function getVariantCounts(
     custody: Number(r.custody),
     identityMismatch: Number(r.identity_mismatch),
     outside: Number(r.outside),
+    showUnit: Number(r.show_unit),
   }));
 }
 
@@ -111,6 +118,7 @@ export function aggregateTotals(
     custody: 0,
     identityMismatch: 0,
     outside: 0,
+    showUnit: 0,
     expected,
   };
   for (const r of rows) {
@@ -122,6 +130,7 @@ export function aggregateTotals(
     totals.custody += r.custody;
     totals.identityMismatch += r.identityMismatch;
     totals.outside += r.outside;
+    totals.showUnit += r.showUnit;
   }
   return totals;
 }
@@ -271,4 +280,145 @@ function buildVariantLabel(variant: {
   if (variant.batteryVariant) parts.push(variant.batteryVariant);
   parts.push(variant.color);
   return parts.join(' · ');
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// ── Stage 3 task queries ─────────────────────────────────────────────────────
+
+/**
+ * Order lines in BOOKED status whose follow-up date has passed at `showroomId`.
+ * Oldest follow-up first so the most urgent items surface at the top.
+ */
+export async function getStaleBookings(
+  showroomId: string,
+  now: Date = new Date(),
+): Promise<{ data: StaleBookingTask[]; total: number }> {
+  const where: Prisma.SmsOrderLineWhereInput = {
+    status: 'BOOKED',
+    followUpAt: { lte: now },
+    order: { showroomId },
+  };
+
+  const [lines, total] = await Promise.all([
+    prisma.smsOrderLine.findMany({
+      where,
+      take: TASK_LIMIT,
+      orderBy: { followUpAt: 'asc' },
+      select: {
+        id: true,
+        orderId: true,
+        bookedAt: true,
+        followUpAt: true,
+        unit: { select: { vin: true } },
+        order: {
+          select: {
+            spkNumber: true,
+            sales: { select: { name: true } },
+          },
+        },
+      },
+    }),
+    prisma.smsOrderLine.count({ where }),
+  ]);
+
+  const data: StaleBookingTask[] = lines.map((l) => ({
+    id: l.id,
+    orderId: l.orderId,
+    spk: l.order.spkNumber,
+    vin: l.unit.vin,
+    salesName: l.order.sales?.name ?? null,
+    bookedAt: l.bookedAt,
+    followUpAt: l.followUpAt,
+    daysSinceBooking: Math.floor((now.getTime() - l.bookedAt.getTime()) / MS_PER_DAY),
+  }));
+
+  return { data, total };
+}
+
+/**
+ * Order lines in SOLD status at `showroomId` — the customer has not yet
+ * collected the motorcycle. Oldest sold date first.
+ */
+export async function getAwaitingPickup(
+  showroomId: string,
+  now: Date = new Date(),
+): Promise<{ data: AwaitingPickupTask[]; total: number }> {
+  const where: Prisma.SmsOrderLineWhereInput = {
+    status: 'SOLD',
+    order: { showroomId },
+  };
+
+  const [lines, total] = await Promise.all([
+    prisma.smsOrderLine.findMany({
+      where,
+      take: TASK_LIMIT,
+      orderBy: [{ soldAt: 'asc' }, { bookedAt: 'asc' }],
+      select: {
+        id: true,
+        orderId: true,
+        soldAt: true,
+        unit: { select: { vin: true } },
+        order: { select: { spkNumber: true } },
+      },
+    }),
+    prisma.smsOrderLine.count({ where }),
+  ]);
+
+  const data: AwaitingPickupTask[] = lines.map((l) => ({
+    id: l.id,
+    orderId: l.orderId,
+    spk: l.order.spkNumber,
+    vin: l.unit.vin,
+    soldAt: l.soldAt,
+    daysWaiting: l.soldAt
+      ? Math.floor((now.getTime() - l.soldAt.getTime()) / MS_PER_DAY)
+      : 0,
+  }));
+
+  return { data, total };
+}
+
+/**
+ * Open show loans of `showroomId` whose expected return date has passed.
+ * Most overdue first.
+ */
+export async function getOverdueShowUnits(
+  showroomId: string,
+  now: Date = new Date(),
+): Promise<{ data: OverdueShowUnitTask[]; total: number }> {
+  const today = businessToday(now);
+
+  const where: Prisma.SmsShowLoanWhereInput = {
+    showroomId,
+    returnedAt: null,
+    expectedReturnDate: { lt: today },
+  };
+
+  const [loans, total] = await Promise.all([
+    prisma.smsShowLoan.findMany({
+      where,
+      take: TASK_LIMIT,
+      orderBy: { expectedReturnDate: 'asc' },
+      select: {
+        id: true,
+        unit: { select: { vin: true } },
+        eventName: true,
+        pic: { select: { id: true, name: true } },
+        expectedReturnDate: true,
+      },
+    }),
+    prisma.smsShowLoan.count({ where }),
+  ]);
+
+  const data: OverdueShowUnitTask[] = loans.map((l) => ({
+    loanId: l.id,
+    vin: l.unit.vin,
+    eventName: l.eventName,
+    pic: l.pic ? { id: l.pic.id, name: l.pic.name } : null,
+    expectedReturnDate: l.expectedReturnDate,
+    daysOverdue: Math.floor((today.getTime() - l.expectedReturnDate.getTime()) / MS_PER_DAY),
+  }));
+
+  return { data, total };
 }

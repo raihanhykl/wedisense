@@ -81,6 +81,8 @@ const ROUTER_MOUNTS: Record<string, { mount: string; file: string }> = {
     file: 'sms/opening-balance/router.ts',
   },
   'sms-dashboard': { mount: '/api/sms/dashboard', file: 'sms/dashboard/router.ts' },
+  'sms-show-loans': { mount: '/api/sms/show-loans', file: 'sms/show-loans/router.ts' },
+  'sms-orders': { mount: '/api/sms/orders', file: 'sms/orders/router.ts' },
 };
 
 interface DiscoveredRoute {

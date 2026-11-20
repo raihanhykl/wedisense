@@ -21,6 +21,9 @@ import { smsUnitsRouter } from './units/router.js';
 import { smsInspectionsRouter } from './inspections/router.js';
 import { smsOpeningBalanceRouter } from './opening-balance/router.js';
 import { smsDashboardRouter } from './dashboard/router.js';
+import { smsShowLoansRouter } from './show-loans/router.js';
+import { smsOrdersRouter } from './orders/router.js';
+import { smsPeopleRouter } from './people/router.js';
 
 const router: RouterType = Router();
 
@@ -35,5 +38,8 @@ router.use('/units', smsUnitsRouter);
 router.use('/inspections', smsInspectionsRouter);
 router.use('/opening-balance', smsOpeningBalanceRouter);
 router.use('/dashboard', smsDashboardRouter);
+router.use('/show-loans', smsShowLoansRouter);
+router.use('/orders', smsOrdersRouter);
+router.use('/people', smsPeopleRouter);
 
 export { router as smsRouter };

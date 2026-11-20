@@ -106,6 +106,7 @@ export async function findById(id: string): Promise<UnitDetail | null> {
       activeOrderLineId: true,
       openRtoContractId: true,
       openReturnRequestId: true,
+      openShowLoanId: true,
       variant: { select: variantSelect },
       physicalLocation: { select: locationSelect },
       responsibleShowroom: { select: locationSelect },
@@ -131,6 +132,35 @@ export async function findById(id: string): Promise<UnitDetail | null> {
           deliveryNoteNumber: true,
           dispatchDate: true,
           destinationLocation: { select: locationSelect },
+        },
+      },
+      // Active order line: SPK info and sales person.
+      activeOrderLine: {
+        select: {
+          id: true,
+          status: true,
+          bookedAt: true,
+          followUpAt: true,
+          order: {
+            select: {
+              id: true,
+              spkNumber: true,
+              sales: { select: { id: true, name: true } },
+              createdBy: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+      // Open show loan: event and PIC info.
+      openShowLoan: {
+        select: {
+          id: true,
+          eventName: true,
+          eventLocation: true,
+          dispatchedAt: true,
+          expectedReturnDate: true,
+          returnedAt: true,
+          pic: { select: { id: true, name: true } },
         },
       },
       inspections: {
@@ -174,6 +204,35 @@ export async function findById(id: string): Promise<UnitDetail | null> {
   // Resolve shipment info: prefer the specific shipment line's shipment.
   const shipmentSource = unit.shipmentLine?.shipment ?? unit.shipment ?? null;
 
+  // Build activeOrderLine summary.
+  const activeOrderLine = unit.activeOrderLine
+    ? {
+        id: unit.activeOrderLine.id,
+        orderId: unit.activeOrderLine.order.id,
+        spkNumber: unit.activeOrderLine.order.spkNumber,
+        status: unit.activeOrderLine.status,
+        salesName: unit.activeOrderLine.order.sales?.name ?? null,
+        createdByName: unit.activeOrderLine.order.createdBy.name,
+        bookedAt: unit.activeOrderLine.bookedAt,
+        followUpAt: unit.activeOrderLine.followUpAt,
+      }
+    : null;
+
+  // Build openShowLoan summary.
+  const openShowLoan = unit.openShowLoan
+    ? {
+        id: unit.openShowLoan.id,
+        eventName: unit.openShowLoan.eventName,
+        eventLocation: unit.openShowLoan.eventLocation,
+        picName: unit.openShowLoan.pic?.name ?? null,
+        dispatchedAt: unit.openShowLoan.dispatchedAt,
+        expectedReturnDate: unit.openShowLoan.expectedReturnDate,
+        overdue:
+          unit.openShowLoan.returnedAt === null &&
+          unit.openShowLoan.expectedReturnDate < new Date(),
+      }
+    : null;
+
   return {
     id: unit.id,
     vin: unit.vin,
@@ -186,10 +245,6 @@ export async function findById(id: string): Promise<UnitDetail | null> {
     receivedAt: unit.receivedAt,
     createdAt: unit.createdAt,
     updatedAt: unit.updatedAt,
-    // Forward the commitment pointers — the service uses them for action computation.
-    // These are stripped before sending to the client.
-    // We use a type assertion here because UnitDetail doesn't expose them directly;
-    // the service extracts them separately before mapping to the final shape.
     variant: unit.variant,
     physicalLocation: unit.physicalLocation,
     responsibleShowroom: unit.responsibleShowroom,
@@ -231,6 +286,8 @@ export async function findById(id: string): Promise<UnitDetail | null> {
     // Placeholder; computed in the service using the access map.
     availableActions: [],
     releaseBlockers: [],
+    activeOrderLine,
+    openShowLoan,
   };
 }
 
@@ -247,6 +304,7 @@ export async function findRawById(id: string) {
       activeOrderLineId: true,
       openRtoContractId: true,
       openReturnRequestId: true,
+      openShowLoanId: true,
       engineNumber: true,
       licensePlate: true,
       notes: true,
@@ -297,6 +355,12 @@ export async function searchUnits(
             { vin: { contains: q, mode: 'insensitive' } },
             { engineNumber: { contains: q, mode: 'insensitive' } },
             { licensePlate: { contains: q, mode: 'insensitive' } },
+            // Also match the SPK number of the unit's current active order line.
+            {
+              activeOrderLine: {
+                order: { spkNumber: { contains: q, mode: 'insensitive' } },
+              },
+            },
           ],
         },
       ],
