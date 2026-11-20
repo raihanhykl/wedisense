@@ -12,6 +12,7 @@ import {
   releaseUnitSchema,
 } from './schema.js';
 import * as unitsService from './service.js';
+import { UNIT_NOT_FOUND, uuidParam } from '../lib/params.js';
 
 const router: RouterType = Router();
 
@@ -44,7 +45,7 @@ router.get(
   '/:id',
   requireSmsPermission(SMS_PERMISSIONS.STOCK_VIEW),
   asyncHandler(async (req, res) => {
-    const id = req.params['id'] as string;
+    const id = uuidParam(req, 'id', UNIT_NOT_FOUND);
     const access = getSmsAccess(req);
     const unit = await unitsService.getUnit(id, access);
     sendSuccess(res, unit);
@@ -56,7 +57,7 @@ router.put(
   '/:id/details',
   requireSmsPermission(SMS_PERMISSIONS.RECEIVING_MANAGE),
   asyncHandler(async (req, res) => {
-    const id = req.params['id'] as string;
+    const id = uuidParam(req, 'id', UNIT_NOT_FOUND);
     const input = updateUnitDetailsSchema.parse(req.body);
     const access = getSmsAccess(req);
     const updated = await unitsService.updateUnitDetails(id, input, access, {
@@ -71,7 +72,7 @@ router.post(
   '/:id/resolve-identity',
   requireSmsPermission(SMS_PERMISSIONS.RECEIVING_MANAGE),
   asyncHandler(async (req, res) => {
-    const id = req.params['id'] as string;
+    const id = uuidParam(req, 'id', UNIT_NOT_FOUND);
     const key = requireIdempotencyKey(req);
     const input = resolveIdentitySchema.parse(req.body);
     const access = getSmsAccess(req);
@@ -87,7 +88,7 @@ router.post(
   '/:id/release',
   requireSmsPermission(SMS_PERMISSIONS.INSPECTIONS_MANAGE),
   asyncHandler(async (req, res) => {
-    const id = req.params['id'] as string;
+    const id = uuidParam(req, 'id', UNIT_NOT_FOUND);
     const key = requireIdempotencyKey(req);
     const input = releaseUnitSchema.parse(req.body);
     const access = getSmsAccess(req);

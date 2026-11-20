@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { vinSchema } from '../lib/identifiers.js';
 
 // ── List query ───────────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ export const updateUnitDetailsSchema = z.object({
 
 export const resolveIdentitySchema = z.object({
   outcome: z.enum(['AVAILABLE', 'INSPECTION']),
-  vin: z.string().min(1).max(50).optional(),
+  vin: vinSchema.optional(),
   engineNumber: z.string().max(50).nullable().optional(),
   variantId: z.string().uuid().optional(),
   notes: z.string().min(1, 'notes is required').max(2000),

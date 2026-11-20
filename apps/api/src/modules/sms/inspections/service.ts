@@ -2,7 +2,7 @@ import { Prisma, SmsInspectionResult } from '@prisma/client';
 import { SMS_PERMISSIONS } from '@wedisense/shared';
 import { AppError } from '../../../middleware/error-handler.js';
 import { prisma } from '../../../lib/prisma.js';
-import { assertCan, can, type SmsAccess } from '../lib/access.js';
+import { assertCan, assertCanActOn, can, type SmsAccess } from '../lib/access.js';
 import { lockUnits, recordUnitEvent, resolveEventDate } from '../lib/ledger.js';
 import { runIdempotent, type IdempotentResult } from '../lib/idempotency.js';
 import { createAuditLog } from '../lib/audit.js';
@@ -115,7 +115,13 @@ export async function startInspection(
 
       // Authoritative location-scoped auth check — location comes from the
       // locked unit, never from the request body.
-      assertCan(access, SMS_PERMISSIONS.INSPECTIONS_MANAGE, unit.physicalLocationId);
+      assertCanActOn(
+        access,
+        SMS_PERMISSIONS.INSPECTIONS_MANAGE,
+        unit.physicalLocationId,
+        [unit.physicalLocationId, unit.responsibleShowroomId],
+        { code: 'SMS_UNIT_NOT_FOUND', message: 'Unit not found' },
+      );
 
       // The state machine allows INSPECTION_STARTED only when the unit is
       // in INSPECTION status. Surface this as a clear 409 before the ledger
@@ -247,7 +253,13 @@ export async function setInspectionResult(
         ]);
       }
 
-      assertCan(access, SMS_PERMISSIONS.INSPECTIONS_MANAGE, unit.physicalLocationId);
+      assertCanActOn(
+        access,
+        SMS_PERMISSIONS.INSPECTIONS_MANAGE,
+        unit.physicalLocationId,
+        [unit.physicalLocationId, unit.responsibleShowroomId],
+        { code: 'SMS_UNIT_NOT_FOUND', message: 'Unit not found' },
+      );
 
       // Re-read the inspection after acquiring the unit lock. Under READ
       // COMMITTED a concurrent transaction that decided the same inspection

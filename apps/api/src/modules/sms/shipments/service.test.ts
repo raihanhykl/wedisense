@@ -64,6 +64,8 @@ vi.mock('../lib/audit.js', () => ({
 vi.mock('../lib/access.js', () => ({
   getSmsAccess: vi.fn(),
   assertCan: vi.fn(),
+  assertCanActOn: vi.fn(),
+  can: vi.fn(() => true),
   locationScope: vi.fn(),
   requireSmsPermission: vi.fn(),
 }));
@@ -422,12 +424,12 @@ describe('receiveItems', () => {
   });
 
   it('throws 403 when the user lacks RECEIVING_MANAGE at the shipment destination', async () => {
-    // assertCan throws — simulate a 403 by having it throw an error with statusCode
+    // The authorization helper throws — simulate a 403 with statusCode.
     const forbidden = Object.assign(new Error('Forbidden'), {
       statusCode: 403,
       code: 'SMS_FORBIDDEN_AT_LOCATION',
     });
-    mockAssertCan.mockImplementation(() => {
+    (access.assertCanActOn as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
       throw forbidden;
     });
 

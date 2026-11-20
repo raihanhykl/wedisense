@@ -31,7 +31,22 @@ export async function createVehicleModel(input: CreateVehicleModelInput, actor: 
   }
 
   return smsTransaction(async (tx) => {
-    const model = await repo.createModel({ code: input.code, name: input.name }, tx);
+    let model: Awaited<ReturnType<typeof repo.createModel>>;
+    try {
+      model = await repo.createModel({ code: input.code, name: input.name }, tx);
+    } catch (error) {
+      // Two admins creating the same code at once: the pre-check above
+      // passes for both and the unique index decides — answer like the
+      // pre-check instead of a 500.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new AppError(
+          409,
+          'SMS_MODEL_CODE_EXISTS',
+          `A vehicle model with code "${input.code}" already exists.`,
+        );
+      }
+      throw error;
+    }
     await createAuditLog(tx, {
       userId: actor.userId,
       action: 'CREATE',
@@ -166,7 +181,20 @@ export async function updateVehicleVariant(
   }
 
   return smsTransaction(async (tx) => {
-    const updated = await repo.updateVariant(id, input, tx);
+    let updated: Awaited<ReturnType<typeof repo.updateVariant>>;
+    try {
+      updated = await repo.updateVariant(id, input, tx);
+    } catch (error) {
+      // Same race as on create: a concurrent edit took the combination first.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new AppError(
+          409,
+          'SMS_VARIANT_EXISTS',
+          `A variant named "${newName}" in colour "${newColor}" already exists for this model.`,
+        );
+      }
+      throw error;
+    }
     const { oldValues, newValues } = objectDiff(
       existing as unknown as Record<string, unknown>,
       updated as unknown as Record<string, unknown>,

@@ -4,6 +4,7 @@ import { objectDiff } from '../../../utils/diff.js';
 import { parsePagination, buildPaginationMeta } from '../../../utils/pagination.js';
 import {
   assertCan,
+  assertCanActOn,
   can,
   locationScope,
   permissionsAt,
@@ -116,7 +117,13 @@ export async function updateUnitDetails(
 
     // Authorization at the entity's location (never from request body).
     const relevantLocationId = unit.physicalLocationId ?? unit.responsibleShowroomId;
-    assertCan(access, SMS_PERMISSIONS.RECEIVING_MANAGE, relevantLocationId);
+    assertCanActOn(
+      access,
+      SMS_PERMISSIONS.RECEIVING_MANAGE,
+      relevantLocationId,
+      [unit.physicalLocationId, unit.responsibleShowroomId],
+      { code: 'SMS_UNIT_NOT_FOUND', message: 'Unit not found' },
+    );
 
     // Capture before-state for diff.
     const before = {
@@ -189,10 +196,12 @@ export async function resolveIdentity(
 
       // Authorize against the unit's own location BEFORE looking at its
       // state, so a caller without access learns nothing about the unit.
-      assertCan(
+      assertCanActOn(
         access,
         SMS_PERMISSIONS.RECEIVING_MANAGE,
         unit.physicalLocationId ?? unit.responsibleShowroomId,
+        [unit.physicalLocationId, unit.responsibleShowroomId],
+        { code: 'SMS_UNIT_NOT_FOUND', message: 'Unit not found' },
       );
 
       if (unit.status !== 'IDENTITY_MISMATCH') {
@@ -312,10 +321,12 @@ export async function releaseUnit(
 
       // Authorize against the unit's own location BEFORE looking at its
       // state, so a caller without access learns nothing about the unit.
-      assertCan(
+      assertCanActOn(
         access,
         SMS_PERMISSIONS.INSPECTIONS_MANAGE,
         unit.physicalLocationId ?? unit.responsibleShowroomId,
+        [unit.physicalLocationId, unit.responsibleShowroomId],
+        { code: 'SMS_UNIT_NOT_FOUND', message: 'Unit not found' },
       );
 
       if (unit.status !== 'INSPECTION') {

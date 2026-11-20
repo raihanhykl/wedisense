@@ -443,17 +443,25 @@ describe('releaseUnit', () => {
     ).rejects.toMatchObject({ code: 'SMS_INSPECTION_NOT_PASSED', statusCode: 409 });
   });
 
-  it('throws 403 when caller lacks INSPECTIONS_MANAGE at physicalLocationId', async () => {
-    // Unit is at SHOWROOM_A, caller only has INSPECTIONS_MANAGE at SHOWROOM_B.
-    const wrongAccess = makeAccess({
+  it('answers 404 when the caller cannot see the unit (rights at another showroom only)', async () => {
+    const elsewhere = makeAccess({
       byLocation: {
-        [SHOWROOM_B]: [SMS_PERMISSIONS.INSPECTIONS_MANAGE],
+        [SHOWROOM_B]: [SMS_PERMISSIONS.INSPECTIONS_MANAGE, SMS_PERMISSIONS.STOCK_VIEW],
       },
     });
     mockLockUnits.mockResolvedValue([unitInInspection]);
 
     await expect(
-      unitsService.releaseUnit('unit-1', 'idem-key', {}, wrongAccess, { userId: 'user-1' }),
+      unitsService.releaseUnit('unit-1', 'idem-key', {}, elsewhere, { userId: 'user-1' }),
+    ).rejects.toMatchObject({ statusCode: 404, code: 'SMS_UNIT_NOT_FOUND' });
+  });
+
+  it('answers 403 when the caller can see the unit but may not release it there', async () => {
+    const viewer = makeAccess({ byLocation: { [SHOWROOM_A]: [SMS_PERMISSIONS.STOCK_VIEW] } });
+    mockLockUnits.mockResolvedValue([unitInInspection]);
+
+    await expect(
+      unitsService.releaseUnit('unit-1', 'idem-key', {}, viewer, { userId: 'user-1' }),
     ).rejects.toMatchObject({ statusCode: 403 });
   });
 });
@@ -462,7 +470,7 @@ describe('releaseUnit', () => {
 
 describe('resolveIdentity', () => {
   const access = makeAccess({
-    byLocation: { [SHOWROOM_A]: [SMS_PERMISSIONS.RECEIVING_MANAGE] },
+    byLocation: { [SHOWROOM_A]: [SMS_PERMISSIONS.RECEIVING_MANAGE, SMS_PERMISSIONS.STOCK_VIEW] },
   });
 
   const unitInMismatch = {
@@ -487,8 +495,12 @@ describe('resolveIdentity', () => {
   });
 
   it('throws 403 when caller lacks RECEIVING_MANAGE at physicalLocationId', async () => {
+    // Can see the unit (STOCK_VIEW at its showroom) but may only receive elsewhere.
     const wrongAccess = makeAccess({
-      byLocation: { [SHOWROOM_B]: [SMS_PERMISSIONS.RECEIVING_MANAGE] },
+      byLocation: {
+        [SHOWROOM_A]: [SMS_PERMISSIONS.STOCK_VIEW],
+        [SHOWROOM_B]: [SMS_PERMISSIONS.RECEIVING_MANAGE],
+      },
     });
     mockLockUnits.mockResolvedValue([unitInMismatch]);
 

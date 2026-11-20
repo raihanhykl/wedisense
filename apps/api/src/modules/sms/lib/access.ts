@@ -20,6 +20,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import {
+  SMS_PERMISSIONS,
   SMS_PERMISSION_PREFIX,
   SMS_STOCK_LOCATION_TYPES,
   type SmsPermission,
@@ -152,6 +153,30 @@ export function assertCan(
     'You do not have permission to do this at this location.',
     [{ permission }],
   );
+}
+
+/**
+ * Authorize an action on ONE existing record (a unit, a shipment, …).
+ *
+ * - The user cannot even see the record at any of `visibleAt` → 404 with
+ *   `notFound`, so the record's existence is not revealed.
+ * - The user can see it but does not hold `permission` at `actAt` → 403.
+ *
+ * Call it on the freshly locked record, before any check that depends on
+ * the record's state.
+ */
+export function assertCanActOn(
+  access: SmsAccess,
+  permission: SmsPermission,
+  actAt: string | null | undefined,
+  visibleAt: ReadonlyArray<string | null | undefined>,
+  notFound: { code: string; message: string },
+): void {
+  const visible = visibleAt.some((locationId) =>
+    can(access, SMS_PERMISSIONS.STOCK_VIEW, locationId),
+  );
+  if (!visible) throw new AppError(404, notFound.code, notFound.message);
+  assertCan(access, permission, actAt);
 }
 
 /**

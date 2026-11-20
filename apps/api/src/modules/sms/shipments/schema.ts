@@ -2,6 +2,7 @@
  * Zod schemas for the /api/sms/shipments endpoints.
  */
 import { z } from 'zod';
+import { vinSchema } from '../lib/identifiers.js';
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ export const confirmSourceRowSchema = z.object({
 });
 
 export const confirmLineSchema = z.object({
-  vin: z.string().min(1).max(100),
+  vin: vinSchema,
   engineNumber: z.string().max(100).optional(),
   variantId: z.string().uuid().optional(),
   rawModel: z.string().max(255).optional(),
@@ -113,7 +114,7 @@ export type ReceiveItem = z.infer<typeof receiveItemSchema>;
 // ── POST /:id/findings ────────────────────────────────────────────────────────
 
 export const findingsBodySchema = z.object({
-  vin: z.string().min(1).max(100),
+  vin: vinSchema,
   engineNumber: z.string().max(100).optional(),
   variantId: z.string().uuid(),
   lineId: z.string().uuid().optional(),

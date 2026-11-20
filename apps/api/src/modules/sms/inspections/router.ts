@@ -6,6 +6,7 @@ import { getSmsAccess, requireSmsPermission } from '../lib/access.js';
 import { requireIdempotencyKey } from '../lib/idempotency.js';
 import { listInspectionsQuerySchema, startInspectionSchema, setInspectionResultSchema } from './schema.js';
 import * as inspectionService from './service.js';
+import { INSPECTION_NOT_FOUND, uuidParam } from '../lib/params.js';
 
 const router: RouterType = Router();
 
@@ -28,7 +29,7 @@ router.get(
   requireSmsPermission(SMS_PERMISSIONS.STOCK_VIEW),
   asyncHandler(async (req, res) => {
     const access = getSmsAccess(req);
-    const id = req.params['id'] as string;
+    const id = uuidParam(req, 'id', INSPECTION_NOT_FOUND);
     const inspection = await inspectionService.getInspection(access, id);
     sendSuccess(res, inspection);
   }),
@@ -55,7 +56,7 @@ router.put(
   asyncHandler(async (req, res) => {
     const access = getSmsAccess(req);
     const idempotencyKey = requireIdempotencyKey(req);
-    const id = req.params['id'] as string;
+    const id = uuidParam(req, 'id', INSPECTION_NOT_FOUND);
     const input = setInspectionResultSchema.parse(req.body);
     const result = await inspectionService.setInspectionResult(access, id, input, idempotencyKey);
     sendSuccess(res, result.body, result.statusCode);

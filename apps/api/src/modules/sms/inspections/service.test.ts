@@ -209,11 +209,24 @@ describe('startInspection', () => {
     });
   });
 
-  it('throws SMS_FORBIDDEN_AT_LOCATION (403) when the user holds INSPECTIONS_MANAGE only at a different showroom', async () => {
+  it('answers 404 when the user cannot see the unit at all (manager elsewhere only)', async () => {
     // User is manager at SHOWROOM_B, but the unit is physically at SHOWROOM_A
     const access = makeManagerAccess(SHOWROOM_B);
 
     await expect(startInspection(access, baseInput, 'key-004')).rejects.toMatchObject({
+      code: 'SMS_UNIT_NOT_FOUND',
+      statusCode: 404,
+    });
+
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('answers 403 when the user can see the unit but may not inspect it there', async () => {
+    const access = makeAccess({
+      byLocation: new Map([[SHOWROOM_A, new Set([SMS_PERMISSIONS.STOCK_VIEW])]]),
+    });
+
+    await expect(startInspection(access, baseInput, 'key-004b')).rejects.toMatchObject({
       code: 'SMS_FORBIDDEN_AT_LOCATION',
       statusCode: 403,
     });
@@ -331,12 +344,27 @@ describe('setInspectionResult', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
-  it('throws SMS_FORBIDDEN_AT_LOCATION (403) when the user holds INSPECTIONS_MANAGE only at a different showroom', async () => {
+  it('answers 404 when the user cannot see the unit at all (manager elsewhere only)', async () => {
     // User is manager at SHOWROOM_B; unit is physically at SHOWROOM_A
     const access = makeManagerAccess(SHOWROOM_B);
 
     await expect(
       setInspectionResult(access, INSPECTION_ID, passedInput, 'key-104'),
+    ).rejects.toMatchObject({
+      code: 'SMS_UNIT_NOT_FOUND',
+      statusCode: 404,
+    });
+
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('answers 403 when the user can see the unit but may not record inspections there', async () => {
+    const access = makeAccess({
+      byLocation: new Map([[SHOWROOM_A, new Set([SMS_PERMISSIONS.STOCK_VIEW])]]),
+    });
+
+    await expect(
+      setInspectionResult(access, INSPECTION_ID, passedInput, 'key-104b'),
     ).rejects.toMatchObject({
       code: 'SMS_FORBIDDEN_AT_LOCATION',
       statusCode: 403,

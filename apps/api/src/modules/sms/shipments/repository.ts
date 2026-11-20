@@ -83,6 +83,7 @@ export async function findLinesInOtherShipments(
       shipment: {
         select: {
           batchNumber: true,
+          destinationLocationId: true,
           destinationLocation: { select: { name: true } },
         },
       },
@@ -94,7 +95,7 @@ export async function findLinesInOtherShipments(
 export async function findExistingUnits(vins: string[]) {
   return prisma.smsUnit.findMany({
     where: { vin: { in: vins } },
-    select: { vin: true, status: true },
+    select: { vin: true, status: true, physicalLocationId: true, responsibleShowroomId: true },
   });
 }
 

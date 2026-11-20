@@ -2,6 +2,7 @@
  * Zod schemas for the /api/sms/opening-balance endpoints.
  */
 import { z } from 'zod';
+import { vinSchema } from '../lib/identifiers.js';
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
 
@@ -45,7 +46,7 @@ export type ObPreviewOptions = z.infer<typeof obPreviewOptionsSchema>;
 export const obConfirmRowSchema = z.object({
   /** 1-based source row number (for error references). */
   row: z.number().int().positive(),
-  vin: z.string().min(1).max(100),
+  vin: vinSchema,
   engineNumber: z.string().max(100).optional(),
   licensePlate: z.string().max(50).optional(),
   /** Resolved from the product master. Required before confirm. */

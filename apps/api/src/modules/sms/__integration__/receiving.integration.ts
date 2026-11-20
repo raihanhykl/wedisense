@@ -399,6 +399,36 @@ describe('A13 — the server enforces action + location on every path', () => {
     expect((await get(user, `/api/sms/units/${jakarta.unitId}`)).status).toBe(404);
     expect((await get(user, `/api/sms/shipments/${jakarta.shipmentId}`)).status).toBe(404);
 
+    // Acting on a record outside the caller's scope also looks like "not found".
+    expect((await post(user, `/api/sms/units/${jakarta.unitId}/release`, {})).status).toBe(404);
+    expect((await post(user, '/api/sms/inspections', { unitId: jakarta.unitId })).status).toBe(404);
+    expect(
+      (await post(user, `/api/sms/shipments/${jakarta.shipmentId}/receive`, {
+        items: [{ lineId: jakarta.pendingLineId, condition: 'OK' }],
+      })).status,
+    ).toBe(404);
+
+    // The manifest preview may say a VIN is already taken, but not where.
+    const preview = await post(
+      user,
+      '/api/sms/shipments/import/preview',
+      {
+        text: ['Nomor Rangka', vinAt(71), vinAt(70)].join('\n'),
+        options: {
+          headerRowIndex: 0,
+          mapping: { vin: 0 },
+          destinationLocationId: world.bekasi.id,
+          batchNumber: 'CK-11',
+        },
+      },
+      null,
+    ).expect(200);
+    const candidates = dataOf<PreviewResponse>(preview).candidates;
+    expect(candidates.find((c) => c.vin === vinAt(71))?.classification).toBe('IN_OTHER_SHIPMENT');
+    expect(candidates.find((c) => c.vin === vinAt(71))?.otherShipment).toBeUndefined();
+    expect(candidates.find((c) => c.vin === vinAt(70))?.classification).toBe('ALREADY_RECEIVED');
+    expect(candidates.find((c) => c.vin === vinAt(70))?.existingUnit).toBeUndefined();
+
     const search = await get(user, `/api/sms/units/search?q=${vinAt(70).slice(-6)}`).expect(200);
     expect(dataOf<unknown[]>(search)).toEqual([]);
     const list = await get(user, '/api/sms/shipments').expect(200);

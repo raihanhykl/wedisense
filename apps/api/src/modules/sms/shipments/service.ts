@@ -11,6 +11,7 @@ import { AppError } from '../../../middleware/error-handler.js';
 import {
   getSmsAccess,
   assertCan,
+  assertCanActOn,
   can,
   locationScope,
 } from '../lib/access.js';
@@ -160,17 +161,31 @@ export async function previewManifest(
     repo.findAllVariantsForMatching(),
   ]);
 
+  // Duplicates are checked across the whole network (a VIN must never be
+  // listed or received twice), but WHERE the duplicate is — which batch,
+  // which showroom, what status — is only shown to users who may see that
+  // showroom. Others just learn that the VIN is already taken.
   const inThisShipmentSet = new Set(inThisShipment.map((l) => l.vin));
   const inOtherMap = new Map(
     inOther.map((l) => [
       l.vin,
-      {
-        batchNumber: l.shipment.batchNumber,
-        destinationName: l.shipment.destinationLocation.name,
-      },
+      can(access, SMS_PERMISSIONS.STOCK_VIEW, l.shipment.destinationLocationId)
+        ? {
+            batchNumber: l.shipment.batchNumber,
+            destinationName: l.shipment.destinationLocation.name,
+          }
+        : undefined,
     ]),
   );
-  const existingUnitMap = new Map(existingUnits.map((u) => [u.vin, u.status]));
+  const existingUnitMap = new Map(
+    existingUnits.map((u) => [
+      u.vin,
+      can(access, SMS_PERMISSIONS.STOCK_VIEW, u.physicalLocationId) ||
+      can(access, SMS_PERMISSIONS.STOCK_VIEW, u.responsibleShowroomId)
+        ? u.status
+        : undefined,
+    ]),
+  );
 
   // Build variant lookup for matching
   type VariantRow = { id: string; name: string; color: string; model: { code: string; name: string } };
@@ -208,7 +223,8 @@ export async function previewManifest(
     // received even when the VIN is also listed on a shipment.
     if (existingUnitMap.has(c.vin)) {
       classification = 'ALREADY_RECEIVED';
-      existingUnit = { status: existingUnitMap.get(c.vin)! };
+      const status = existingUnitMap.get(c.vin);
+      existingUnit = status ? { status } : undefined;
       otherShipment = inOtherMap.get(c.vin);
     } else if (inThisShipmentSet.has(c.vin)) {
       classification = 'ALREADY_IN_THIS_SHIPMENT';
@@ -591,7 +607,13 @@ export async function receiveItems(
   }
 
   // Authoritative location check using the shipment's destination
-  assertCan(access, SMS_PERMISSIONS.RECEIVING_MANAGE, shipment.destinationLocationId);
+  assertCanActOn(
+    access,
+    SMS_PERMISSIONS.RECEIVING_MANAGE,
+    shipment.destinationLocationId,
+    [shipment.destinationLocationId],
+    { code: 'SMS_SHIPMENT_NOT_FOUND', message: 'Shipment not found' },
+  );
 
   const eventDate = resolveEventDate(body.eventDate);
 
@@ -759,7 +781,13 @@ export async function recordFinding(
     throw new AppError(404, 'SMS_SHIPMENT_NOT_FOUND', 'Shipment not found');
   }
 
-  assertCan(access, SMS_PERMISSIONS.RECEIVING_MANAGE, shipment.destinationLocationId);
+  assertCanActOn(
+    access,
+    SMS_PERMISSIONS.RECEIVING_MANAGE,
+    shipment.destinationLocationId,
+    [shipment.destinationLocationId],
+    { code: 'SMS_SHIPMENT_NOT_FOUND', message: 'Shipment not found' },
+  );
 
   const eventDate = resolveEventDate(body.eventDate);
   const vin = body.vin.trim().toUpperCase();

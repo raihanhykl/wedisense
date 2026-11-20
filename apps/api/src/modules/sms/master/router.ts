@@ -12,6 +12,7 @@ import {
   listVehicleVariantsQuerySchema,
 } from './schema.js';
 import * as masterService from './service.js';
+import { uuidParam } from '../lib/params.js';
 
 const router: RouterType = Router();
 
@@ -45,7 +46,7 @@ router.put(
   '/vehicle-models/:id',
   requireSmsPermission(SMS_PERMISSIONS.MASTER_MANAGE),
   asyncHandler(async (req, res) => {
-    const id = req.params['id'] as string;
+    const id = uuidParam(req, 'id', { code: 'SMS_MODEL_NOT_FOUND', message: 'Vehicle model not found.' });
     const input = updateVehicleModelSchema.parse(req.body);
     const access = getSmsAccess(req);
     const model = await masterService.updateVehicleModel(id, input, { userId: access.userId });
@@ -83,7 +84,7 @@ router.put(
   '/vehicle-variants/:id',
   requireSmsPermission(SMS_PERMISSIONS.MASTER_MANAGE),
   asyncHandler(async (req, res) => {
-    const id = req.params['id'] as string;
+    const id = uuidParam(req, 'id', { code: 'SMS_VARIANT_NOT_FOUND', message: 'Vehicle variant not found.' });
     const input = updateVehicleVariantSchema.parse(req.body);
     const access = getSmsAccess(req);
     const variant = await masterService.updateVehicleVariant(id, input, { userId: access.userId });
