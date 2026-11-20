@@ -14,7 +14,8 @@ vi.mock('../../../lib/prisma.js', () => ({
     smsOrder: { findUnique: vi.fn(), create: vi.fn() },
     smsOrderLine: { create: vi.fn(), update: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
     // Unit row lock (SELECT … FOR UPDATE) + the locked unit read.
-    smsUnit: { findUniqueOrThrow: vi.fn().mockResolvedValue({}) },
+    smsUnit: { findUniqueOrThrow: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },
+    smsInspection: { create: vi.fn(), findFirst: vi.fn() },
     $queryRaw: vi.fn().mockResolvedValue([]),
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(),
@@ -846,5 +847,232 @@ describe('confirmPickupSchema validation', () => {
     expect(
       confirmPickupSchema.safeParse({ receiverName: 'Budi', vinConfirmed: false }).success,
     ).toBe(false);
+  });
+});
+
+// ── receiveSaleReturn ─────────────────────────────────────────────────────────
+
+describe('receiveSaleReturn', () => {
+  const access = makeAccess({
+    byLocation: { [SHOWROOM_A]: [SMS_PERMISSIONS.ORDERS_MANAGE, SMS_PERMISSIONS.STOCK_VIEW] },
+  });
+
+  const soldLine = {
+    ...baseLine,
+    id: '00000000-0000-4000-8000-000000000061',
+    status: 'SOLD' as const,
+    soldAt: new Date(),
+    returnReceivedAt: null,
+    returnReason: null,
+    returnCondition: null,
+    returnDecision: null,
+    returnDecidedAt: null,
+    returnDecisionReason: null,
+    rtoHandoverAt: null,
+  };
+
+  const soldUnit: SmsUnit = {
+    ...baseUnit,
+    status: 'SOLD_PENDING_PICKUP',
+    responsibleShowroomId: SHOWROOM_A,
+    physicalLocationId: null,
+  };
+
+  it('returns alreadyDone:true when returnReceivedAt is already set', async () => {
+    const { prisma } = await import('../../../lib/prisma.js');
+    (prisma.smsUnit.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValue(soldUnit);
+    mockFindOrderWithLine.mockResolvedValue({
+      order: baseOrder,
+      line: { ...soldLine, returnReceivedAt: new Date() },
+    });
+
+    const result = await ordersService.receiveSaleReturn(
+      baseOrder.id, soldLine.id, 'key',
+      { reason: 'Customer changed mind', condition: 'GOOD' },
+      access, ACTOR,
+    );
+
+    expect(result.body).toMatchObject({ alreadyDone: true });
+  });
+
+  it('throws SMS_LINE_NOT_RETURNABLE when line status is CANCELLED', async () => {
+    const { prisma } = await import('../../../lib/prisma.js');
+    (prisma.smsUnit.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValue(soldUnit);
+    mockFindOrderWithLine.mockResolvedValue({
+      order: baseOrder,
+      line: { ...soldLine, status: 'CANCELLED', returnReceivedAt: null },
+    });
+
+    await expect(
+      ordersService.receiveSaleReturn(
+        baseOrder.id, soldLine.id, 'key',
+        { reason: 'Customer changed mind', condition: 'GOOD' },
+        access, ACTOR,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: 'SMS_LINE_NOT_RETURNABLE' });
+  });
+
+  it('throws 403 when caller lacks ORDERS_MANAGE', async () => {
+    const noPermAccess = makeAccess({
+      byLocation: { [SHOWROOM_A]: [SMS_PERMISSIONS.STOCK_VIEW] },
+    });
+    const { prisma } = await import('../../../lib/prisma.js');
+    (prisma.smsUnit.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValue(soldUnit);
+    mockFindOrderWithLine.mockResolvedValue({
+      order: baseOrder,
+      line: { ...soldLine, returnReceivedAt: null },
+    });
+
+    await expect(
+      ordersService.receiveSaleReturn(
+        baseOrder.id, soldLine.id, 'key',
+        { reason: 'Changed mind', condition: 'GOOD' },
+        noPermAccess, ACTOR,
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('creates inspection and records SALE_RETURN_RECEIVED event on happy path', async () => {
+    const { prisma } = await import('../../../lib/prisma.js');
+    (prisma.smsUnit.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValue(soldUnit);
+    (prisma.smsOrderLine.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (prisma.smsInspection.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'insp-sr-1' });
+    mockFindOrderWithLine.mockResolvedValue({
+      order: baseOrder,
+      line: { ...soldLine, returnReceivedAt: null, status: 'SOLD' },
+    });
+
+    const result = await ordersService.receiveSaleReturn(
+      baseOrder.id, soldLine.id, 'key',
+      { reason: 'Defective', condition: 'POOR' },
+      access, ACTOR,
+    );
+
+    expect(result.body).toMatchObject({ alreadyDone: false, inspectionId: 'insp-sr-1' });
+    expect(mockRecordUnitEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: soldUnit.id }),
+      expect.objectContaining({ event: { type: 'SALE_RETURN_RECEIVED', locationId: SHOWROOM_A } }),
+    );
+  });
+});
+
+// ── decideSaleReturn ──────────────────────────────────────────────────────────
+
+describe('decideSaleReturn', () => {
+  const access = makeAccess({
+    byLocation: { [SHOWROOM_A]: [SMS_PERMISSIONS.SALE_RETURNS_DECIDE, SMS_PERMISSIONS.STOCK_VIEW] },
+  });
+
+  const returnedLine = {
+    ...baseLine,
+    id: '00000000-0000-4000-8000-000000000062',
+    status: 'SOLD' as const,
+    soldAt: new Date(),
+    returnReceivedAt: new Date(),
+    returnReason: 'Defective',
+    returnCondition: 'POOR',
+    returnDecision: null,
+    returnDecidedAt: null,
+    returnDecisionReason: null,
+    rtoHandoverAt: null,
+  };
+
+  const inspectionUnit: SmsUnit = {
+    ...baseUnit,
+    status: 'INSPECTION',
+    responsibleShowroomId: SHOWROOM_A,
+    physicalLocationId: SHOWROOM_A,
+  };
+
+  it('throws 422 when REJECTED without reason', async () => {
+    await expect(
+      ordersService.decideSaleReturn(
+        baseOrder.id, returnedLine.id, 'key',
+        { decision: 'REJECTED' }, // no reason
+        access, ACTOR,
+      ),
+    ).rejects.toMatchObject({ statusCode: 422, code: 'VALIDATION_ERROR' });
+  });
+
+  it('returns alreadyDone:true when returnDecision is already set', async () => {
+    const { prisma } = await import('../../../lib/prisma.js');
+    (prisma.smsUnit.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValue(inspectionUnit);
+    mockFindOrderWithLine.mockResolvedValue({
+      order: baseOrder,
+      line: { ...returnedLine, returnDecision: 'APPROVED' },
+    });
+
+    const result = await ordersService.decideSaleReturn(
+      baseOrder.id, returnedLine.id, 'key',
+      { decision: 'APPROVED' },
+      access, ACTOR,
+    );
+
+    expect(result.body).toMatchObject({ alreadyDone: true });
+  });
+
+  it('throws SMS_SALE_RETURN_NOT_RECEIVED when returnReceivedAt is null', async () => {
+    const { prisma } = await import('../../../lib/prisma.js');
+    (prisma.smsUnit.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValue(inspectionUnit);
+    mockFindOrderWithLine.mockResolvedValue({
+      order: baseOrder,
+      line: { ...returnedLine, returnReceivedAt: null, returnDecision: null },
+    });
+
+    await expect(
+      ordersService.decideSaleReturn(
+        baseOrder.id, returnedLine.id, 'key',
+        { decision: 'APPROVED' },
+        access, ACTOR,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: 'SMS_SALE_RETURN_NOT_RECEIVED' });
+  });
+
+  it('APPROVED: updates line to RETURNED and records SALE_RETURN_APPROVED event', async () => {
+    const { prisma } = await import('../../../lib/prisma.js');
+    (prisma.smsUnit.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValue(inspectionUnit);
+    (prisma.smsOrderLine.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    mockFindOrderWithLine.mockResolvedValue({
+      order: baseOrder,
+      line: { ...returnedLine, returnDecision: null },
+    });
+
+    const result = await ordersService.decideSaleReturn(
+      baseOrder.id, returnedLine.id, 'key',
+      { decision: 'APPROVED' },
+      access, ACTOR,
+    );
+
+    expect(result.body).toMatchObject({ alreadyDone: false, decision: 'APPROVED' });
+    expect(mockRecordUnitEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ event: { type: 'SALE_RETURN_APPROVED' } }),
+    );
+  });
+
+  it('REJECTED: reverts line to PICKED_UP and records SALE_RETURN_REJECTED event', async () => {
+    const { prisma } = await import('../../../lib/prisma.js');
+    (prisma.smsUnit.findUniqueOrThrow as ReturnType<typeof vi.fn>).mockResolvedValue(inspectionUnit);
+    (prisma.smsOrderLine.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (prisma.smsInspection.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    mockFindOrderWithLine.mockResolvedValue({
+      order: baseOrder,
+      line: { ...returnedLine, returnDecision: null },
+    });
+
+    const result = await ordersService.decideSaleReturn(
+      baseOrder.id, returnedLine.id, 'key',
+      { decision: 'REJECTED', reason: 'Normal wear, not defective' },
+      access, ACTOR,
+    );
+
+    expect(result.body).toMatchObject({ alreadyDone: false, decision: 'REJECTED' });
+    expect(mockRecordUnitEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ event: { type: 'SALE_RETURN_REJECTED' } }),
+    );
   });
 });

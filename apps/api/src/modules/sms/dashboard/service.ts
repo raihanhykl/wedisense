@@ -45,6 +45,11 @@ export async function getDashboardTasks(
     staleBookings,
     awaitingPickup,
     overdueShowUnits,
+    returnsToDecide,
+    returnsAwaitingReceipt,
+    custodyHeld,
+    rtoReturnedNotClosed,
+    saleReturnsToDecide,
   ] = await Promise.all([
     dashboardRepo.getOpenShipments(showroomId),
     dashboardRepo.getInspectionUnits(showroomId),
@@ -52,6 +57,11 @@ export async function getDashboardTasks(
     dashboardRepo.getStaleBookings(showroomId, now),
     dashboardRepo.getAwaitingPickup(showroomId, now),
     dashboardRepo.getOverdueShowUnits(showroomId, now),
+    dashboardRepo.getReturnsToDecide(showroomId),
+    dashboardRepo.getReturnsAwaitingReceipt(showroomId),
+    dashboardRepo.getCustodyHeld(showroomId),
+    dashboardRepo.getRtoReturnedNotClosed(showroomId),
+    dashboardRepo.getSaleReturnsToDecide(showroomId),
   ]);
 
   return {
@@ -61,5 +71,10 @@ export async function getDashboardTasks(
     staleBookings,
     awaitingPickup,
     overdueShowUnits,
+    returnsToDecide,
+    returnsAwaitingReceipt,
+    custodyHeld,
+    rtoReturnedNotClosed,
+    saleReturnsToDecide,
   };
 }

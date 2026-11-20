@@ -129,6 +129,9 @@ enum NotificationType {
   IMPORT_COMPLETE
   ASSET_DISPOSED
   TOUR_UPDATED
+  // SMS cross-branch returns (written in English by the SMS module).
+  SMS_RETURN_REQUESTED
+  SMS_RETURN_DECIDED
 }
 
 enum ReportType {

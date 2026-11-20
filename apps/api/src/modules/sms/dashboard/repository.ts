@@ -10,6 +10,11 @@ import type {
   StaleBookingTask,
   AwaitingPickupTask,
   OverdueShowUnitTask,
+  ReturnToDecideTask,
+  ReturnAwaitingReceiptTask,
+  CustodyHeldTask,
+  RtoReturnedNotClosedTask,
+  SaleReturnToDecideTask,
 } from './types.js';
 
 // ── Summary ──────────────────────────────────────────────────────────────────
@@ -418,6 +423,254 @@ export async function getOverdueShowUnits(
     pic: l.pic ? { id: l.pic.id, name: l.pic.name } : null,
     expectedReturnDate: l.expectedReturnDate,
     daysOverdue: Math.floor((today.getTime() - l.expectedReturnDate.getTime()) / MS_PER_DAY),
+  }));
+
+  return { data, total };
+}
+
+// ── Stage 4 task queries ─────────────────────────────────────────────────────
+
+/**
+ * Incoming PENDING return requests for `showroomId` (fromShowroom = mine — I decide).
+ * Oldest first.
+ */
+export async function getReturnsToDecide(
+  showroomId: string,
+): Promise<{ data: ReturnToDecideTask[]; total: number }> {
+  const where: Prisma.SmsReturnRequestWhereInput = {
+    fromShowroomId: showroomId,
+    decision: 'PENDING',
+  };
+
+  const [requests, total] = await Promise.all([
+    prisma.smsReturnRequest.findMany({
+      where,
+      take: TASK_LIMIT,
+      orderBy: { requestedAt: 'asc' },
+      select: {
+        id: true,
+        requestNumber: true,
+        unitId: true,
+        requestedAt: true,
+        unit: {
+          select: {
+            vin: true,
+            variant: {
+              select: { name: true, batteryVariant: true, color: true, model: { select: { name: true } } },
+            },
+          },
+        },
+        toShowroom: { select: { name: true } },
+      },
+    }),
+    prisma.smsReturnRequest.count({ where }),
+  ]);
+
+  const data: ReturnToDecideTask[] = requests.map((r) => ({
+    requestId: r.id,
+    requestNumber: r.requestNumber,
+    unitId: r.unitId,
+    vin: r.unit.vin,
+    variantLabel: buildVariantLabel(r.unit.variant),
+    toShowroomName: r.toShowroom.name,
+    requestedAt: r.requestedAt,
+  }));
+
+  return { data, total };
+}
+
+/**
+ * Outgoing APPROVED return requests at `showroomId` not yet officially received.
+ * Oldest approval first.
+ */
+export async function getReturnsAwaitingReceipt(
+  showroomId: string,
+): Promise<{ data: ReturnAwaitingReceiptTask[]; total: number }> {
+  const where: Prisma.SmsReturnRequestWhereInput = {
+    toShowroomId: showroomId,
+    decision: 'APPROVED',
+    officialReceivedAt: null,
+  };
+
+  const [requests, total] = await Promise.all([
+    prisma.smsReturnRequest.findMany({
+      where,
+      take: TASK_LIMIT,
+      orderBy: { decidedAt: 'asc' },
+      select: {
+        id: true,
+        requestNumber: true,
+        unitId: true,
+        decidedAt: true,
+        unit: {
+          select: {
+            vin: true,
+            variant: {
+              select: { name: true, batteryVariant: true, color: true, model: { select: { name: true } } },
+            },
+          },
+        },
+        fromShowroom: { select: { name: true } },
+      },
+    }),
+    prisma.smsReturnRequest.count({ where }),
+  ]);
+
+  const data: ReturnAwaitingReceiptTask[] = requests.map((r) => ({
+    requestId: r.id,
+    requestNumber: r.requestNumber,
+    unitId: r.unitId,
+    vin: r.unit.vin,
+    variantLabel: buildVariantLabel(r.unit.variant),
+    fromShowroomName: r.fromShowroom.name,
+    approvedAt: r.decidedAt,
+  }));
+
+  return { data, total };
+}
+
+/**
+ * CUSTODY units at `showroomId`. Flags rejected ones that need a handback.
+ * Oldest custody first.
+ */
+export async function getCustodyHeld(
+  showroomId: string,
+): Promise<{ data: CustodyHeldTask[]; total: number }> {
+  const where: Prisma.SmsUnitWhereInput = {
+    physicalLocationId: showroomId,
+    status: 'CUSTODY',
+  };
+
+  const [units, total] = await Promise.all([
+    prisma.smsUnit.findMany({
+      where,
+      take: TASK_LIMIT,
+      orderBy: { updatedAt: 'asc' },
+      select: {
+        id: true,
+        vin: true,
+        variant: {
+          select: { name: true, batteryVariant: true, color: true, model: { select: { name: true } } },
+        },
+        openReturnRequest: {
+          select: {
+            id: true,
+            requestNumber: true,
+            decision: true,
+            custodyReceivedAt: true,
+            custodyResolvedAt: true,
+            fromShowroom: { select: { name: true } },
+          },
+        },
+      },
+    }),
+    prisma.smsUnit.count({ where }),
+  ]);
+
+  const data: CustodyHeldTask[] = units
+    .filter((u) => u.openReturnRequest !== null)
+    .map((u) => {
+      const req = u.openReturnRequest!;
+      return {
+        unitId: u.id,
+        vin: u.vin,
+        variantLabel: buildVariantLabel(u.variant),
+        requestId: req.id,
+        requestNumber: req.requestNumber,
+        decision: req.decision,
+        fromShowroomName: req.fromShowroom.name,
+        needsHandback: req.decision === 'REJECTED' && req.custodyResolvedAt === null,
+        custodyReceivedAt: req.custodyReceivedAt,
+      };
+    });
+
+  return { data, total };
+}
+
+/**
+ * RTO contracts that have been returned/received at `showroomId` but not yet closed.
+ * Oldest return first.
+ */
+export async function getRtoReturnedNotClosed(
+  showroomId: string,
+): Promise<{ data: RtoReturnedNotClosedTask[]; total: number }> {
+  const where: Prisma.SmsRtoContractWhereInput = {
+    receivedAtShowroomId: showroomId,
+    closedAt: null,
+    returnedAt: { not: null },
+  };
+
+  const [contracts, total] = await Promise.all([
+    prisma.smsRtoContract.findMany({
+      where,
+      take: TASK_LIMIT,
+      orderBy: { returnedAt: 'asc' },
+      select: {
+        id: true,
+        contractNumber: true,
+        unitId: true,
+        returnedAt: true,
+        unit: {
+          select: {
+            vin: true,
+            variant: {
+              select: { name: true, batteryVariant: true, color: true, model: { select: { name: true } } },
+            },
+          },
+        },
+      },
+    }),
+    prisma.smsRtoContract.count({ where }),
+  ]);
+
+  const data: RtoReturnedNotClosedTask[] = contracts.map((c) => ({
+    contractId: c.id,
+    contractNumber: c.contractNumber,
+    unitId: c.unitId,
+    vin: c.unit.vin,
+    variantLabel: buildVariantLabel(c.unit.variant),
+    returnedAt: c.returnedAt,
+  }));
+
+  return { data, total };
+}
+
+/**
+ * Sale-return lines at `showroomId` that have been received but not yet decided.
+ * Oldest receipt first.
+ */
+export async function getSaleReturnsToDecide(
+  showroomId: string,
+): Promise<{ data: SaleReturnToDecideTask[]; total: number }> {
+  const where: Prisma.SmsOrderLineWhereInput = {
+    returnReceivedAt: { not: null },
+    returnDecision: null,
+    order: { showroomId },
+  };
+
+  const [lines, total] = await Promise.all([
+    prisma.smsOrderLine.findMany({
+      where,
+      take: TASK_LIMIT,
+      orderBy: { returnReceivedAt: 'asc' },
+      select: {
+        id: true,
+        orderId: true,
+        returnReceivedAt: true,
+        unit: { select: { id: true, vin: true } },
+        order: { select: { spkNumber: true } },
+      },
+    }),
+    prisma.smsOrderLine.count({ where }),
+  ]);
+
+  const data: SaleReturnToDecideTask[] = lines.map((l) => ({
+    lineId: l.id,
+    orderId: l.orderId,
+    spk: l.order.spkNumber,
+    unitId: l.unit.id,
+    vin: l.unit.vin,
+    returnReceivedAt: l.returnReceivedAt!,
   }));
 
   return { data, total };

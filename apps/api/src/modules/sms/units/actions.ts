@@ -45,17 +45,20 @@ export interface ComputeActionsResult {
  * and caller permission set.
  *
  * Actions for this stage:
- *   EDIT_DETAILS       — RECEIVING_MANAGE at relevant location
- *   RESOLVE_IDENTITY   — status IDENTITY_MISMATCH + RECEIVING_MANAGE
- *   RECORD_INSPECTION  — status INSPECTION + INSPECTIONS_MANAGE
- *   RELEASE            — status INSPECTION + INSPECTIONS_MANAGE + no open
- *                        commitments + latest inspection PASSED
- *   BOOK               — status AVAILABLE + no active order line + ORDERS_MANAGE
- *                        at the physical location
- *   DISPATCH_SHOW      — status AVAILABLE + no open show loan + SHOW_UNITS_MANAGE
- *                        at the physical location
- *   RETURN_SHOW        — status SHOW_UNIT + SHOW_UNITS_MANAGE at the responsible
- *                        showroom
+ *   EDIT_DETAILS             — RECEIVING_MANAGE at relevant location
+ *   RESOLVE_IDENTITY         — status IDENTITY_MISMATCH + RECEIVING_MANAGE
+ *   RECORD_INSPECTION        — status INSPECTION + INSPECTIONS_MANAGE
+ *   RELEASE                  — status INSPECTION + INSPECTIONS_MANAGE + no open
+ *                              commitments + latest inspection PASSED
+ *   BOOK                     — status AVAILABLE + no active order line + ORDERS_MANAGE
+ *   DISPATCH_SHOW            — status AVAILABLE + no open show loan + SHOW_UNITS_MANAGE
+ *   RETURN_SHOW              — status SHOW_UNIT + SHOW_UNITS_MANAGE
+ *   HANDOVER_RTO             — status AVAILABLE/BOOKED + RTO_MANAGE at physical location
+ *   RECORD_RTO_RETURN        — status ACTIVE_RTO + open contract + RTO_MANAGE + no open return request
+ *   CLOSE_RTO_CONTRACT       — open contract, motorcycle back (not ACTIVE_RTO / CUSTODY) + RTO_MANAGE
+ *   TRANSFER_OWNERSHIP       — status ACTIVE_RTO + open contract + no open return request + RTO_MANAGE
+ *   RECORD_SALE_RETURN       — status SOLD_PENDING_PICKUP/PICKED_UP + ORDERS_MANAGE
+ *   DECIDE_SALE_RETURN       — SOLD_PENDING_PICKUP/PICKED_UP + pending return + SALE_RETURNS_DECIDE
  */
 export function computeAvailableActions(ctx: ActionContext): ComputeActionsResult {
   const { unit, latestInspection, permissionsAtRelevantLocation: perms } = ctx;
@@ -86,10 +89,10 @@ export function computeAvailableActions(ctx: ActionContext): ComputeActionsResul
       releaseBlockers.push('Active order line is still open');
     }
     if (unit.openRtoContractId !== null) {
-      releaseBlockers.push('RTO contract is still open');
+      releaseBlockers.push('RTO contract not closed yet');
     }
     if (unit.openReturnRequestId !== null) {
-      releaseBlockers.push('Return request is still open');
+      releaseBlockers.push('Return request not officially received');
     }
     if (latestInspection === null) {
       releaseBlockers.push('No inspection has been recorded yet');
@@ -121,10 +124,69 @@ export function computeAvailableActions(ctx: ActionContext): ComputeActionsResul
   }
 
   // RETURN_SHOW: unit is SHOW_UNIT, caller holds SHOW_UNITS_MANAGE at responsible showroom.
-  // Note: for SHOW_UNIT the relevant location IS the responsible showroom, so perms already
-  // reflect the responsible showroom permissions.
   if (unit.status === 'SHOW_UNIT' && can(SMS_PERMISSIONS.SHOW_UNITS_MANAGE)) {
     actions.push('RETURN_SHOW');
+  }
+
+  // HANDOVER_RTO: unit is AVAILABLE or BOOKED, no open contract, RTO_MANAGE at physical location.
+  if (
+    (unit.status === 'AVAILABLE' || unit.status === 'BOOKED') &&
+    unit.openRtoContractId === null &&
+    can(SMS_PERMISSIONS.RTO_MANAGE)
+  ) {
+    actions.push('HANDOVER_RTO');
+  }
+
+  // RECORD_RTO_RETURN: unit is ACTIVE_RTO with open contract, no open return request.
+  if (
+    unit.status === 'ACTIVE_RTO' &&
+    unit.openRtoContractId !== null &&
+    unit.openReturnRequestId === null &&
+    can(SMS_PERMISSIONS.RTO_MANAGE)
+  ) {
+    actions.push('RECORD_RTO_RETURN');
+  }
+
+  // TRANSFER_OWNERSHIP: unit is ACTIVE_RTO with open contract and no return
+  // in progress, RTO_MANAGE.
+  if (
+    unit.status === 'ACTIVE_RTO' &&
+    unit.openRtoContractId !== null &&
+    unit.openReturnRequestId === null &&
+    can(SMS_PERMISSIONS.RTO_MANAGE)
+  ) {
+    actions.push('TRANSFER_OWNERSHIP');
+  }
+
+  // CLOSE_RTO_CONTRACT: an open contract whose motorcycle is back — returned
+  // at the origin or officially received cross-branch, so the unit is no
+  // longer with the customer (ACTIVE_RTO) nor merely held in custody
+  // (CUSTODY). Mirrors the server guard SMS_CONTRACT_NOT_RETURNED.
+  if (
+    unit.openRtoContractId !== null &&
+    unit.status !== 'ACTIVE_RTO' &&
+    unit.status !== 'CUSTODY' &&
+    can(SMS_PERMISSIONS.RTO_MANAGE)
+  ) {
+    actions.push('CLOSE_RTO_CONTRACT');
+  }
+
+  // RECORD_SALE_RETURN: line is SOLD or PICKED_UP, ORDERS_MANAGE.
+  if (
+    (unit.status === 'SOLD_PENDING_PICKUP' || unit.status === 'PICKED_UP') &&
+    can(SMS_PERMISSIONS.ORDERS_MANAGE)
+  ) {
+    actions.push('RECORD_SALE_RETURN');
+  }
+
+  // DECIDE_SALE_RETURN: unit is in INSPECTION with activeOrderLineId set
+  // (pending sale return) and caller holds SALE_RETURNS_DECIDE.
+  if (
+    unit.status === 'INSPECTION' &&
+    unit.activeOrderLineId !== null &&
+    can(SMS_PERMISSIONS.SALE_RETURNS_DECIDE)
+  ) {
+    actions.push('DECIDE_SALE_RETURN');
   }
 
   return { availableActions: actions, releaseBlockers };

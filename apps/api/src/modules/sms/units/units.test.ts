@@ -110,6 +110,8 @@ const baseUnit = {
   timeline: [],
   availableActions: [],
   releaseBlockers: [],
+  rtoContracts: [],
+  openReturnRequest: null,
 };
 
 const baseRaw = {
@@ -268,7 +270,7 @@ describe('computeAvailableActions', () => {
       latestInspection: { result: 'PASSED' },
       permissionsAtRelevantLocation: perms,
     });
-    expect(releaseBlockers).toContain('RTO contract is still open');
+    expect(releaseBlockers).toContain('RTO contract not closed yet');
   });
 
   it('RELEASE blocked by openReturnRequestId', () => {
@@ -278,7 +280,7 @@ describe('computeAvailableActions', () => {
       latestInspection: { result: 'PASSED' },
       permissionsAtRelevantLocation: perms,
     });
-    expect(releaseBlockers).toContain('Return request is still open');
+    expect(releaseBlockers).toContain('Return request not officially received');
   });
 
   it('RELEASE not in actions when missing INSPECTIONS_MANAGE even with no blockers', () => {
@@ -319,6 +321,154 @@ describe('computeAvailableActions', () => {
       permissionsAtRelevantLocation: perms,
     });
     expect(releaseBlockers).toHaveLength(0);
+  });
+
+  it('HANDOVER_RTO available when AVAILABLE + no open contract + RTO_MANAGE', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: { ...baseUnitForActions, status: 'AVAILABLE', openRtoContractId: null },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+    });
+    expect(availableActions).toContain('HANDOVER_RTO');
+  });
+
+  it('HANDOVER_RTO available from BOOKED + no open contract + RTO_MANAGE', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: { ...baseUnitForActions, status: 'BOOKED', openRtoContractId: null },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+    });
+    expect(availableActions).toContain('HANDOVER_RTO');
+  });
+
+  it('HANDOVER_RTO not available when open contract exists', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: { ...baseUnitForActions, status: 'AVAILABLE', openRtoContractId: 'contract-1' },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+    });
+    expect(availableActions).not.toContain('HANDOVER_RTO');
+  });
+
+  it('RECORD_RTO_RETURN available for ACTIVE_RTO with open contract, no return request', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: {
+        ...baseUnitForActions,
+        status: 'ACTIVE_RTO',
+        openRtoContractId: 'contract-1',
+        openReturnRequestId: null,
+        physicalLocationId: null,
+      },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+    });
+    expect(availableActions).toContain('RECORD_RTO_RETURN');
+  });
+
+  it('RECORD_RTO_RETURN not available when open return request exists', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: {
+        ...baseUnitForActions,
+        status: 'ACTIVE_RTO',
+        openRtoContractId: 'contract-1',
+        openReturnRequestId: 'return-1',
+        physicalLocationId: null,
+      },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+    });
+    expect(availableActions).not.toContain('RECORD_RTO_RETURN');
+  });
+
+  it('TRANSFER_OWNERSHIP available for ACTIVE_RTO with open contract + RTO_MANAGE', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: {
+        ...baseUnitForActions,
+        status: 'ACTIVE_RTO',
+        openRtoContractId: 'contract-1',
+        physicalLocationId: null,
+      },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+    });
+    expect(availableActions).toContain('TRANSFER_OWNERSHIP');
+  });
+
+  it('CLOSE_RTO_CONTRACT is hidden while the motorcycle is with the customer or only in custody', () => {
+    for (const status of ['ACTIVE_RTO', 'CUSTODY'] as const) {
+      const { availableActions } = computeAvailableActions({
+        unit: {
+          ...baseUnitForActions,
+          status,
+          openRtoContractId: 'contract-1',
+          physicalLocationId: status === 'CUSTODY' ? baseUnitForActions.responsibleShowroomId : null,
+        },
+        latestInspection: null,
+        permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+      });
+      expect(availableActions).not.toContain('CLOSE_RTO_CONTRACT');
+    }
+  });
+
+  it('CLOSE_RTO_CONTRACT is offered once the motorcycle is back under inspection', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: { ...baseUnitForActions, status: 'INSPECTION', openRtoContractId: 'contract-1' },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+    });
+    expect(availableActions).toContain('CLOSE_RTO_CONTRACT');
+  });
+
+  it('TRANSFER_OWNERSHIP is hidden while a return request is open', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: {
+        ...baseUnitForActions,
+        status: 'ACTIVE_RTO',
+        openRtoContractId: 'contract-1',
+        openReturnRequestId: 'return-1',
+        physicalLocationId: null,
+      },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.RTO_MANAGE]),
+    });
+    expect(availableActions).not.toContain('TRANSFER_OWNERSHIP');
+  });
+
+  it('RECORD_SALE_RETURN available for SOLD_PENDING_PICKUP + ORDERS_MANAGE', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: { ...baseUnitForActions, status: 'SOLD_PENDING_PICKUP' },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.ORDERS_MANAGE]),
+    });
+    expect(availableActions).toContain('RECORD_SALE_RETURN');
+  });
+
+  it('RECORD_SALE_RETURN available for PICKED_UP + ORDERS_MANAGE', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: { ...baseUnitForActions, status: 'PICKED_UP', physicalLocationId: null },
+      latestInspection: null,
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.ORDERS_MANAGE]),
+    });
+    expect(availableActions).toContain('RECORD_SALE_RETURN');
+  });
+
+  it('DECIDE_SALE_RETURN available for INSPECTION + activeOrderLineId + SALE_RETURNS_DECIDE', () => {
+    const { availableActions } = computeAvailableActions({
+      unit: { ...baseUnitForActions, activeOrderLineId: 'line-1' },
+      latestInspection: { result: 'PENDING' },
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.SALE_RETURNS_DECIDE]),
+    });
+    expect(availableActions).toContain('DECIDE_SALE_RETURN');
+  });
+
+  it('RELEASE blocked by activeOrderLineId (also applies during pending sale return)', () => {
+    // When a sale return is pending (activeOrderLineId set), RELEASE is blocked.
+    const { releaseBlockers } = computeAvailableActions({
+      unit: { ...baseUnitForActions, activeOrderLineId: 'line-1' },
+      latestInspection: { result: 'PASSED' },
+      permissionsAtRelevantLocation: new Set([SMS_PERMISSIONS.INSPECTIONS_MANAGE]),
+    });
+    expect(releaseBlockers).toContain('Active order line is still open');
   });
 });
 

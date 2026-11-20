@@ -23,6 +23,11 @@ vi.mock('./repository.js', () => ({
   getStaleBookings: vi.fn(),
   getAwaitingPickup: vi.fn(),
   getOverdueShowUnits: vi.fn(),
+  getReturnsToDecide: vi.fn(),
+  getReturnsAwaitingReceipt: vi.fn(),
+  getCustodyHeld: vi.fn(),
+  getRtoReturnedNotClosed: vi.fn(),
+  getSaleReturnsToDecide: vi.fn(),
 }));
 
 import * as dashboardRepo from './repository.js';
@@ -146,6 +151,18 @@ describe('getDashboardSummary', () => {
 // ── getDashboardTasks ─────────────────────────────────────────────────────────
 
 describe('getDashboardTasks', () => {
+  const emptyList = { data: [], total: 0 };
+
+  beforeEach(() => {
+    // Provide defaults for stage-4 repo methods so pre-existing tests
+    // don't fail when they don't set up these mocks explicitly.
+    (dashboardRepo.getReturnsToDecide as ReturnType<typeof vi.fn>).mockResolvedValue(emptyList);
+    (dashboardRepo.getReturnsAwaitingReceipt as ReturnType<typeof vi.fn>).mockResolvedValue(emptyList);
+    (dashboardRepo.getCustodyHeld as ReturnType<typeof vi.fn>).mockResolvedValue(emptyList);
+    (dashboardRepo.getRtoReturnedNotClosed as ReturnType<typeof vi.fn>).mockResolvedValue(emptyList);
+    (dashboardRepo.getSaleReturnsToDecide as ReturnType<typeof vi.fn>).mockResolvedValue(emptyList);
+  });
+
   it('throws 403 when caller lacks STOCK_VIEW at the showroom', async () => {
     await expect(
       dashboardService.getDashboardTasks(SHOWROOM_A, showroomWithoutView),

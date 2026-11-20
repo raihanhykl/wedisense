@@ -35,6 +35,8 @@ import type {
   RecordSaleInput,
   ConfirmPickupInput,
   ListOrdersQuery,
+  SaleReturnInput,
+  DecideSaleReturnInput,
 } from './schema.js';
 import type { BookingConflictDetail, OrderDetail } from './types.js';
 
@@ -741,6 +743,245 @@ export async function confirmPickup(
         status: 'PICKED_UP' as const,
         pickedUpAt,
       };
+    },
+  );
+}
+
+// ── Sale return: receive ──────────────────────────────────────────────────────
+
+export async function receiveSaleReturn(
+  orderId: string,
+  lineId: string,
+  key: string,
+  input: SaleReturnInput,
+  access: SmsAccess,
+  actor: SmsActor,
+) {
+  return runIdempotent(
+    {
+      key,
+      userId: actor.userId,
+      operation: 'orders.sale-return.receive',
+      payload: { orderId, lineId, ...input },
+    },
+    async (tx) => {
+      const { line, unit } = await loadLineLocked(tx, orderId, lineId);
+
+      // Authorize: sms-orders:manage at unit.responsibleShowroomId.
+      assertCanActOn(
+        access,
+        SMS_PERMISSIONS.ORDERS_MANAGE,
+        unit.responsibleShowroomId,
+        [unit.physicalLocationId, unit.responsibleShowroomId],
+        { code: 'SMS_ORDER_NOT_FOUND', message: 'Order not found' },
+      );
+
+      // Idempotent: already received.
+      if (line.returnReceivedAt !== null) {
+        return { lineId, alreadyDone: true as const };
+      }
+
+      // Guard: line must be SOLD or PICKED_UP.
+      if (line.status !== 'SOLD' && line.status !== 'PICKED_UP') {
+        throw new AppError(
+          409,
+          'SMS_LINE_NOT_RETURNABLE',
+          `Cannot receive a sale return for a line that is ${line.status}. Only SOLD or PICKED_UP lines can be returned.`,
+          [{ lineId, status: line.status }],
+        );
+      }
+
+      const now = new Date();
+      const receivedAt = input.receivedAt ? new Date(input.receivedAt) : now;
+      if (receivedAt.getTime() > now.getTime()) {
+        throw new AppError(422, 'VALIDATION_ERROR', 'receivedAt cannot be in the future');
+      }
+
+      const receivedAtShowroomId = unit.responsibleShowroomId;
+
+      // Update the order line.
+      await tx.smsOrderLine.update({
+        where: { id: lineId },
+        data: {
+          returnReceivedAt: receivedAt,
+          returnReason: input.reason,
+          returnCondition: input.condition,
+          // Set activeOrderLineId back to this line so unit points to it.
+          // The unit.activeOrderLineId update is handled via unitChanges below.
+        },
+      });
+
+      // Create a PENDING inspection for SALE_RETURN.
+      const inspection = await tx.smsInspection.create({
+        data: {
+          unitId: unit.id,
+          reason: 'SALE_RETURN',
+          result: 'PENDING',
+          condition: input.condition,
+          notes: input.reason,
+          createdByUserId: actor.userId,
+        },
+        select: { id: true },
+      });
+
+      // Record the unit event.
+      const eventDate = resolveEventDate(businessDateString(receivedAt));
+      await recordUnitEvent(tx, unit, {
+        event: { type: 'SALE_RETURN_RECEIVED', locationId: receivedAtShowroomId },
+        eventDate,
+        performedByUserId: actor.userId,
+        links: { orderLineId: lineId, inspectionId: inspection.id },
+        // Re-link activeOrderLineId to this line (decision pending).
+        unitChanges: { activeOrderLineId: lineId },
+      });
+
+      await createAuditLog(tx, {
+        userId: actor.userId,
+        action: 'UPDATE',
+        resourceType: 'SmsOrderLine',
+        resourceId: lineId,
+        newValues: {
+          returnReceivedAt: receivedAt.toISOString(),
+          returnReason: input.reason,
+          returnCondition: input.condition,
+          inspectionId: inspection.id,
+        },
+      });
+
+      return { lineId, alreadyDone: false as const, inspectionId: inspection.id };
+    },
+  );
+}
+
+// ── Sale return: decide ───────────────────────────────────────────────────────
+
+export async function decideSaleReturn(
+  orderId: string,
+  lineId: string,
+  key: string,
+  input: DecideSaleReturnInput,
+  access: SmsAccess,
+  actor: SmsActor,
+) {
+  if (input.decision === 'REJECTED' && !input.reason) {
+    throw new AppError(422, 'VALIDATION_ERROR', 'reason is required when decision is REJECTED', [
+      { field: 'reason' },
+    ]);
+  }
+
+  return runIdempotent(
+    {
+      key,
+      userId: actor.userId,
+      operation: 'orders.sale-return.decide',
+      payload: { orderId, lineId, ...input },
+    },
+    async (tx) => {
+      const { line, unit } = await loadLineLocked(tx, orderId, lineId);
+
+      // Authorize: sms-sale-returns:decide at unit.responsibleShowroomId.
+      assertCanActOn(
+        access,
+        SMS_PERMISSIONS.SALE_RETURNS_DECIDE,
+        unit.responsibleShowroomId,
+        [unit.physicalLocationId, unit.responsibleShowroomId],
+        { code: 'SMS_ORDER_NOT_FOUND', message: 'Order not found' },
+      );
+
+      // Idempotent: already decided.
+      if (line.returnDecision !== null) {
+        return { lineId, alreadyDone: true as const, decision: line.returnDecision };
+      }
+
+      // Guard: return must have been received first.
+      if (line.returnReceivedAt === null) {
+        throw new AppError(
+          409,
+          'SMS_SALE_RETURN_NOT_RECEIVED',
+          'The sale return has not been received yet. Record the physical return first.',
+          [{ lineId }],
+        );
+      }
+
+      const now = new Date();
+      const eventDate = resolveEventDate(businessDateString(now));
+
+      if (input.decision === 'APPROVED') {
+        // Approve: line → RETURNED, clear activeOrderLineId.
+        await tx.smsOrderLine.update({
+          where: { id: lineId },
+          data: {
+            status: 'RETURNED',
+            returnDecision: 'APPROVED',
+            returnDecidedAt: now,
+            returnDecisionReason: null,
+          },
+        });
+
+        await recordUnitEvent(tx, unit, {
+          event: { type: 'SALE_RETURN_APPROVED' },
+          eventDate,
+          performedByUserId: actor.userId,
+          links: { orderLineId: lineId },
+          unitChanges: { activeOrderLineId: null },
+        });
+
+        await createAuditLog(tx, {
+          userId: actor.userId,
+          action: 'UPDATE',
+          resourceType: 'SmsOrderLine',
+          resourceId: lineId,
+          newValues: { returnDecision: 'APPROVED', status: 'RETURNED' },
+        });
+
+        return { lineId, alreadyDone: false as const, decision: 'APPROVED' as const };
+      } else {
+        // Reject: motorcycle given back to customer.
+        // Cancel the pending sale-return inspection if one exists.
+        const pendingInspection = await tx.smsInspection.findFirst({
+          where: { unitId: unit.id, reason: 'SALE_RETURN', result: 'PENDING' },
+          select: { id: true },
+        });
+        if (pendingInspection) {
+          await tx.smsInspection.update({
+            where: { id: pendingInspection.id },
+            data: { result: 'FAILED', findings: `Sale return rejected: ${input.reason ?? ''}` },
+          });
+        }
+
+        // Line reverts to PICKED_UP; set returnDecision REJECTED.
+        await tx.smsOrderLine.update({
+          where: { id: lineId },
+          data: {
+            status: 'PICKED_UP',
+            returnDecision: 'REJECTED',
+            returnDecidedAt: now,
+            returnDecisionReason: input.reason ?? null,
+          },
+        });
+
+        await recordUnitEvent(tx, unit, {
+          event: { type: 'SALE_RETURN_REJECTED' },
+          eventDate,
+          performedByUserId: actor.userId,
+          links: { orderLineId: lineId },
+          unitChanges: { activeOrderLineId: null },
+        });
+
+        await createAuditLog(tx, {
+          userId: actor.userId,
+          action: 'UPDATE',
+          resourceType: 'SmsOrderLine',
+          resourceId: lineId,
+          newValues: {
+            returnDecision: 'REJECTED',
+            returnDecisionReason: input.reason ?? null,
+            status: 'PICKED_UP',
+          },
+        });
+
+        return { lineId, alreadyDone: false as const, decision: 'REJECTED' as const };
+      }
     },
   );
 }

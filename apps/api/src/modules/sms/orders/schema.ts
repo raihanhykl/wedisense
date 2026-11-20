@@ -94,6 +94,29 @@ export const listOrdersQuerySchema = z.object({
   limit: z.coerce.number().int().positive().optional(),
 });
 
+// ── Sale return: receive physical return ─────────────────────────────────────
+
+export const saleReturnSchema = z.object({
+  /** ISO 8601 datetime; default now; may be past; never future. */
+  receivedAt: z
+    .string()
+    .datetime({ offset: true, message: 'receivedAt must be an ISO 8601 datetime' })
+    .optional(),
+  reason: z
+    .string()
+    .min(3, 'reason must be at least 3 characters')
+    .max(500, 'reason must be at most 500 characters'),
+  condition: z.enum(['NEW', 'GOOD', 'FAIR', 'POOR', 'DAMAGED']),
+});
+
+// ── Sale return: decide (approve or reject) ───────────────────────────────────
+
+export const decideSaleReturnSchema = z.object({
+  decision: z.enum(['APPROVED', 'REJECTED']),
+  /** Required when decision is REJECTED. */
+  reason: z.string().min(3).max(500).optional(),
+});
+
 // ── Inferred types ───────────────────────────────────────────────────────────
 
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
@@ -103,3 +126,5 @@ export type FollowUpInput = z.infer<typeof followUpSchema>;
 export type RecordSaleInput = z.infer<typeof recordSaleSchema>;
 export type ConfirmPickupInput = z.infer<typeof confirmPickupSchema>;
 export type ListOrdersQuery = z.infer<typeof listOrdersQuerySchema>;
+export type SaleReturnInput = z.infer<typeof saleReturnSchema>;
+export type DecideSaleReturnInput = z.infer<typeof decideSaleReturnSchema>;
