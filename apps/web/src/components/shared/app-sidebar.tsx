@@ -17,6 +17,8 @@ interface NavItem {
    *  render. Used to hide entry-points for dormant features without
    *  ripping their code out. */
   enabled?: boolean;
+  /** Highlight the item for nested routes too (e.g. a detail page). */
+  matchPrefix?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -56,10 +58,54 @@ const navItems: NavItem[] = [
   { label: "Settings", href: "/admin/settings/company", permission: "settings:manage" },
 ];
 
+// Stock Management System (motorcycle units per VIN). A separate section so
+// showroom admins find their daily screens at the top of the menu. Every
+// item is permission-gated, so users without a stock role never see it.
+const STOCK_VIEW = "sms-stock:view";
+const stockNavItems: NavItem[] = [
+  { label: "My Showroom Stock", href: "/admin/sms", permission: STOCK_VIEW },
+  { label: "Units", href: "/admin/sms/units", permission: STOCK_VIEW, matchPrefix: true },
+  { label: "Shipments", href: "/admin/sms/shipments", permission: STOCK_VIEW, matchPrefix: true },
+  { label: "Inspections", href: "/admin/sms/inspections", permission: STOCK_VIEW, matchPrefix: true },
+  {
+    label: "Orders (SPK)",
+    href: "/admin/sms/orders",
+    permission: "sms-orders:manage",
+    matchPrefix: true,
+  },
+  {
+    label: "Show units",
+    href: "/admin/sms/show-units",
+    permission: "sms-show-units:manage",
+    matchPrefix: true,
+  },
+  {
+    label: "Opening Balance",
+    href: "/admin/sms/opening-balance",
+    permission: "sms-receiving:manage",
+    matchPrefix: true,
+  },
+  {
+    label: "Product Master",
+    href: "/admin/sms/master",
+    permission: "sms-master:manage",
+    matchPrefix: true,
+  },
+];
+
+function NavSectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 first:pt-0">
+      {children}
+    </p>
+  );
+}
+
 function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   const pathname = usePathname();
   const hasPermission = usePermission(item.permission ?? "");
-  const isActive = pathname === item.href;
+  const isActive =
+    pathname === item.href || (item.matchPrefix === true && pathname.startsWith(`${item.href}/`));
 
   // Build-time gate (dormant features) — checked before permissions so
   // a dormant link doesn't even appear for users who would otherwise be
@@ -100,6 +146,7 @@ export default function AppSidebar({ open, onClose }: AppSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const userName = useAuthStore((s) => s.user?.name ?? "");
+  const hasStockAccess = usePermission(STOCK_VIEW);
   const logout = useAuthStore((s) => s.logout);
 
   // Auto-close on route change. Without this the drawer stays open after a
@@ -183,6 +230,15 @@ export default function AppSidebar({ open, onClose }: AppSidebarProps) {
 
         {/* Navigation */}
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4" data-tour="sidebar-nav">
+          {hasStockAccess && (
+            <>
+              <NavSectionLabel>Stock</NavSectionLabel>
+              {stockNavItems.map((item) => (
+                <NavLink key={item.href} item={item} onNavigate={onClose} />
+              ))}
+              <NavSectionLabel>Assets</NavSectionLabel>
+            </>
+          )}
           {navItems.map((item) => (
             <NavLink key={item.href} item={item} onNavigate={onClose} />
           ))}

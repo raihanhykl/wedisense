@@ -19,6 +19,11 @@ YOU MUST use `pnpm` for everything. Never use npm or yarn.
 - Test api: `pnpm --filter api test`
 Run typecheck + lint after every series of edits. Fix all errors before stopping.
 
+## Branch flow
+Every change goes feature branch → PR to `staging` (auto-deploys https://staging-wedisense.wedison.tech)
+→ PR `staging` → `main` (auto-deploys production). Never open a PR straight to `main`.
+See @docs/ci-cd.md for environments, ports, and deploy details.
+
 ## Database (Prisma)
 - Never edit migration files directly — always use `pnpm --filter api prisma migrate dev`
 - Never run `prisma migrate reset` without my explicit approval
