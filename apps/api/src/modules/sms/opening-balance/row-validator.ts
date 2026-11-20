@@ -256,10 +256,10 @@ export function validateRow(
     customerPhone = raw.customerPhone.trim() || null;
 
     if (!spkNumber) {
-      errors.push({ field: 'spkNumber', message: 'SPK number is required for BOOKED / SOLD_PENDING_PICKUP' });
+      errors.push({ field: 'spkNumber', message: 'SPK number is required for a booked or sold unit' });
     }
     if (!customerName) {
-      errors.push({ field: 'customerName', message: 'Customer name is required for BOOKED / SOLD_PENDING_PICKUP' });
+      errors.push({ field: 'customerName', message: 'Customer name is required for a booked or sold unit' });
     }
 
     // SPK duplicate check in DB
@@ -292,7 +292,7 @@ export function validateRow(
     contractStartDate = parseIsoDate(raw.contractStartDate) ?? options.balanceDate;
 
     if (!contractNumber) {
-      errors.push({ field: 'contractNumber', message: 'Contract number is required for ACTIVE_RTO / CUSTODY' });
+      errors.push({ field: 'contractNumber', message: 'Contract number is required for a unit on RTO or in custody' });
     } else {
       // DB duplicate check
       if (maps.existingContractNumbers.has(contractNumber)) {
@@ -315,7 +315,7 @@ export function validateRow(
     customerName = raw.customerName.trim() || null;
     customerPhone = raw.customerPhone.trim() || null;
     if (!customerName) {
-      errors.push({ field: 'customerName', message: 'Customer name is required for ACTIVE_RTO / CUSTODY' });
+      errors.push({ field: 'customerName', message: 'Customer name is required for a unit on RTO or in custody' });
     }
 
     if (raw.sales.trim()) {
@@ -332,7 +332,7 @@ export function validateRow(
   if (state === 'CUSTODY') {
     const heldAtRaw = raw.heldAtShowroom.trim();
     if (!heldAtRaw) {
-      errors.push({ field: 'heldAtShowroom', message: 'heldAtShowroom is required for CUSTODY' });
+      errors.push({ field: 'heldAtShowroom', message: 'Held-at showroom is required for a unit in custody' });
     } else {
       heldAtShowroomId = matchShowroom(maps.showrooms, heldAtRaw);
       if (!heldAtShowroomId) {
@@ -340,7 +340,7 @@ export function validateRow(
       } else if (heldAtShowroomId === showroomId) {
         errors.push({
           field: 'heldAtShowroom',
-          message: 'heldAtShowroom must differ from the responsible showroom for CUSTODY',
+          message: 'Held-at showroom must differ from the responsible showroom',
         });
       }
     }
@@ -352,13 +352,13 @@ export function validateRow(
     expectedReturnDate = parseIsoDate(raw.expectedReturnDate);
 
     if (!eventName) {
-      errors.push({ field: 'eventName', message: 'eventName is required for SHOW_UNIT' });
+      errors.push({ field: 'eventName', message: 'Event name is required for a show unit' });
     }
     if (!eventLocation) {
-      errors.push({ field: 'eventLocation', message: 'eventLocation is required for SHOW_UNIT' });
+      errors.push({ field: 'eventLocation', message: 'Event location is required for a show unit' });
     }
     if (!expectedReturnDate) {
-      errors.push({ field: 'expectedReturnDate', message: 'expectedReturnDate (YYYY-MM-DD) is required for SHOW_UNIT' });
+      errors.push({ field: 'expectedReturnDate', message: 'Expected return date (YYYY-MM-DD) is required for a show unit' });
     }
 
     if (raw.pic.trim()) {
@@ -420,6 +420,16 @@ export interface ConfirmRowRequirements {
  * never trusted to have sent what the preview approved. Returning problems
  * (instead of throwing) lets confirm report every bad row at once.
  */
+const STATE_WORDING: Record<ObState, string> = {
+  AVAILABLE: 'ready',
+  BOOKED: 'booked',
+  SOLD_PENDING_PICKUP: 'sold and awaiting pickup',
+  ACTIVE_RTO: 'on an active RTO',
+  INSPECTION: 'under inspection',
+  SHOW_UNIT: 'out as a show unit',
+  CUSTODY: 'in custody',
+};
+
 export function validateConfirmRow(
   row: ConfirmRowRequirements,
 ): Array<{ field: string; message: string }> {
@@ -427,7 +437,7 @@ export function validateConfirmRow(
   const missing = (value: string | undefined) => value === undefined || value.trim() === '';
   const require = (field: keyof ConfirmRowRequirements, label: string) => {
     if (missing(row[field])) {
-      problems.push({ field, message: `${label} is required for a unit that is ${row.state}` });
+      problems.push({ field, message: `${label} is required for a unit that is ${STATE_WORDING[row.state]}` });
     }
   };
 

@@ -43,6 +43,8 @@ interface ShowroomContextValue {
   canGlobally: (permission: SmsPermission) => boolean;
   isLoading: boolean;
   error: string | null;
+  /** Load the access list again (after a network error). */
+  retry: () => void;
 }
 
 const STORAGE_KEY = "wedisense:sms:showroom";
@@ -50,7 +52,7 @@ const STORAGE_KEY = "wedisense:sms:showroom";
 const ShowroomContext = createContext<ShowroomContextValue | null>(null);
 
 export function ShowroomProvider({ children }: { children: React.ReactNode }) {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["sms", "context"],
     queryFn: () => apiGet<SmsContextResponse>("/api/sms/context"),
     staleTime: 5 * 60 * 1000,
@@ -97,8 +99,9 @@ export function ShowroomProvider({ children }: { children: React.ReactNode }) {
       canGlobally: (permission) => globalPermissions.has(permission),
       isLoading,
       error: error ? smsErrorMessage(error, "Could not load your stock access.") : null,
+      retry: () => void refetch(),
     };
-  }, [data, selectedId, selectShowroom, isLoading, error]);
+  }, [data, selectedId, selectShowroom, isLoading, error, refetch]);
 
   return <ShowroomContext.Provider value={value}>{children}</ShowroomContext.Provider>;
 }
