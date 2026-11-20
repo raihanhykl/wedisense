@@ -163,6 +163,43 @@ export async function findById(id: string): Promise<UnitDetail | null> {
           pic: { select: { id: true, name: true } },
         },
       },
+      // All RTO contract periods, newest first.
+      rtoContracts: {
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          contractNumber: true,
+          originShowroomId: true,
+          originShowroom: { select: { id: true, name: true } },
+          sales: { select: { id: true, name: true } },
+          customerName: true,
+          customerPhone: true,
+          customerIdNumber: true,
+          startDate: true,
+          handoverAt: true,
+          returnKind: true,
+          returnedAt: true,
+          receivedAtShowroom: { select: { id: true, name: true } },
+          closedAt: true,
+          closedBy: { select: { id: true, name: true } },
+          legalReference: true,
+          outcome: true,
+          isOpeningBalance: true,
+        },
+      },
+      // Open return request (cross-branch), if any.
+      openReturnRequest: {
+        select: {
+          id: true,
+          requestNumber: true,
+          fromShowroom: { select: { id: true, name: true } },
+          toShowroom: { select: { id: true, name: true } },
+          decision: true,
+          custodyReceivedAt: true,
+          officialReceivedAt: true,
+          custodyResolvedAt: true,
+        },
+      },
       inspections: {
         orderBy: { createdAt: 'desc' },
         select: {
@@ -288,6 +325,39 @@ export async function findById(id: string): Promise<UnitDetail | null> {
     releaseBlockers: [],
     activeOrderLine,
     openShowLoan,
+    // RTO contract periods — masking of customerIdNumber is done in the service.
+    rtoContracts: unit.rtoContracts.map((c) => ({
+      id: c.id,
+      contractNumber: c.contractNumber,
+      originShowroom: c.originShowroom,
+      salesUser: c.sales,
+      customerName: c.customerName,
+      customerPhone: c.customerPhone,
+      customerIdNumber: c.customerIdNumber, // masked in service by caller perms
+      startDate: c.startDate,
+      handoverAt: c.handoverAt,
+      returnKind: c.returnKind,
+      returnedAt: c.returnedAt,
+      receivedAtShowroom: c.receivedAtShowroom,
+      closedAt: c.closedAt,
+      closedBy: c.closedBy,
+      legalReference: c.legalReference,
+      outcome: c.outcome,
+      isOpeningBalance: c.isOpeningBalance,
+    })),
+    // Open return request (from cross-branch; handled by other agent).
+    openReturnRequest: unit.openReturnRequest
+      ? {
+          id: unit.openReturnRequest.id,
+          requestNumber: unit.openReturnRequest.requestNumber,
+          fromShowroom: unit.openReturnRequest.fromShowroom,
+          toShowroom: unit.openReturnRequest.toShowroom,
+          decision: unit.openReturnRequest.decision,
+          custodyReceivedAt: unit.openReturnRequest.custodyReceivedAt,
+          officialReceivedAt: unit.openReturnRequest.officialReceivedAt,
+          custodyResolvedAt: unit.openReturnRequest.custodyResolvedAt,
+        }
+      : null,
   };
 }
 
@@ -359,6 +429,12 @@ export async function searchUnits(
             {
               activeOrderLine: {
                 order: { spkNumber: { contains: q, mode: 'insensitive' } },
+              },
+            },
+            // Also match any RTO contract number.
+            {
+              rtoContracts: {
+                some: { contractNumber: { contains: q, mode: 'insensitive' } },
               },
             },
           ],

@@ -3,10 +3,9 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { newIdempotencyKey, smsPut, smsErrorMessage } from "@/lib/sms/client";
-import { nowDateTimeInputValue, wibDateTimeInputToIso } from "@/lib/sms/labels";
+import { nowDateTimeInputValue, wibDateTimeInputToIso, type VehicleCondition } from "@/lib/sms/labels";
 import type { ShowLoanRow } from "@/lib/sms/show-loans-types";
 
-type VehicleCondition = "NEW" | "GOOD" | "FAIR" | "POOR" | "DAMAGED";
 
 const CONDITION_OPTIONS: { value: VehicleCondition; label: string }[] = [
   { value: "NEW", label: "New" },

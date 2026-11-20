@@ -41,6 +41,16 @@ export interface OrderLineDetail {
   pickedUpAt: Date | null;
   receiverName: string | null;
   handoverReference: string | null;
+  /** Set when this line was handed over as an RTO contract. */
+  rtoHandoverAt: Date | null;
+  /** Set when a sale return has been received for this line. */
+  returnReceivedAt: Date | null;
+  returnReason: string | null;
+  returnCondition: string | null;
+  /** PENDING | APPROVED | REJECTED — set after the return has been received. */
+  returnDecision: string | null;
+  returnDecidedAt: Date | null;
+  returnDecisionReason: string | null;
   unit: {
     id: string;
     vin: string;

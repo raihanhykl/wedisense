@@ -13,6 +13,8 @@ import {
   recordSaleSchema,
   confirmPickupSchema,
   listOrdersQuerySchema,
+  saleReturnSchema,
+  decideSaleReturnSchema,
 } from './schema.js';
 import * as ordersService from './service.js';
 
@@ -137,6 +139,40 @@ router.put(
     const input = confirmPickupSchema.parse(req.body);
     const access = getSmsAccess(req);
     const result = await ordersService.confirmPickup(orderId, lineId, key, input, access, {
+      userId: access.userId,
+    });
+    sendSuccess(res, result.body, result.statusCode);
+  }),
+);
+
+// PUT /api/sms/orders/:oid/lines/:lid/sale-return
+router.put(
+  '/:oid/lines/:lid/sale-return',
+  requireSmsPermission(SMS_PERMISSIONS.ORDERS_MANAGE),
+  asyncHandler(async (req, res) => {
+    const orderId = uuidParam(req, 'oid', ORDER_NOT_FOUND);
+    const lineId = uuidParam(req, 'lid', ORDER_LINE_NOT_FOUND);
+    const key = requireIdempotencyKey(req);
+    const input = saleReturnSchema.parse(req.body);
+    const access = getSmsAccess(req);
+    const result = await ordersService.receiveSaleReturn(orderId, lineId, key, input, access, {
+      userId: access.userId,
+    });
+    sendSuccess(res, result.body, result.statusCode);
+  }),
+);
+
+// PUT /api/sms/orders/:oid/lines/:lid/sale-return/decide
+router.put(
+  '/:oid/lines/:lid/sale-return/decide',
+  requireSmsPermission(SMS_PERMISSIONS.SALE_RETURNS_DECIDE),
+  asyncHandler(async (req, res) => {
+    const orderId = uuidParam(req, 'oid', ORDER_NOT_FOUND);
+    const lineId = uuidParam(req, 'lid', ORDER_LINE_NOT_FOUND);
+    const key = requireIdempotencyKey(req);
+    const input = decideSaleReturnSchema.parse(req.body);
+    const access = getSmsAccess(req);
+    const result = await ordersService.decideSaleReturn(orderId, lineId, key, input, access, {
       userId: access.userId,
     });
     sendSuccess(res, result.body, result.statusCode);

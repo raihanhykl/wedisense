@@ -98,7 +98,16 @@ export async function getUnit(id: string, access: SmsAccess) {
     permissionsAtRelevantLocation: permsAtRelevant,
   });
 
-  return { ...unit, availableActions, releaseBlockers };
+  // Mask customerIdNumber in RTO contracts based on caller's customers:view permission.
+  // The check uses the origin showroom of each contract.
+  const rtoContracts = unit.rtoContracts.map((c) => ({
+    ...c,
+    customerIdNumber: can(access, SMS_PERMISSIONS.CUSTOMERS_VIEW, c.originShowroom.id)
+      ? c.customerIdNumber
+      : null,
+  }));
+
+  return { ...unit, availableActions, releaseBlockers, rtoContracts };
 }
 
 // ── Update details ────────────────────────────────────────────────────────────

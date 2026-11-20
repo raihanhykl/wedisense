@@ -24,6 +24,8 @@ import { smsDashboardRouter } from './dashboard/router.js';
 import { smsShowLoansRouter } from './show-loans/router.js';
 import { smsOrdersRouter } from './orders/router.js';
 import { smsPeopleRouter } from './people/router.js';
+import { smsReturnRequestsRouter } from './return-requests/router.js';
+import { smsRtoContractsRouter } from './rto-contracts/router.js';
 
 const router: RouterType = Router();
 
@@ -41,5 +43,7 @@ router.use('/dashboard', smsDashboardRouter);
 router.use('/show-loans', smsShowLoansRouter);
 router.use('/orders', smsOrdersRouter);
 router.use('/people', smsPeopleRouter);
+router.use('/return-requests', smsReturnRequestsRouter);
+router.use('/rto-contracts', smsRtoContractsRouter);
 
 export { router as smsRouter };

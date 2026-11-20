@@ -17,6 +17,9 @@ import {
   INSPECTION_RESULT_LABEL,
   VEHICLE_CONDITION_LABEL,
   unitEventLabel,
+  orderLineStatusLabel,
+  RTO_RETURN_KIND_LABEL,
+  RTO_OUTCOME_LABEL,
 } from "@/lib/sms/labels";
 import { UnitStatusBadge, ExRtoBadge } from "@/components/sms/unit-status-badge";
 import { ReleaseDialog } from "@/components/sms/release-dialog";
@@ -25,9 +28,20 @@ import { ResolveIdentityDialog } from "@/components/sms/resolve-identity-dialog"
 import { EditDetailsDialog } from "@/components/sms/edit-details-dialog";
 import { DispatchShowUnitDialog } from "@/components/sms/show-units/dispatch-show-unit-dialog";
 import { ReturnShowUnitDialog } from "@/components/sms/show-units/return-show-unit-dialog";
+import { HandoverRtoDialog } from "@/components/sms/rto/handover-rto-dialog";
+import { RecordRtoReturnDialog } from "@/components/sms/rto/record-rto-return-dialog";
+import { CloseContractDialog } from "@/components/sms/rto/close-contract-dialog";
+import { OwnershipTransferDialog } from "@/components/sms/rto/ownership-transfer-dialog";
+import { RecordSaleReturnDialog } from "@/components/sms/orders/record-sale-return-dialog";
+import { DecideSaleReturnDialog } from "@/components/sms/orders/decide-sale-return-dialog";
 import { useShowroom } from "@/components/sms/showroom-context";
-import { orderLineStatusLabel } from "@/lib/sms/labels";
-import type { UnitDetail, UnitEventTimeline, UnitInspectionSummary } from "@/lib/sms/types";
+import type {
+  UnitDetail,
+  UnitEventTimeline,
+  UnitInspectionSummary,
+  UnitOpenReturnRequest,
+  UnitRtoPeriod,
+} from "@/lib/sms/types";
 
 type DialogKind =
   | "release"
@@ -37,6 +51,12 @@ type DialogKind =
   | "edit-details"
   | "dispatch-show"
   | "return-show"
+  | "handover-rto"
+  | "record-rto-return"
+  | "close-contract"
+  | "transfer-ownership"
+  | "record-sale-return"
+  | "decide-sale-return"
   | null;
 
 // ── Copy button ────────────────────────────────────────────────────────
@@ -186,6 +206,165 @@ function InspectionEntry({ item }: { item: UnitInspectionSummary }) {
   );
 }
 
+// ── Open return request block ──────────────────────────────────────────
+
+const RETURN_DECISION_LABEL: Record<string, string> = {
+  PENDING: "Pending decision",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+};
+
+const RETURN_DECISION_STYLE: Record<string, string> = {
+  PENDING: "text-amber-700 bg-amber-50",
+  APPROVED: "text-emerald-700 bg-emerald-50",
+  REJECTED: "text-red-700 bg-red-50",
+};
+
+function OpenReturnRequestBlock({ req }: { req: UnitOpenReturnRequest }) {
+  const decisionStyle =
+    RETURN_DECISION_STYLE[req.decision] ?? "text-muted-foreground bg-muted";
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        Open return request
+      </h3>
+      <div className="divide-y">
+        <div className="flex flex-wrap gap-1 py-1.5 text-sm">
+          <span className="w-40 shrink-0 text-muted-foreground">Request number</span>
+          <Link
+            href="/admin/sms/returns"
+            className="font-mono font-semibold text-primary hover:underline"
+          >
+            {req.requestNumber}
+          </Link>
+        </div>
+        <div className="flex flex-wrap gap-1 py-1.5 text-sm">
+          <span className="w-40 shrink-0 text-muted-foreground">Route</span>
+          <span className="font-medium">
+            {req.fromShowroom.name}
+            <span className="mx-1 text-muted-foreground">→</span>
+            {req.toShowroom.name}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1 py-1.5 text-sm">
+          <span className="w-40 shrink-0 text-muted-foreground">Decision</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${decisionStyle}`}>
+            {RETURN_DECISION_LABEL[req.decision] ?? req.decision}
+          </span>
+        </div>
+        {req.custodyReceivedAt && (
+          <div className="flex flex-wrap gap-1 py-1.5 text-sm">
+            <span className="w-40 shrink-0 text-muted-foreground">In custody since</span>
+            <span className="font-medium">{new Date(req.custodyReceivedAt).toLocaleString("en-GB", { timeZone: "Asia/Jakarta" })}</span>
+          </div>
+        )}
+        {req.officialReceivedAt && (
+          <div className="flex flex-wrap gap-1 py-1.5 text-sm">
+            <span className="w-40 shrink-0 text-muted-foreground">Officially received</span>
+            <span className="font-medium">{new Date(req.officialReceivedAt).toLocaleString("en-GB", { timeZone: "Asia/Jakarta" })}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── RTO contract period card ───────────────────────────────────────────
+
+function RtoContractCard({ contract }: { contract: UnitRtoPeriod }) {
+  const isOpen = contract.closedAt === null;
+  // Back with the company (returned at origin or officially received elsewhere).
+  const isBack = contract.returnedAt !== null || contract.receivedAtShowroom !== null;
+  const outcome = contract.outcome ? (RTO_OUTCOME_LABEL[contract.outcome] ?? contract.outcome) : null;
+
+  return (
+    <div className={`rounded-md border p-3 text-sm ${isOpen ? "border-blue-200 bg-blue-50/40" : ""}`}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono font-semibold text-foreground">{contract.contractNumber}</span>
+          {contract.isOpeningBalance && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+              Opening balance
+            </span>
+          )}
+          {isOpen && !isBack && (
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
+              Active
+            </span>
+          )}
+          {isOpen && isBack && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+              Returned · awaiting closure
+            </span>
+          )}
+          {outcome && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              {outcome}
+            </span>
+          )}
+        </div>
+        {contract.closedAt && (
+          <span className="text-xs text-muted-foreground">Closed {formatBusinessDate(contract.closedAt)}</span>
+        )}
+      </div>
+
+      <div className="mt-2 grid grid-cols-1 gap-y-0.5 sm:grid-cols-2">
+        <div className="text-xs text-muted-foreground">
+          Origin: <span className="font-medium text-foreground">{contract.originShowroom.name}</span>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Customer: <span className="font-medium text-foreground">{contract.customerName}</span>
+        </div>
+        {contract.salesUser && (
+          <div className="text-xs text-muted-foreground">
+            Sales: <span className="font-medium text-foreground">{contract.salesUser.name}</span>
+          </div>
+        )}
+        <div className="text-xs text-muted-foreground">
+          Start: <span className="font-medium text-foreground">{formatBusinessDate(contract.startDate)}</span>
+        </div>
+        {contract.handoverAt && (
+          <div className="text-xs text-muted-foreground">
+            Handover: <span className="font-medium text-foreground">{formatDateTime(contract.handoverAt)}</span>
+          </div>
+        )}
+        {contract.returnedAt && (
+          <div className="text-xs text-muted-foreground">
+            Returned:{" "}
+            <span className="font-medium text-foreground">
+              {formatDateTime(contract.returnedAt)}
+              {contract.returnKind && (
+                <span className="ml-1 text-muted-foreground">
+                  ({RTO_RETURN_KIND_LABEL[contract.returnKind] ?? contract.returnKind})
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+        {contract.receivedAtShowroom && (
+          <div className="text-xs text-muted-foreground">
+            Received at:{" "}
+            <span className="font-medium text-foreground">{contract.receivedAtShowroom.name}</span>
+          </div>
+        )}
+        {contract.closedBy && (
+          <div className="text-xs text-muted-foreground">
+            Closed by: <span className="font-medium text-foreground">{contract.closedBy.name}</span>
+          </div>
+        )}
+        {contract.legalReference && (
+          <div className="text-xs text-muted-foreground sm:col-span-2">
+            Legal ref: <span className="font-medium text-foreground">{contract.legalReference}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Inline sale-return dialogs ─────────────────────────────────────────
+
+
 // ── Page ───────────────────────────────────────────────────────────────
 
 export default function UnitDetailPage() {
@@ -257,6 +436,9 @@ export default function UnitDetailPage() {
   const pendingInspection = unit.inspections.find((i) => i.result === "PENDING");
   const statusHint = UNIT_STATUS_HINT[unit.status as keyof typeof UNIT_STATUS_HINT];
 
+  // Find the open RTO contract (no closedAt, matches openRtoContractId)
+  const openRtoContract = unit.rtoContracts.find((c) => c.closedAt === null);
+
   return (
     <div className="p-4 md:p-6" data-tour="sms-vin-card">
       {/* Breadcrumb */}
@@ -301,6 +483,18 @@ export default function UnitDetailPage() {
           </div>
         </dl>
       </div>
+
+      {/* Release blockers — shown when unit is in inspection with open commitments */}
+      {unit.status === "INSPECTION" && unit.releaseBlockers.length > 0 && (
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          <p className="font-medium text-amber-900">Release blocked:</p>
+          <ul className="mt-1 list-inside list-disc space-y-0.5 text-amber-800">
+            {unit.releaseBlockers.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Action bar */}
       {(hasActions || unit.releaseBlockers.length > 0) && (
@@ -381,6 +575,68 @@ export default function UnitDetailPage() {
               className="rounded-md border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-medium text-cyan-800 hover:bg-cyan-100"
             >
               Record show return
+            </button>
+          )}
+          {/* RTO actions */}
+          {unit.availableActions.includes("HANDOVER_RTO") && (
+            <button
+              type="button"
+              onClick={() => setDialog("handover-rto")}
+              data-tour="sms-unit-handover-rto"
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Hand over as RTO
+            </button>
+          )}
+          {unit.availableActions.includes("RECORD_RTO_RETURN") && (
+            <button
+              type="button"
+              onClick={() => setDialog("record-rto-return")}
+              data-tour="sms-unit-record-rto-return"
+              className="rounded-md border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-100"
+            >
+              Record RTO return
+            </button>
+          )}
+          {unit.availableActions.includes("CLOSE_RTO_CONTRACT") && (
+            <button
+              type="button"
+              onClick={() => setDialog("close-contract")}
+              data-tour="sms-unit-close-rto-contract"
+              className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
+            >
+              Close contract
+            </button>
+          )}
+          {unit.availableActions.includes("TRANSFER_OWNERSHIP") && (
+            <button
+              type="button"
+              onClick={() => setDialog("transfer-ownership")}
+              data-tour="sms-unit-transfer-ownership"
+              className="rounded-md border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-800 hover:bg-orange-100"
+            >
+              Transfer ownership
+            </button>
+          )}
+          {/* Sale return actions */}
+          {unit.availableActions.includes("RECORD_SALE_RETURN") && (
+            <button
+              type="button"
+              onClick={() => setDialog("record-sale-return")}
+              data-tour="sms-unit-record-sale-return-btn"
+              className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
+            >
+              Record sale return
+            </button>
+          )}
+          {unit.availableActions.includes("DECIDE_SALE_RETURN") && (
+            <button
+              type="button"
+              onClick={() => setDialog("decide-sale-return")}
+              data-tour="sms-unit-decide-sale-return-btn"
+              className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+            >
+              Decide sale return
             </button>
           )}
         </div>
@@ -509,6 +765,26 @@ export default function UnitDetailPage() {
         </div>
       )}
 
+      {/* Open return request (managed by other agent) */}
+      {unit.openReturnRequest && (
+        <div className="mt-4" data-tour="sms-unit-open-return-request">
+          <OpenReturnRequestBlock req={unit.openReturnRequest} />
+        </div>
+      )}
+
+      {/* RTO contract periods */}
+      {unit.rtoContracts.length > 0 && (
+        <div className="mt-4" data-tour="sms-unit-rto-contracts">
+          <SectionCard title={`Contract periods (${unit.rtoContracts.length})`}>
+            <div className="space-y-3">
+              {unit.rtoContracts.map((contract) => (
+                <RtoContractCard key={contract.id} contract={contract} />
+              ))}
+            </div>
+          </SectionCard>
+        </div>
+      )}
+
       {/* Inspections */}
       {unit.inspections.length > 0 && (
         <div className="mt-4">
@@ -537,7 +813,7 @@ export default function UnitDetailPage() {
         </SectionCard>
       </div>
 
-      {/* Dialogs */}
+      {/* Dialogs — existing */}
       {dialog === "release" && (
         <ReleaseDialog
           unitId={unit.id}
@@ -594,6 +870,62 @@ export default function UnitDetailPage() {
         <ReturnShowUnitDialog
           loanId={unit.openShowLoan.id}
           unitVin={unit.vin}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {/* RTO dialogs */}
+      {dialog === "handover-rto" && (
+        <HandoverRtoDialog
+          unitId={unit.id}
+          unitVin={unit.vin}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {dialog === "record-rto-return" && openRtoContract && (
+        <RecordRtoReturnDialog
+          contractId={openRtoContract.id}
+          contractNumber={openRtoContract.contractNumber}
+          unitVin={unit.vin}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {dialog === "close-contract" && openRtoContract && (
+        <CloseContractDialog
+          contractId={openRtoContract.id}
+          contractNumber={openRtoContract.contractNumber}
+          unitVin={unit.vin}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {dialog === "transfer-ownership" && openRtoContract && (
+        <OwnershipTransferDialog
+          contractId={openRtoContract.id}
+          contractNumber={openRtoContract.contractNumber}
+          unitVin={unit.vin}
+          customerName={openRtoContract.customerName}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {/* Sale return dialogs */}
+      {dialog === "record-sale-return" && unit.activeOrderLine && (
+        <RecordSaleReturnDialog
+          orderId={unit.activeOrderLine.orderId}
+          lineId={unit.activeOrderLine.id}
+          vin={unit.vin}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {dialog === "decide-sale-return" && unit.activeOrderLine && (
+        <DecideSaleReturnDialog
+          orderId={unit.activeOrderLine.orderId}
+          lineId={unit.activeOrderLine.id}
+          vin={unit.vin}
           onClose={() => setDialog(null)}
           onSuccess={handleActionSuccess}
         />

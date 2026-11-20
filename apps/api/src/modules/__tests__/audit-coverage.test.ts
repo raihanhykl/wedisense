@@ -83,6 +83,14 @@ const ROUTER_MOUNTS: Record<string, { mount: string; file: string }> = {
   'sms-dashboard': { mount: '/api/sms/dashboard', file: 'sms/dashboard/router.ts' },
   'sms-show-loans': { mount: '/api/sms/show-loans', file: 'sms/show-loans/router.ts' },
   'sms-orders': { mount: '/api/sms/orders', file: 'sms/orders/router.ts' },
+  'sms-return-requests': {
+    mount: '/api/sms/return-requests',
+    file: 'sms/return-requests/router.ts',
+  },
+  'sms-rto-contracts': {
+    mount: '/api/sms/rto-contracts',
+    file: 'sms/rto-contracts/router.ts',
+  },
 };
 
 interface DiscoveredRoute {

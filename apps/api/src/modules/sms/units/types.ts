@@ -5,6 +5,9 @@ import type {
   SmsInspectionResult,
   SmsVehicleCondition,
   SmsOrderLineStatus,
+  SmsRtoOutcome,
+  SmsRtoReturnKind,
+  SmsDecision,
 } from '@prisma/client';
 
 export interface UnitLocationRef {
@@ -90,6 +93,40 @@ export interface UnitOpenShowLoan {
   overdue: boolean;
 }
 
+/** One RTO contract period of a VIN (for the VIN card). */
+export interface UnitRtoPeriod {
+  id: string;
+  contractNumber: string;
+  originShowroom: { id: string; name: string };
+  salesUser: { id: string; name: string } | null;
+  customerName: string;
+  customerPhone: string | null;
+  /** Null unless caller holds sms-customers:view. */
+  customerIdNumber: string | null;
+  startDate: Date;
+  handoverAt: Date | null;
+  returnKind: SmsRtoReturnKind | null;
+  returnedAt: Date | null;
+  receivedAtShowroom: { id: string; name: string } | null;
+  closedAt: Date | null;
+  closedBy: { id: string; name: string } | null;
+  legalReference: string | null;
+  outcome: SmsRtoOutcome | null;
+  isOpeningBalance: boolean;
+}
+
+/** Open return request summary for the VIN card (populated by the other agent). */
+export interface UnitOpenReturnRequest {
+  id: string;
+  requestNumber: string;
+  fromShowroom: { id: string; name: string };
+  toShowroom: { id: string; name: string };
+  decision: SmsDecision;
+  custodyReceivedAt: Date | null;
+  officialReceivedAt: Date | null;
+  custodyResolvedAt: Date | null;
+}
+
 /** Full VIN card returned by GET /units/:id. */
 export interface UnitDetail {
   id: string;
@@ -121,6 +158,10 @@ export interface UnitDetail {
   activeOrderLine: UnitActiveOrderLine | null;
   /** Open show loan, or null when the unit is not currently on loan to an event. */
   openShowLoan: UnitOpenShowLoan | null;
+  /** All RTO contract periods for this unit, newest first. */
+  rtoContracts: UnitRtoPeriod[];
+  /** Open return request, if any (from other agent's data). */
+  openReturnRequest: UnitOpenReturnRequest | null;
 }
 
 /** Search result — either a registered unit or an expected (pending) VIN. */

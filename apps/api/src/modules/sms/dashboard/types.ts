@@ -101,6 +101,64 @@ export interface OverdueShowUnitTask {
   daysOverdue: number;
 }
 
+// ── Stage 4 task types ───────────────────────────────────────────────────────
+
+/** An incoming PENDING return request (fromShowroom is mine — I decide). */
+export interface ReturnToDecideTask {
+  requestId: string;
+  requestNumber: string;
+  unitId: string;
+  vin: string;
+  variantLabel: string;
+  toShowroomName: string;
+  requestedAt: Date;
+}
+
+/** An outgoing APPROVED return request not yet officially received. */
+export interface ReturnAwaitingReceiptTask {
+  requestId: string;
+  requestNumber: string;
+  unitId: string;
+  vin: string;
+  variantLabel: string;
+  fromShowroomName: string;
+  approvedAt: Date | null;
+}
+
+/** A CUSTODY unit at this showroom (and its return request status). */
+export interface CustodyHeldTask {
+  unitId: string;
+  vin: string;
+  variantLabel: string;
+  requestId: string;
+  requestNumber: string;
+  decision: string;
+  fromShowroomName: string;
+  /** True when the return was rejected and the motorcycle still needs to be handed back. */
+  needsHandback: boolean;
+  custodyReceivedAt: Date | null;
+}
+
+/** An RTO contract that has been received at this showroom but not yet closed. */
+export interface RtoReturnedNotClosedTask {
+  contractId: string;
+  contractNumber: string;
+  unitId: string;
+  vin: string;
+  variantLabel: string;
+  returnedAt: Date | null;
+}
+
+/** A sale-return line that has been received but not yet decided at this showroom. */
+export interface SaleReturnToDecideTask {
+  lineId: string;
+  orderId: string;
+  spk: string;
+  unitId: string;
+  vin: string;
+  returnReceivedAt: Date;
+}
+
 export interface DashboardTasks {
   openShipments: { data: OpenShipmentTask[]; total: number };
   inspections: { data: InspectionTask[]; total: number };
@@ -108,4 +166,10 @@ export interface DashboardTasks {
   staleBookings: { data: StaleBookingTask[]; total: number };
   awaitingPickup: { data: AwaitingPickupTask[]; total: number };
   overdueShowUnits: { data: OverdueShowUnitTask[]; total: number };
+  // Stage 4
+  returnsToDecide: { data: ReturnToDecideTask[]; total: number };
+  returnsAwaitingReceipt: { data: ReturnAwaitingReceiptTask[]; total: number };
+  custodyHeld: { data: CustodyHeldTask[]; total: number };
+  rtoReturnedNotClosed: { data: RtoReturnedNotClosedTask[]; total: number };
+  saleReturnsToDecide: { data: SaleReturnToDecideTask[]; total: number };
 }

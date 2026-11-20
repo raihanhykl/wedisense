@@ -113,6 +113,58 @@ export interface OverdueShowUnitTask {
   daysOverdue: number;
 }
 
+// ── Stage 4 task types ───────────────────────────────────────────────────────
+
+export interface ReturnToDecideTask {
+  requestId: string;
+  requestNumber: string;
+  unitId: string;
+  vin: string;
+  variantLabel: string;
+  toShowroomName: string;
+  requestedAt: string;
+}
+
+export interface ReturnAwaitingReceiptTask {
+  requestId: string;
+  requestNumber: string;
+  unitId: string;
+  vin: string;
+  variantLabel: string;
+  fromShowroomName: string;
+  approvedAt: string | null;
+}
+
+export interface CustodyHeldTask {
+  unitId: string;
+  vin: string;
+  variantLabel: string;
+  requestId: string;
+  requestNumber: string;
+  decision: string;
+  fromShowroomName: string;
+  needsHandback: boolean;
+  custodyReceivedAt: string | null;
+}
+
+export interface RtoReturnedNotClosedTask {
+  contractId: string;
+  contractNumber: string;
+  unitId: string;
+  vin: string;
+  variantLabel: string;
+  returnedAt: string | null;
+}
+
+export interface SaleReturnToDecideTask {
+  lineId: string;
+  orderId: string;
+  spk: string;
+  unitId: string;
+  vin: string;
+  returnReceivedAt: string;
+}
+
 export interface DashboardTasks {
   openShipments: { data: OpenShipmentTask[]; total: number };
   inspections: { data: InspectionTask[]; total: number };
@@ -120,6 +172,12 @@ export interface DashboardTasks {
   staleBookings: { data: StaleBookingTask[]; total: number };
   awaitingPickup: { data: AwaitingPickupTask[]; total: number };
   overdueShowUnits: { data: OverdueShowUnitTask[]; total: number };
+  // Stage 4
+  returnsToDecide: { data: ReturnToDecideTask[]; total: number };
+  returnsAwaitingReceipt: { data: ReturnAwaitingReceiptTask[]; total: number };
+  custodyHeld: { data: CustodyHeldTask[]; total: number };
+  rtoReturnedNotClosed: { data: RtoReturnedNotClosedTask[]; total: number };
+  saleReturnsToDecide: { data: SaleReturnToDecideTask[]; total: number };
 }
 
 // ── Units ──────────────────────────────────────────────────────────────
@@ -188,6 +246,40 @@ export interface UnitOpenShowLoan {
   overdue: boolean;
 }
 
+// ── RTO contract period (VIN card) ─────────────────────────────────────
+
+export interface UnitRtoPeriod {
+  id: string;
+  contractNumber: string;
+  originShowroom: { id: string; name: string };
+  salesUser: { id: string; name: string } | null;
+  customerName: string;
+  customerPhone: string | null;
+  customerIdNumber: string | null;
+  startDate: string;
+  handoverAt: string | null;
+  returnKind: string | null;
+  returnedAt: string | null;
+  receivedAtShowroom: { id: string; name: string } | null;
+  closedAt: string | null;
+  closedBy: { id: string; name: string } | null;
+  legalReference: string | null;
+  outcome: string | null;
+  isOpeningBalance: boolean;
+}
+
+/** Open return request summary shown on the VIN card. */
+export interface UnitOpenReturnRequest {
+  id: string;
+  requestNumber: string;
+  fromShowroom: { id: string; name: string };
+  toShowroom: { id: string; name: string };
+  decision: string;
+  custodyReceivedAt: string | null;
+  officialReceivedAt: string | null;
+  custodyResolvedAt: string | null;
+}
+
 export interface UnitDetail {
   id: string;
   vin: string;
@@ -218,6 +310,10 @@ export interface UnitDetail {
   activeOrderLine: UnitActiveOrderLine | null;
   /** Open show loan, or null when not currently on loan to an event. */
   openShowLoan: UnitOpenShowLoan | null;
+  /** All RTO contract periods for this unit, newest first. */
+  rtoContracts: UnitRtoPeriod[];
+  /** Open return request, or null when not in a cross-branch return. */
+  openReturnRequest: UnitOpenReturnRequest | null;
 }
 
 export type UnitSearchResult =

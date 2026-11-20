@@ -20,6 +20,9 @@ import { CancelLineDialog } from "@/components/sms/orders/cancel-line-dialog";
 import { FollowUpDialog } from "@/components/sms/orders/follow-up-dialog";
 import { ConfirmPickupDialog } from "@/components/sms/orders/confirm-pickup-dialog";
 import { AddUnitsDialog } from "@/components/sms/orders/add-units-dialog";
+import { HandoverRtoDialog } from "@/components/sms/rto/handover-rto-dialog";
+import { RecordSaleReturnDialog } from "@/components/sms/orders/record-sale-return-dialog";
+import { DecideSaleReturnDialog } from "@/components/sms/orders/decide-sale-return-dialog";
 import type {
   OrderDetail,
   OrderLineDetail,
@@ -31,6 +34,17 @@ type DialogState =
   | { kind: "follow-up"; lineId: string; vin: string; followUpAt: string | null }
   | { kind: "confirm-pickup"; lineId: string; vin: string }
   | { kind: "add-units" }
+  | {
+      kind: "handover-rto";
+      lineId: string;
+      unitId: string;
+      vin: string;
+      salesUserId?: string;
+      salesName?: string;
+      customerName: string;
+    }
+  | { kind: "record-sale-return"; lineId: string; vin: string }
+  | { kind: "decide-sale-return"; lineId: string; vin: string }
   | null;
 
 // ── Summary chips ──────────────────────────────────────────────────────
@@ -149,19 +163,89 @@ function RecordSaleBar({ orderId, selectedLineIds, onSuccess }: RecordSaleBarPro
   );
 }
 
+// ── Inline sale-return recording dialog ───────────────────────────────
+
+
+
+// ── Line timestamps sub-component ──────────────────────────────────────
+
+function LineTimestamps({ line }: { line: OrderLineDetail }) {
+  const isStaleBooking =
+    line.status === "BOOKED" &&
+    line.followUpAt !== null &&
+    new Date(line.followUpAt) < new Date();
+
+  return (
+    <div className="space-y-0.5">
+      {line.bookedAt && <div>Booked: {formatDate(line.bookedAt)}</div>}
+      {line.followUpAt && line.status === "BOOKED" && (
+        <div className={isStaleBooking ? "text-amber-700" : ""}>
+          Follow up: {formatDate(line.followUpAt)}
+        </div>
+      )}
+      {line.soldAt && <div>Sold: {formatDate(line.soldAt)}</div>}
+      {line.pickedUpAt && <div>Picked up: {formatDateTime(line.pickedUpAt)}</div>}
+      {line.rtoHandoverAt && <div>RTO handover: {formatDateTime(line.rtoHandoverAt)}</div>}
+      {line.cancelledAt && <div>Cancelled: {formatDate(line.cancelledAt)}</div>}
+      {line.receiverName && <div>Receiver: {line.receiverName}</div>}
+      {line.cancelReason && (
+        <div className="max-w-xs truncate text-muted-foreground">Reason: {line.cancelReason}</div>
+      )}
+      {/* Sale return info */}
+      {line.returnReceivedAt && (
+        <div className="mt-1 rounded-sm bg-orange-50 px-1.5 py-1 text-orange-700">
+          Return received: {formatDateTime(line.returnReceivedAt)}
+          {line.returnReason && (
+            <div className="mt-0.5 text-xs text-orange-600 truncate max-w-xs">
+              Reason: {line.returnReason}
+            </div>
+          )}
+          {line.returnDecision ? (
+            <div className={`mt-0.5 font-medium text-xs ${
+              line.returnDecision === "APPROVED"
+                ? "text-emerald-700"
+                : line.returnDecision === "REJECTED"
+                ? "text-red-700"
+                : "text-amber-700"
+            }`}>
+              {line.returnDecision === "APPROVED"
+                ? "Return approved"
+                : line.returnDecision === "REJECTED"
+                ? `Return rejected${line.returnDecisionReason ? `: ${line.returnDecisionReason}` : ""}`
+                : "Awaiting decision"}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Lines table ────────────────────────────────────────────────────────
+
+type OpenableDialog = Exclude<DialogState, null | { kind: "add-units" }>;
 
 interface LinesTableProps {
   lines: OrderLineDetail[];
   canManage: boolean;
+  canDecideReturn: boolean;
+  canRto: boolean;
+  customerName: string;
+  salesUserId?: string;
+  salesName?: string;
   selectedForSale: Set<string>;
   onToggleSale: (lineId: string) => void;
-  onOpenDialog: (state: Exclude<DialogState, null | { kind: "add-units" }>) => void;
+  onOpenDialog: (state: OpenableDialog) => void;
 }
 
 function LinesTable({
   lines,
   canManage,
+  canDecideReturn,
+  canRto,
+  customerName,
+  salesUserId,
+  salesName,
   selectedForSale,
   onToggleSale,
   onOpenDialog,
@@ -187,11 +271,15 @@ function LinesTable({
               line.status === "BOOKED" &&
               line.followUpAt !== null &&
               new Date(line.followUpAt) < now;
+            const hasPendingReturn =
+              (line.status === "SOLD" || line.status === "PICKED_UP") &&
+              line.returnReceivedAt !== null &&
+              line.returnDecision === null;
 
             return (
               <tr
                 key={line.id}
-                className={`border-b last:border-b-0 ${isStale ? "bg-amber-50/50" : ""}`}
+                className={`border-b last:border-b-0 ${isStale ? "bg-amber-50/50" : hasPendingReturn ? "bg-orange-50/50" : ""}`}
               >
                 {canManage && (
                   <td className="px-3 py-3">
@@ -206,11 +294,21 @@ function LinesTable({
                   </td>
                 )}
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-semibold">{line.unit.vin}</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Link
+                      href={`/admin/sms/units/${line.unit.id}`}
+                      className="font-mono font-semibold text-primary hover:underline"
+                    >
+                      {line.unit.vin}
+                    </Link>
                     {isStale && (
                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
                         Follow up due
+                      </span>
+                    )}
+                    {hasPendingReturn && (
+                      <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-800">
+                        Return pending
                       </span>
                     )}
                   </div>
@@ -222,83 +320,117 @@ function LinesTable({
                   <OrderLineStatusBadge status={line.status} />
                 </td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">
-                  <div className="space-y-0.5">
-                    {line.bookedAt && (
-                      <div>Booked: {formatDate(line.bookedAt)}</div>
-                    )}
-                    {line.followUpAt && line.status === "BOOKED" && (
-                      <div className={isStale ? "text-amber-700" : ""}>
-                        Follow up: {formatDate(line.followUpAt)}
-                      </div>
-                    )}
-                    {line.soldAt && <div>Sold: {formatDate(line.soldAt)}</div>}
-                    {line.pickedUpAt && (
-                      <div>Picked up: {formatDateTime(line.pickedUpAt)}</div>
-                    )}
-                    {line.cancelledAt && (
-                      <div>Cancelled: {formatDate(line.cancelledAt)}</div>
-                    )}
-                    {line.receiverName && (
-                      <div>Receiver: {line.receiverName}</div>
-                    )}
-                    {line.cancelReason && (
-                      <div className="max-w-xs truncate text-muted-foreground">
-                        Reason: {line.cancelReason}
-                      </div>
-                    )}
-                  </div>
+                  <LineTimestamps line={line} />
                 </td>
                 <td className="px-4 py-3">
-                  {canManage && (
-                    <div className="flex flex-wrap gap-1">
-                      {line.status === "BOOKED" && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onOpenDialog({
-                                kind: "follow-up",
-                                lineId: line.id,
-                                vin: line.unit.vin,
-                                followUpAt: line.followUpAt,
-                              })
-                            }
-                            className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
-                          >
-                            Follow up
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onOpenDialog({
-                                kind: "cancel",
-                                lineId: line.id,
-                                vin: line.unit.vin,
-                              })
-                            }
-                            className="rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      )}
-                      {line.status === "SOLD" && (
+                  <div className="flex flex-wrap gap-1">
+                    {/* Existing actions */}
+                    {canManage && line.status === "BOOKED" && (
+                      <>
                         <button
                           type="button"
                           onClick={() =>
                             onOpenDialog({
-                              kind: "confirm-pickup",
+                              kind: "follow-up",
                               lineId: line.id,
                               vin: line.unit.vin,
+                              followUpAt: line.followUpAt,
                             })
                           }
-                          className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90"
+                          className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
                         >
-                          Confirm pickup
+                          Follow up
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onOpenDialog({ kind: "cancel", lineId: line.id, vin: line.unit.vin })
+                          }
+                          className="rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                    {canManage && line.status === "SOLD" && !hasPendingReturn && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onOpenDialog({ kind: "confirm-pickup", lineId: line.id, vin: line.unit.vin })
+                        }
+                        className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90"
+                      >
+                        Confirm pickup
+                      </button>
+                    )}
+                    {/* Stage 4: RTO handover for BOOKED lines */}
+                    {canRto && line.status === "BOOKED" && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onOpenDialog({
+                            kind: "handover-rto",
+                            lineId: line.id,
+                            unitId: line.unit.id,
+                            vin: line.unit.vin,
+                            salesUserId,
+                            salesName,
+                            customerName,
+                          })
+                        }
+                        data-tour="sms-order-handover-rto"
+                        className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-800 hover:bg-blue-100"
+                      >
+                        Hand over as RTO
+                      </button>
+                    )}
+                    {/* Stage 4: Sale return for SOLD or PICKED_UP */}
+                    {canManage &&
+                      (line.status === "SOLD" || line.status === "PICKED_UP") &&
+                      line.returnReceivedAt === null && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onOpenDialog({ kind: "record-sale-return", lineId: line.id, vin: line.unit.vin })
+                          }
+                          data-tour="sms-order-record-sale-return"
+                          className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
+                        >
+                          Record return
                         </button>
                       )}
-                    </div>
-                  )}
+                    {/* Stage 4: Decide pending return */}
+                    {canDecideReturn && hasPendingReturn && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onOpenDialog({ kind: "decide-sale-return", lineId: line.id, vin: line.unit.vin })
+                        }
+                        data-tour="sms-order-decide-sale-return"
+                        className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-100"
+                      >
+                        Decide return
+                      </button>
+                    )}
+                    {/* RTO_HANDED_OVER: read-only link to VIN card */}
+                    {line.status === "RTO_HANDED_OVER" && (
+                      <Link
+                        href={`/admin/sms/units/${line.unit.id}`}
+                        className="rounded-md border px-2 py-1 text-xs text-primary hover:bg-accent hover:underline"
+                      >
+                        View VIN card
+                      </Link>
+                    )}
+                    {/* RETURNED: read-only link to VIN card */}
+                    {line.status === "RETURNED" && (
+                      <Link
+                        href={`/admin/sms/units/${line.unit.id}`}
+                        className="rounded-md border px-2 py-1 text-xs text-primary hover:bg-accent hover:underline"
+                      >
+                        View VIN card
+                      </Link>
+                    )}
+                  </div>
                 </td>
               </tr>
             );
@@ -314,24 +446,42 @@ function LinesTable({
 function LineCard({
   line,
   canManage,
+  canDecideReturn,
+  canRto,
+  customerName,
+  salesUserId,
+  salesName,
   selectedForSale,
   onToggleSale,
   onOpenDialog,
 }: {
   line: OrderLineDetail;
   canManage: boolean;
+  canDecideReturn: boolean;
+  canRto: boolean;
+  customerName: string;
+  salesUserId?: string;
+  salesName?: string;
   selectedForSale: Set<string>;
   onToggleSale: (lineId: string) => void;
-  onOpenDialog: (state: Exclude<DialogState, null | { kind: "add-units" }>) => void;
+  onOpenDialog: (state: OpenableDialog) => void;
 }) {
   const now = new Date();
   const isStale =
     line.status === "BOOKED" &&
     line.followUpAt !== null &&
     new Date(line.followUpAt) < now;
+  const hasPendingReturn =
+    (line.status === "SOLD" || line.status === "PICKED_UP") &&
+    line.returnReceivedAt !== null &&
+    line.returnDecision === null;
 
   return (
-    <div className={`rounded-lg border bg-card p-3 ${isStale ? "border-amber-200 bg-amber-50/40" : ""}`}>
+    <div
+      className={`rounded-lg border bg-card p-3 ${
+        isStale ? "border-amber-200 bg-amber-50/40" : hasPendingReturn ? "border-orange-200 bg-orange-50/40" : ""
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           {canManage && line.status === "BOOKED" && (
@@ -342,75 +492,118 @@ function LineCard({
               className="mt-0.5 h-4 w-4 rounded border"
             />
           )}
-          <span className="font-mono font-semibold">{line.unit.vin}</span>
+          <Link
+            href={`/admin/sms/units/${line.unit.id}`}
+            className="font-mono font-semibold text-primary hover:underline"
+          >
+            {line.unit.vin}
+          </Link>
           {isStale && (
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
               Follow up due
+            </span>
+          )}
+          {hasPendingReturn && (
+            <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-800">
+              Return pending
             </span>
           )}
         </div>
         <OrderLineStatusBadge status={line.status} />
       </div>
       <div className="mt-1 text-xs text-muted-foreground">{variantLabel(line.unit.variant)}</div>
-      <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-        {line.bookedAt && <div>Booked: {formatDate(line.bookedAt)}</div>}
-        {line.followUpAt && line.status === "BOOKED" && (
-          <div className={isStale ? "text-amber-700" : ""}>
-            Follow up: {formatDate(line.followUpAt)}
-          </div>
-        )}
-        {line.soldAt && <div>Sold: {formatDate(line.soldAt)}</div>}
-        {line.pickedUpAt && <div>Picked up: {formatDateTime(line.pickedUpAt)}</div>}
-        {line.cancelledAt && <div>Cancelled: {formatDate(line.cancelledAt)}</div>}
-        {line.receiverName && <div>Receiver: {line.receiverName}</div>}
-        {line.cancelReason && <div>Reason: {line.cancelReason}</div>}
+      <div className="mt-2 text-xs text-muted-foreground">
+        <LineTimestamps line={line} />
       </div>
-      {canManage && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {line.status === "BOOKED" && (
-            <>
-              <button
-                type="button"
-                onClick={() =>
-                  onOpenDialog({
-                    kind: "follow-up",
-                    lineId: line.id,
-                    vin: line.unit.vin,
-                    followUpAt: line.followUpAt,
-                  })
-                }
-                className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
-              >
-                Follow up
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  onOpenDialog({ kind: "cancel", lineId: line.id, vin: line.unit.vin })
-                }
-                className="rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-          {line.status === "SOLD" && (
+      <div className="mt-2 flex flex-wrap gap-1">
+        {canManage && line.status === "BOOKED" && (
+          <>
             <button
               type="button"
               onClick={() =>
                 onOpenDialog({
-                  kind: "confirm-pickup",
+                  kind: "follow-up",
                   lineId: line.id,
                   vin: line.unit.vin,
+                  followUpAt: line.followUpAt,
                 })
               }
-              className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90"
+              className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
             >
-              Confirm pickup
+              Follow up
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenDialog({ kind: "cancel", lineId: line.id, vin: line.unit.vin })}
+              className="rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+            >
+              Cancel
+            </button>
+          </>
+        )}
+        {canManage && line.status === "SOLD" && !hasPendingReturn && (
+          <button
+            type="button"
+            onClick={() =>
+              onOpenDialog({ kind: "confirm-pickup", lineId: line.id, vin: line.unit.vin })
+            }
+            className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90"
+          >
+            Confirm pickup
+          </button>
+        )}
+        {canRto && line.status === "BOOKED" && (
+          <button
+            type="button"
+            onClick={() =>
+              onOpenDialog({
+                kind: "handover-rto",
+                lineId: line.id,
+                unitId: line.unit.id,
+                vin: line.unit.vin,
+                salesUserId,
+                salesName,
+                customerName,
+              })
+            }
+            className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-800 hover:bg-blue-100"
+          >
+            Hand over as RTO
+          </button>
+        )}
+        {canManage &&
+          (line.status === "SOLD" || line.status === "PICKED_UP") &&
+          line.returnReceivedAt === null && (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenDialog({ kind: "record-sale-return", lineId: line.id, vin: line.unit.vin })
+              }
+              className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
+            >
+              Record return
             </button>
           )}
-        </div>
-      )}
+        {canDecideReturn && hasPendingReturn && (
+          <button
+            type="button"
+            onClick={() =>
+              onOpenDialog({ kind: "decide-sale-return", lineId: line.id, vin: line.unit.vin })
+            }
+            className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-100"
+          >
+            Decide return
+          </button>
+        )}
+        {(line.status === "RTO_HANDED_OVER" || line.status === "RETURNED") && (
+          <Link
+            href={`/admin/sms/units/${line.unit.id}`}
+            className="rounded-md border px-2 py-1 text-xs text-primary hover:bg-accent hover:underline"
+          >
+            View VIN card
+          </Link>
+        )}
+      </div>
     </div>
   );
 }
@@ -500,13 +693,18 @@ export default function OrderDetailPage() {
   if (!order) return null;
 
   const canManage = canAt("sms-orders:manage", order.showroom.id);
+  const canDecideReturn = canAt("sms-sale-returns:decide", order.showroom.id);
+  const canRto = canAt("sms-rto:manage", order.showroom.id);
   const bookedLines = order.lines.filter((l) => l.status === "BOOKED");
   const selectedForSaleIds = Array.from(selectedForSale).filter((lineId) =>
     bookedLines.some((l) => l.id === lineId),
   );
 
+  const salesUserId = order.sales?.id;
+  const salesName = order.sales?.name;
+
   return (
-    <div className="p-4 md:p-6">
+    <div className="p-4 md:p-6" data-tour="sms-order-detail">
       {/* Breadcrumb */}
       <nav className="mb-4 text-sm text-muted-foreground">
         <Link href="/admin/sms" className="hover:text-foreground">Stock</Link>
@@ -630,6 +828,11 @@ export default function OrderDetailPage() {
         <LinesTable
           lines={order.lines}
           canManage={canManage}
+          canDecideReturn={canDecideReturn}
+          canRto={canRto}
+          customerName={order.customerName}
+          salesUserId={salesUserId}
+          salesName={salesName ?? undefined}
           selectedForSale={selectedForSale}
           onToggleSale={toggleSaleSelection}
           onOpenDialog={openDialog}
@@ -643,6 +846,11 @@ export default function OrderDetailPage() {
             key={line.id}
             line={line}
             canManage={canManage}
+            canDecideReturn={canDecideReturn}
+            canRto={canRto}
+            customerName={order.customerName}
+            salesUserId={salesUserId}
+            salesName={salesName ?? undefined}
             selectedForSale={selectedForSale}
             onToggleSale={toggleSaleSelection}
             onOpenDialog={openDialog}
@@ -661,7 +869,7 @@ export default function OrderDetailPage() {
         </div>
       )}
 
-      {/* Dialogs */}
+      {/* Dialogs — existing */}
       {dialog?.kind === "cancel" && (
         <CancelLineDialog
           orderId={order.id}
@@ -695,6 +903,36 @@ export default function OrderDetailPage() {
           orderId={order.id}
           spkNumber={order.spkNumber}
           showroomId={order.showroom.id}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {/* Stage 4 dialogs */}
+      {dialog?.kind === "handover-rto" && (
+        <HandoverRtoDialog
+          unitId={dialog.unitId}
+          unitVin={dialog.vin}
+          preFilledSalesUserId={dialog.salesUserId}
+          preFilledSalesName={dialog.salesName}
+          preFilledCustomerName={dialog.customerName}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {dialog?.kind === "record-sale-return" && (
+        <RecordSaleReturnDialog
+          orderId={order.id}
+          lineId={dialog.lineId}
+          vin={dialog.vin}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {dialog?.kind === "decide-sale-return" && (
+        <DecideSaleReturnDialog
+          orderId={order.id}
+          lineId={dialog.lineId}
+          vin={dialog.vin}
           onClose={() => setDialog(null)}
           onSuccess={handleActionSuccess}
         />

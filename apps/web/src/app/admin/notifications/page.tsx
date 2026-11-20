@@ -19,6 +19,8 @@ const TYPE_COLORS: Record<string, string> = {
   PRINT_READY: "bg-blue-100 text-blue-800",
   IMPORT_COMPLETE: "bg-green-100 text-green-800",
   TOUR_UPDATED: "bg-purple-100 text-purple-800",
+  SMS_RETURN_REQUESTED: "bg-orange-100 text-orange-800",
+  SMS_RETURN_DECIDED: "bg-blue-100 text-blue-800",
 };
 
 function TypeBadge({ type }: { type: string }) {
@@ -45,6 +47,8 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "PRINT_READY", label: "PRINT READY" },
   { value: "IMPORT_COMPLETE", label: "IMPORT COMPLETE" },
   { value: "TOUR_UPDATED", label: "TOUR UPDATED" },
+  { value: "SMS_RETURN_REQUESTED", label: "SMS RETURN REQUESTED" },
+  { value: "SMS_RETURN_DECIDED", label: "SMS RETURN DECIDED" },
 ];
 
 export default function NotificationsPage() {

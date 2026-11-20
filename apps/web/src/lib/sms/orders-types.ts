@@ -35,7 +35,13 @@ export interface OrderSummary {
 
 // ── Line ───────────────────────────────────────────────────────────────
 
-export type OrderLineStatus = "BOOKED" | "SOLD" | "PICKED_UP" | "CANCELLED";
+export type OrderLineStatus =
+  | "BOOKED"
+  | "SOLD"
+  | "PICKED_UP"
+  | "RTO_HANDED_OVER"
+  | "CANCELLED"
+  | "RETURNED";
 
 export interface OrderLineDetail {
   id: string;
@@ -48,6 +54,16 @@ export interface OrderLineDetail {
   pickedUpAt: string | null;
   receiverName: string | null;
   handoverReference: string | null;
+  /** Set when this line was handed over as an RTO contract. */
+  rtoHandoverAt: string | null;
+  /** Set when a sale return has been received. */
+  returnReceivedAt: string | null;
+  returnReason: string | null;
+  returnCondition: string | null;
+  /** PENDING | APPROVED | REJECTED */
+  returnDecision: string | null;
+  returnDecidedAt: string | null;
+  returnDecisionReason: string | null;
   unit: {
     id: string;
     vin: string;
@@ -160,6 +176,20 @@ export function describeBookingConflict(conflict: BookingConflictDetail): string
     case "NOT_FOUND":
       return "Unit not found";
   }
+}
+
+// ── Sale return results ────────────────────────────────────────────────
+
+export interface SaleReturnResult {
+  lineId: string;
+  alreadyDone: boolean;
+  inspectionId: string;
+}
+
+export interface DecideSaleReturnResult {
+  lineId: string;
+  alreadyDone: boolean;
+  decision: string;
 }
 
 // ── People picker ───────────────────────────────────────────────────────

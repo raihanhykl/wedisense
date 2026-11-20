@@ -5,6 +5,11 @@ type PrismaTransactionClient = Omit<
   '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
 >;
 
+// ── SMS return-request numbers ─────────────────────────────────────────────
+
+/** Document type key for cross-branch return request numbers: `RET-YYYYMMDD-NNNN`. */
+export const DOCUMENT_TYPE_RET = 'RET';
+
 /**
  * Indonesian administrative letters number their month in Roman numerals.
  * Indexed by `Date#getMonth()` (0-based), so January is at index 0.
@@ -96,4 +101,41 @@ export async function generateHandoverFormNumber(
   }
 
   return formatHandoverFormNumber(sequence, options);
+}
+
+// ── Return-request number generation ───────────────────────────────────────
+
+/**
+ * Allocates the next return-request number for the given date, atomically.
+ *
+ * Format: `RET-YYYYMMDD-NNNN` (four-digit daily sequence, e.g. `RET-20261120-0001`).
+ * The sequence resets each calendar day (keyed on year AND the day-of-year
+ * via the `year` column reused as `YYYYMMDD` integer).
+ *
+ * MUST be called inside a transaction.
+ */
+export async function generateReturnRequestNumber(
+  tx: PrismaTransactionClient,
+  date: Date,
+): Promise<string> {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const yyyymmdd = Number(`${year}${month}${day}`);
+
+  const rows = await tx.$queryRaw<Array<{ current_sequence: number }>>`
+    INSERT INTO document_number_sequences (id, document_type, year, current_sequence)
+    VALUES (gen_random_uuid(), ${DOCUMENT_TYPE_RET}, ${yyyymmdd}, 1)
+    ON CONFLICT (document_type, year)
+    DO UPDATE SET current_sequence = document_number_sequences.current_sequence + 1
+    RETURNING current_sequence
+  `;
+
+  const sequence = rows[0]?.current_sequence;
+  if (sequence === undefined) {
+    throw new Error('Return request number sequence UPSERT returned no row');
+  }
+
+  const seq = String(sequence).padStart(4, '0');
+  return `${DOCUMENT_TYPE_RET}-${year}${month}${day}-${seq}`;
 }

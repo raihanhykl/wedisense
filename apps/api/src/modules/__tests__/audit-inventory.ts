@@ -751,6 +751,78 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     module: 'sms-orders',
     decision: audited('sms/orders'),
   },
+
+  // ── sms return-requests ───────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/return-requests',
+    module: 'sms-return-requests',
+    decision: audited('sms/return-requests'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/return-requests/:id/custody-received',
+    module: 'sms-return-requests',
+    decision: audited('sms/return-requests'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/return-requests/:id/decide',
+    module: 'sms-return-requests',
+    decision: audited('sms/return-requests'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/return-requests/:id/official-receipt',
+    module: 'sms-return-requests',
+    decision: audited('sms/return-requests'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/return-requests/:id/custody-handback',
+    module: 'sms-return-requests',
+    decision: audited('sms/return-requests'),
+  },
+
+  // ── sms orders: sale return ───────────────────────────────────────────────────
+  {
+    method: 'PUT',
+    path: '/api/sms/orders/:oid/lines/:lid/sale-return',
+    module: 'sms-orders',
+    decision: audited('sms/orders'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/orders/:oid/lines/:lid/sale-return/decide',
+    module: 'sms-orders',
+    decision: audited('sms/orders'),
+  },
+
+  // ── sms rto-contracts ─────────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/rto-contracts',
+    module: 'sms-rto-contracts',
+    decision: audited('sms/rto-contracts'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/rto-contracts/:id/return',
+    module: 'sms-rto-contracts',
+    decision: audited('sms/rto-contracts'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/rto-contracts/:id/close',
+    module: 'sms-rto-contracts',
+    decision: audited('sms/rto-contracts'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/rto-contracts/:id/ownership-transfer',
+    module: 'sms-rto-contracts',
+    decision: audited('sms/rto-contracts'),
+  },
 ];
 
 /**

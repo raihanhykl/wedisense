@@ -15,6 +15,11 @@ import type {
   StaleBookingTask,
   AwaitingPickupTask,
   OverdueShowUnitTask,
+  ReturnToDecideTask,
+  ReturnAwaitingReceiptTask,
+  CustodyHeldTask,
+  RtoReturnedNotClosedTask,
+  SaleReturnToDecideTask,
 } from "@/lib/sms/types";
 
 // ── Stat tile ─────────────────────────────────────────────────────────
@@ -188,7 +193,12 @@ export default function SmsHomePage() {
     tasks.identityMismatches.total === 0 &&
     tasks.staleBookings.total === 0 &&
     tasks.awaitingPickup.total === 0 &&
-    tasks.overdueShowUnits.total === 0;
+    tasks.overdueShowUnits.total === 0 &&
+    (tasks.returnsToDecide?.total ?? 0) === 0 &&
+    (tasks.returnsAwaitingReceipt?.total ?? 0) === 0 &&
+    (tasks.custodyHeld?.total ?? 0) === 0 &&
+    (tasks.rtoReturnedNotClosed?.total ?? 0) === 0 &&
+    (tasks.saleReturnsToDecide?.total ?? 0) === 0;
 
   return (
     <div className="p-4 md:p-6" data-tour="sms-dashboard">
@@ -603,6 +613,135 @@ export default function SmsHomePage() {
                       <span className="whitespace-nowrap text-xs font-medium text-red-700">
                         {item.daysOverdue}d overdue
                       </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Returns to decide (incoming PENDING) */}
+            {tasks && (tasks.returnsToDecide?.total ?? 0) > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4" data-tour="sms-dashboard-returns-to-decide">
+                <h3 className="mb-3 text-sm font-semibold text-amber-900">
+                  Returns to decide ({tasks.returnsToDecide.total})
+                </h3>
+                <div className="space-y-2">
+                  {tasks.returnsToDecide.data.map((item: ReturnToDecideTask) => (
+                    <div key={item.requestId} className="flex items-center justify-between gap-4 text-sm">
+                      <div>
+                        <Link
+                          href="/admin/sms/returns?tab=to-decide"
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {item.requestNumber}
+                        </Link>
+                        <span className="ml-2 font-mono text-xs">{item.vin}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">{item.variantLabel}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">from {item.toShowroomName}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Returns awaiting official receipt (outgoing APPROVED) */}
+            {tasks && (tasks.returnsAwaitingReceipt?.total ?? 0) > 0 && (
+              <div className="rounded-lg border bg-card p-4">
+                <h3 className="mb-3 text-sm font-semibold">
+                  Awaiting official receipt ({tasks.returnsAwaitingReceipt.total})
+                </h3>
+                <div className="space-y-2">
+                  {tasks.returnsAwaitingReceipt.data.map((item: ReturnAwaitingReceiptTask) => (
+                    <div key={item.requestId} className="flex items-center justify-between gap-4 text-sm">
+                      <div>
+                        <Link
+                          href="/admin/sms/returns?tab=our-requests"
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {item.requestNumber}
+                        </Link>
+                        <span className="ml-2 font-mono text-xs">{item.vin}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">from {item.fromShowroomName}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Custody held */}
+            {tasks && (tasks.custodyHeld?.total ?? 0) > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                <h3 className="mb-3 text-sm font-semibold text-red-900">
+                  Custody held ({tasks.custodyHeld.total})
+                </h3>
+                <div className="space-y-2">
+                  {tasks.custodyHeld.data.map((item: CustodyHeldTask) => (
+                    <div key={item.unitId} className="flex items-center justify-between gap-4 text-sm">
+                      <div>
+                        <Link
+                          href={`/admin/sms/units/${item.unitId}`}
+                          className="font-mono font-medium text-primary hover:underline"
+                        >
+                          {item.vin}
+                        </Link>
+                        <span className="ml-2 text-xs text-muted-foreground">{item.variantLabel}</span>
+                        {item.needsHandback && (
+                          <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+                            Rejected — hand back or re-request
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* RTO returned — contract not closed */}
+            {tasks && (tasks.rtoReturnedNotClosed?.total ?? 0) > 0 && (
+              <div className="rounded-lg border bg-card p-4">
+                <h3 className="mb-3 text-sm font-semibold">
+                  RTO returned — contract not closed ({tasks.rtoReturnedNotClosed.total})
+                </h3>
+                <div className="space-y-2">
+                  {tasks.rtoReturnedNotClosed.data.map((item: RtoReturnedNotClosedTask) => (
+                    <div key={item.contractId} className="flex items-center justify-between gap-4 text-sm">
+                      <div>
+                        <Link
+                          href={`/admin/sms/units/${item.unitId}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {item.contractNumber}
+                        </Link>
+                        <span className="ml-2 font-mono text-xs">{item.vin}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">{item.variantLabel}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sale returns to decide */}
+            {tasks && (tasks.saleReturnsToDecide?.total ?? 0) > 0 && (
+              <div className="rounded-lg border bg-card p-4">
+                <h3 className="mb-3 text-sm font-semibold">
+                  Sale returns to decide ({tasks.saleReturnsToDecide.total})
+                </h3>
+                <div className="space-y-2">
+                  {tasks.saleReturnsToDecide.data.map((item: SaleReturnToDecideTask) => (
+                    <div key={item.lineId} className="flex items-center justify-between gap-4 text-sm">
+                      <div>
+                        <Link
+                          href={`/admin/sms/orders/${item.orderId}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {item.spk}
+                        </Link>
+                        <span className="ml-2 font-mono text-xs">{item.vin}</span>
+                      </div>
                     </div>
                   ))}
                 </div>
