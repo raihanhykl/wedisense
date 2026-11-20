@@ -186,14 +186,17 @@ export async function previewManifest(
     const rv = rawVariant?.toLowerCase() ?? '';
     const rc = rawColor?.toLowerCase() ?? '';
 
-    const matched = (variants as VariantRow[]).find((v) => {
+    const matches = (variants as VariantRow[]).filter((v) => {
       const modelMatch = !rm || v.model.code.toLowerCase() === rm || v.model.name.toLowerCase() === rm;
       const variantMatch = !rv || v.name.toLowerCase() === rv;
       const colorMatch = !rc || v.color.toLowerCase() === rc;
       return modelMatch && variantMatch && colorMatch;
     });
 
-    return matched?.id ?? null;
+    // Only an unambiguous match is accepted. When the manifest leaves out a
+    // part (say the colour) and several variants fit, picking the first one
+    // would silently record the wrong colour — leave it for the admin.
+    return matches.length === 1 ? matches[0]!.id : null;
   }
 
   const candidates: ClassifiedCandidate[] = result.candidates.map((c) => {
@@ -201,14 +204,17 @@ export async function previewManifest(
     let otherShipment: ClassifiedCandidate['otherShipment'];
     let existingUnit: ClassifiedCandidate['existingUnit'];
 
-    if (inThisShipmentSet.has(c.vin)) {
+    // A unit that already exists is the strongest fact — report it as
+    // received even when the VIN is also listed on a shipment.
+    if (existingUnitMap.has(c.vin)) {
+      classification = 'ALREADY_RECEIVED';
+      existingUnit = { status: existingUnitMap.get(c.vin)! };
+      otherShipment = inOtherMap.get(c.vin);
+    } else if (inThisShipmentSet.has(c.vin)) {
       classification = 'ALREADY_IN_THIS_SHIPMENT';
     } else if (inOtherMap.has(c.vin)) {
       classification = 'IN_OTHER_SHIPMENT';
       otherShipment = inOtherMap.get(c.vin);
-    } else if (existingUnitMap.has(c.vin)) {
-      classification = 'ALREADY_RECEIVED';
-      existingUnit = { status: existingUnitMap.get(c.vin)! };
     }
 
     const variantId = matchVariant(c.model, c.variant, c.color);

@@ -8,9 +8,13 @@ import { ShowroomProvider, useShowroom } from "@/components/sms/showroom-context
  * showroom and never flash data for the wrong one.
  */
 function StockAccessGate({ children }: { children: React.ReactNode }) {
-  const { isLoading, error, showrooms } = useShowroom();
+  const { isLoading, error, showrooms, showroom } = useShowroom();
 
-  if (isLoading) {
+  // Also wait for the remembered showroom to be restored: pages rely on a
+  // selected showroom from their very first render (e.g. as a form default).
+  const isRestoringSelection = !error && showrooms.length > 0 && !showroom;
+
+  if (isLoading || isRestoringSelection) {
     return (
       <div className="p-4 md:p-6">
         <div className="h-8 w-56 animate-pulse rounded-md bg-muted" />

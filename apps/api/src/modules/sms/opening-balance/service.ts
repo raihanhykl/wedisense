@@ -11,6 +11,7 @@
  */
 import ExcelJS from 'exceljs';
 import { SMS_PERMISSIONS, SMS_STOCK_LOCATION_TYPES } from '@wedisense/shared';
+import { prisma } from '../../../lib/prisma.js';
 import { AppError } from '../../../middleware/error-handler.js';
 import {
   getSmsAccess,
@@ -32,7 +33,7 @@ import {
   suggestColumnMapping,
 } from '../lib/tabular.js';
 import * as repo from './repository.js';
-import { validateRow, matchVariant } from './row-validator.js';
+import { validateRow, matchVariant, validateConfirmRow } from './row-validator.js';
 import type { Request } from 'express';
 import type {
   ObInspectResponse,
@@ -314,6 +315,18 @@ export async function confirmBalance(
     assertCan(access, SMS_PERMISSIONS.RECEIVING_MANAGE, sid);
   }
 
+  // A unit in custody is physically at another showroom: that showroom's
+  // stock changes too, so it needs the same validation and permission.
+  const heldAtIds = new Set(
+    body.rows.map((r) => r.heldAtShowroomId).filter((id): id is string => Boolean(id)),
+  );
+  for (const sid of heldAtIds) {
+    if (showroomIds.has(sid)) continue;
+    const loc = await repo.findStockLocation(sid);
+    validateStockLocationRow(loc, sid);
+    assertCan(access, SMS_PERMISSIONS.RECEIVING_MANAGE, sid);
+  }
+
   // Server-side re-validation
   const allVins = body.rows.map((r) => r.vin.trim().toUpperCase());
 
@@ -372,8 +385,37 @@ export async function confirmBalance(
   // needed here because existingVins etc. are already loaded)
   const perRowErrors: Array<{ row: number; vin: string; field?: string; message: string }> = [];
 
+  // Ids the payload refers to must exist — otherwise the insert would fail on
+  // a foreign key and surface as a 500 instead of a message naming the row.
+  const variantIds = [...new Set(body.rows.map((r) => r.variantId))];
+  const userIds = [
+    ...new Set(
+      body.rows.flatMap((r) => [r.salesUserId, r.picUserId]).filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const [knownVariants, knownUsers] = await Promise.all([
+    prisma.smsVehicleVariant.findMany({ where: { id: { in: variantIds } }, select: { id: true } }),
+    userIds.length > 0
+      ? prisma.user.findMany({ where: { id: { in: userIds }, deletedAt: null }, select: { id: true } })
+      : Promise.resolve([]),
+  ]);
+  const knownVariantIds = new Set(knownVariants.map((v) => v.id));
+  const knownUserIds = new Set(knownUsers.map((u) => u.id));
+
   for (const row of body.rows) {
     const vin = row.vin.trim().toUpperCase();
+    for (const problem of validateConfirmRow(row)) {
+      perRowErrors.push({ row: row.row, vin, ...problem });
+    }
+    if (!knownVariantIds.has(row.variantId)) {
+      perRowErrors.push({ row: row.row, vin, field: 'variantId', message: 'Variant not found in the product master' });
+    }
+    if (row.salesUserId && !knownUserIds.has(row.salesUserId)) {
+      perRowErrors.push({ row: row.row, vin, field: 'salesUserId', message: 'Sales person not found' });
+    }
+    if (row.picUserId && !knownUserIds.has(row.picUserId)) {
+      perRowErrors.push({ row: row.row, vin, field: 'picUserId', message: 'Person in charge not found' });
+    }
     if (existingVins.has(vin)) {
       perRowErrors.push({ row: row.row, vin, field: 'vin', message: `VIN ${vin} is already registered` });
     }
@@ -389,7 +431,7 @@ export async function confirmBalance(
   if (perRowErrors.length > 0) {
     throw new AppError(
       422, 'SMS_OPENING_BALANCE_VALIDATION_FAILED',
-      'One or more rows failed server-side validation',
+      `${new Set(perRowErrors.map((e) => e.row)).size} row(s) cannot be imported. Nothing was saved.`,
       perRowErrors,
     );
   }

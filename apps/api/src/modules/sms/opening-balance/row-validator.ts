@@ -396,3 +396,70 @@ export function validateRow(
     warnings,
   };
 }
+
+// ── Confirm-time requirements ────────────────────────────────────────────────
+
+/** The state-dependent fields of a normalised row, as sent to confirm. */
+export interface ConfirmRowRequirements {
+  state: ObState;
+  showroomId: string;
+  spkNumber?: string;
+  customerName?: string;
+  contractNumber?: string;
+  eventName?: string;
+  eventLocation?: string;
+  expectedReturnDate?: string;
+  heldAtShowroomId?: string;
+}
+
+/**
+ * What a normalised row must carry for its state.
+ *
+ * The preview reports these on the raw spreadsheet values; confirm MUST
+ * re-check them on the payload it actually receives, because the client is
+ * never trusted to have sent what the preview approved. Returning problems
+ * (instead of throwing) lets confirm report every bad row at once.
+ */
+export function validateConfirmRow(
+  row: ConfirmRowRequirements,
+): Array<{ field: string; message: string }> {
+  const problems: Array<{ field: string; message: string }> = [];
+  const missing = (value: string | undefined) => value === undefined || value.trim() === '';
+  const require = (field: keyof ConfirmRowRequirements, label: string) => {
+    if (missing(row[field])) {
+      problems.push({ field, message: `${label} is required for a unit that is ${row.state}` });
+    }
+  };
+
+  switch (row.state) {
+    case 'BOOKED':
+    case 'SOLD_PENDING_PICKUP':
+      require('spkNumber', 'SPK number');
+      require('customerName', 'Customer name');
+      break;
+    case 'ACTIVE_RTO':
+      require('contractNumber', 'Contract number');
+      require('customerName', 'Customer name');
+      break;
+    case 'CUSTODY':
+      require('contractNumber', 'Contract number');
+      require('customerName', 'Customer name');
+      require('heldAtShowroomId', 'The showroom holding the unit');
+      if (!missing(row.heldAtShowroomId) && row.heldAtShowroomId === row.showroomId) {
+        problems.push({
+          field: 'heldAtShowroomId',
+          message: 'The showroom holding the unit must differ from the responsible showroom',
+        });
+      }
+      break;
+    case 'SHOW_UNIT':
+      require('eventName', 'Event name');
+      require('eventLocation', 'Event location');
+      require('expectedReturnDate', 'Expected return date');
+      break;
+    case 'AVAILABLE':
+    case 'INSPECTION':
+      break;
+  }
+  return problems;
+}

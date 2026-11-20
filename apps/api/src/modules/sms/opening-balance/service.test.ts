@@ -136,8 +136,12 @@ function setupRunIdempotent() {
 // ── confirmBalance tests ──────────────────────────────────────────────────────
 
 describe('confirmBalance', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // confirm checks that every referenced variant / user exists.
+    const { prisma } = await import('../../../lib/prisma.js');
+    vi.mocked(prisma.smsVehicleVariant.findMany).mockResolvedValue([{ id: VARIANT_ID }] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
     mockGetSmsAccess.mockReturnValue(mockAccess);
     mockAssertCan.mockReturnValue(undefined);
     mockFindStockLocation.mockResolvedValue(mockLocation);
