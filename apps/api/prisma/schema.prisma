@@ -250,6 +250,23 @@ model User {
   createdHandoverForms        HandoverForm[]        @relation("HandoverCreatedBy")
   uploadedHandoverScans       HandoverForm[]        @relation("HandoverScanUploadedBy")
 
+  // SMS (Stock Management System)
+  smsShipmentsCreated        SmsShipment[]      @relation("SmsShipmentCreatedBy")
+  smsShipmentLinesReceived   SmsShipmentLine[]  @relation("SmsShipmentLineReceivedBy")
+  smsUnitsCreated            SmsUnit[]          @relation("SmsUnitCreatedBy")
+  smsUnitEventsPerformed     SmsUnitEvent[]     @relation("SmsUnitEventPerformedBy")
+  smsOrdersAsSales           SmsOrder[]         @relation("SmsOrderSales")
+  smsOrdersCreated           SmsOrder[]         @relation("SmsOrderCreatedBy")
+  smsRtoContractsAsSales     SmsRtoContract[]   @relation("SmsRtoContractSales")
+  smsRtoContractsClosed      SmsRtoContract[]   @relation("SmsRtoContractClosedBy")
+  smsRtoContractsCreated     SmsRtoContract[]   @relation("SmsRtoContractCreatedBy")
+  smsReturnRequestsRequested SmsReturnRequest[] @relation("SmsReturnRequestRequestedBy")
+  smsReturnRequestsDecided   SmsReturnRequest[] @relation("SmsReturnRequestDecidedBy")
+  smsInspectionsAsInspector  SmsInspection[]    @relation("SmsInspectionInspector")
+  smsInspectionsCreated      SmsInspection[]    @relation("SmsInspectionCreatedBy")
+  smsShowLoansAsPic          SmsShowLoan[]      @relation("SmsShowLoanPic")
+  smsShowLoansCreated        SmsShowLoan[]      @relation("SmsShowLoanCreatedBy")
+
   @@index([status])
   @@index([deletedAt])
   @@index([employeeId])
@@ -393,6 +410,19 @@ model Location {
   procurementBatchesAsDefault ProcurementBatch[] @relation("ProcurementBatchDefaultLocation")
   handoverFormsFrom           HandoverForm[]     @relation("HandoverFromLocation")
   handoverFormsTo             HandoverForm[]     @relation("HandoverToLocation")
+
+  // SMS (Stock Management System)
+  smsShipmentsAsDestination SmsShipment[]      @relation("SmsShipmentDestination")
+  smsShipmentsAsOrigin      SmsShipment[]      @relation("SmsShipmentOrigin")
+  smsUnitsPhysicallyHere    SmsUnit[]          @relation("SmsUnitPhysicalLocation")
+  smsUnitsResponsibleFor    SmsUnit[]          @relation("SmsUnitResponsibleShowroom")
+  smsUnitEvents             SmsUnitEvent[]     @relation("SmsUnitEventLocation")
+  smsOrders                 SmsOrder[]         @relation("SmsOrderShowroom")
+  smsRtoContractsOriginated SmsRtoContract[]   @relation("SmsRtoContractOriginShowroom")
+  smsRtoContractsReceived   SmsRtoContract[]   @relation("SmsRtoContractReceivedAtShowroom")
+  smsReturnRequestsFrom     SmsReturnRequest[] @relation("SmsReturnRequestFromShowroom")
+  smsReturnRequestsTo       SmsReturnRequest[] @relation("SmsReturnRequestToShowroom")
+  smsShowLoans              SmsShowLoan[]      @relation("SmsShowLoanShowroom")
 
   @@index([parentId])
   @@index([type])
@@ -1236,4 +1266,637 @@ model CompanySetting {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   @@map("company_settings")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SMS — Stock Management System (motorcycle units tracked per VIN)
+//
+// Design: docs/specs/sms-technical-design.md. Product spec:
+// docs/specs/stock-management-system.md.
+//
+// Ground rules for everything below:
+//   - One SmsUnit row per VIN across the whole network. It is a PROJECTION:
+//     the append-only SmsUnitEvent ledger is the business truth, and the
+//     unit row is rewritten from the reducer result inside the same
+//     transaction that appends the event.
+//   - A unit stores three independent facts: where it physically is
+//     (physicalLocationId), which showroom answers for it
+//     (responsibleShowroomId), and its lifecycle status.
+//       physical stock of showroom L  =  physicalLocationId = L
+//       ready to offer at showroom L  =  physicalLocationId = L AND status = AVAILABLE
+//     physicalLocationId is non-null if and only if the motorcycle is inside
+//     a showroom (never while it is with a customer or out at an event).
+//   - "At most one" invariants (one booking/sale holding a VIN, one open RTO
+//     contract, one unresolved return request, one show outing) are carried
+//     by nullable UNIQUE pointer columns on SmsUnit, written only while the
+//     unit row is locked. No raw-SQL partial index is needed for them.
+//   - Nothing here references the AMS Asset/AssetMovement models. Shared FK
+//     targets are User (employee; login optional) and Location.
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum SmsUnitStatus {
+  AVAILABLE // in a showroom, may be offered
+  BOOKED // locked by an SPK line
+  SOLD_PENDING_PICKUP // sold, still physically in the showroom
+  PICKED_UP // with the customer for good (sold, or RTO ended in ownership transfer)
+  ACTIVE_RTO // with the customer under a rent-to-own contract
+  CUSTODY // left at another showroom, cross-branch return not officially received
+  INSPECTION // received back / damaged — held until released
+  SHOW_UNIT // out at an event, held by a PIC
+  IDENTITY_MISMATCH // physically found but identity differs from the manifest
+}
+
+enum SmsUnitEventType {
+  OPENING_BALANCE
+  RECEIPT_OK
+  RECEIPT_DAMAGED
+  IDENTITY_MISMATCH_FOUND
+  IDENTITY_RESOLVED
+  INSPECTION_STARTED
+  INSPECTION_PASSED
+  INSPECTION_FAILED
+  UNIT_RELEASED
+  BOOKING_CREATED
+  BOOKING_CANCELLED
+  SALE_RECORDED
+  PICKUP_CONFIRMED
+  SALE_RETURN_RECEIVED
+  SALE_RETURN_APPROVED
+  SALE_RETURN_REJECTED
+  RTO_STARTED
+  RTO_RETURNED
+  RTO_OWNERSHIP_TRANSFERRED
+  RTO_CONTRACT_CLOSED
+  RETURN_REQUESTED
+  RETURN_APPROVED
+  RETURN_REJECTED
+  CUSTODY_RECEIVED
+  CUSTODY_HANDED_BACK
+  OFFICIAL_RECEIPT_CONFIRMED
+  SHOW_UNIT_DISPATCHED
+  SHOW_UNIT_RETURNED
+  EVENT_VOIDED
+}
+
+enum SmsShipmentLineStatus {
+  PENDING // listed on the manifest, not physically confirmed yet
+  RECEIVED_OK
+  RECEIVED_DAMAGED
+  DISCREPANCY // arrived with a different identity — see the linked unit
+}
+
+enum SmsOrderLineStatus {
+  BOOKED
+  SOLD
+  PICKED_UP
+  RTO_HANDED_OVER
+  CANCELLED
+  RETURNED
+}
+
+// Shared by cross-branch return requests and sale-return decisions.
+enum SmsDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SmsRtoReturnKind {
+  RETURNED_BY_CUSTOMER
+  REPOSSESSED
+}
+
+enum SmsRtoOutcome {
+  RETURNED
+  REPOSSESSED
+  OWNERSHIP_TRANSFERRED
+}
+
+enum SmsInspectionReason {
+  RECEIPT_DAMAGE
+  IDENTITY_MISMATCH
+  RTO_RETURN
+  CROSS_BRANCH_RETURN
+  SALE_RETURN
+  SHOW_UNIT_RETURN
+  OTHER
+}
+
+enum SmsInspectionResult {
+  PENDING
+  PASSED
+  FAILED
+}
+
+enum SmsVehicleCondition {
+  NEW
+  GOOD
+  FAIR
+  POOR
+  DAMAGED
+}
+
+// ── Product master ─────────────────────────────────────────────────────────
+
+model SmsVehicleModel {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique @map("code")
+  name      String   @map("name")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  variants SmsVehicleVariant[]
+
+  @@index([isActive])
+  @@map("sms_vehicle_models")
+}
+
+// One row = one sellable configuration: model + variant (the battery option
+// is part of the variant) + colour. Sales search stock by exactly this
+// combination, so it is a standardised choice rather than free text.
+model SmsVehicleVariant {
+  id             String   @id @default(uuid()) @db.Uuid
+  modelId        String   @map("model_id") @db.Uuid
+  name           String   @map("name")
+  batteryVariant String?  @map("battery_variant")
+  color          String   @map("color")
+  colorHex       String?  @map("color_hex")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  model         SmsVehicleModel   @relation(fields: [modelId], references: [id], onDelete: Restrict)
+  units         SmsUnit[]
+  shipmentLines SmsShipmentLine[]
+
+  @@unique([modelId, name, color])
+  @@index([modelId])
+  @@index([isActive])
+  @@map("sms_vehicle_variants")
+}
+
+// ── Inbound: factory manifest → expected VINs → physical receipt ───────────
+
+// The part of a factory batch that is headed to ONE destination showroom.
+// When the factory splits a batch across showrooms, each showroom gets its
+// own SmsShipment sharing the same batchNumber, and sees only its own
+// receiving progress. Progress is derived from line statuses, never stored.
+model SmsShipment {
+  id                    String    @id @default(uuid()) @db.Uuid
+  batchNumber           String    @map("batch_number")
+  // Surat jalan. Empty string when none was given — kept non-null so the
+  // unique key below also de-duplicates shipments without a delivery note.
+  deliveryNoteNumber    String    @default("") @map("delivery_note_number")
+  destinationLocationId String    @map("destination_location_id") @db.Uuid
+  originLocationId      String?   @map("origin_location_id") @db.Uuid
+  dispatchDate          DateTime? @map("dispatch_date") @db.Date
+  notes                 String?   @map("notes")
+  sourceFileName        String?   @map("source_file_name")
+  columnMapping         Json?     @map("column_mapping")
+  createdByUserId       String    @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  destinationLocation Location          @relation("SmsShipmentDestination", fields: [destinationLocationId], references: [id], onDelete: Restrict)
+  originLocation      Location?         @relation("SmsShipmentOrigin", fields: [originLocationId], references: [id], onDelete: Restrict)
+  createdBy           User              @relation("SmsShipmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  lines               SmsShipmentLine[]
+  units               SmsUnit[]
+
+  @@unique([destinationLocationId, batchNumber, deliveryNoteNumber])
+  @@index([batchNumber])
+  @@index([createdAt])
+  @@map("sms_shipments")
+}
+
+// One expected motorcycle. Importing a manifest only creates these lines
+// ("expected to arrive"); the SmsUnit is created when an admin confirms the
+// motorcycle physically arrived. A line with isExpected = false records a
+// motorcycle that turned up without being on the manifest.
+model SmsShipmentLine {
+  id               String                @id @default(uuid()) @db.Uuid
+  shipmentId       String                @map("shipment_id") @db.Uuid
+  vin              String                @map("vin")
+  engineNumber     String?               @map("engine_number")
+  variantId        String?               @map("variant_id") @db.Uuid
+  // Model/variant/colour text exactly as it appeared in the source file,
+  // kept so an unmatched variant can still be shown and resolved later.
+  rawModel         String?               @map("raw_model")
+  rawVariant       String?               @map("raw_variant")
+  rawColor         String?               @map("raw_color")
+  // [{ row: number, values: Record<string,string> }] — every source row that
+  // was folded into this candidate (component detail rows repeat the VIN).
+  sourceRows       Json                  @map("source_rows")
+  isExpected       Boolean               @default(true) @map("is_expected")
+  receiptStatus    SmsShipmentLineStatus @default(PENDING) @map("receipt_status")
+  discrepancyNotes String?               @map("discrepancy_notes")
+  unitId           String?               @unique @map("unit_id") @db.Uuid
+  receivedByUserId String?               @map("received_by_user_id") @db.Uuid
+  receivedAt       DateTime?             @map("received_at")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+
+  shipment   SmsShipment        @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  variant    SmsVehicleVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  unit       SmsUnit?           @relation("SmsShipmentLineUnit", fields: [unitId], references: [id], onDelete: Restrict)
+  receivedBy User?              @relation("SmsShipmentLineReceivedBy", fields: [receivedByUserId], references: [id], onDelete: Restrict)
+  events     SmsUnitEvent[]
+
+  @@unique([shipmentId, vin])
+  @@index([vin])
+  @@index([shipmentId, receiptStatus])
+  @@map("sms_shipment_lines")
+}
+
+// ── The unit (one per VIN) and its ledger ──────────────────────────────────
+
+model SmsUnit {
+  id                    String        @id @default(uuid()) @db.Uuid
+  vin                   String        @unique @map("vin")
+  engineNumber          String?       @map("engine_number")
+  licensePlate          String?       @map("license_plate")
+  variantId             String        @map("variant_id") @db.Uuid
+  status                SmsUnitStatus @map("status")
+  physicalLocationId    String?       @map("physical_location_id") @db.Uuid
+  responsibleShowroomId String        @map("responsible_showroom_id") @db.Uuid
+  // Set on the first RTO handover and never cleared — drives the "Ex-RTO" badge.
+  wasRto                Boolean       @default(false) @map("was_rto")
+  // True when the unit entered SMS through the cutover import, i.e. its
+  // earlier history is not available.
+  isOpeningBalance      Boolean       @default(false) @map("is_opening_balance")
+  shipmentId            String?       @map("shipment_id") @db.Uuid
+  // First time the unit was physically received into a showroom.
+  receivedAt            DateTime?     @map("received_at")
+  notes                 String?       @map("notes")
+
+  // "At most one" pointers — see the header comment.
+  activeOrderLineId   String? @unique @map("active_order_line_id") @db.Uuid
+  openRtoContractId   String? @unique @map("open_rto_contract_id") @db.Uuid
+  openReturnRequestId String? @unique @map("open_return_request_id") @db.Uuid
+  openShowLoanId      String? @unique @map("open_show_loan_id") @db.Uuid
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  variant             SmsVehicleVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  physicalLocation    Location?         @relation("SmsUnitPhysicalLocation", fields: [physicalLocationId], references: [id], onDelete: Restrict)
+  responsibleShowroom Location          @relation("SmsUnitResponsibleShowroom", fields: [responsibleShowroomId], references: [id], onDelete: Restrict)
+  shipment            SmsShipment?      @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  createdBy           User              @relation("SmsUnitCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  activeOrderLine   SmsOrderLine?     @relation("SmsUnitActiveOrderLine", fields: [activeOrderLineId], references: [id], onDelete: Restrict)
+  openRtoContract   SmsRtoContract?   @relation("SmsUnitOpenRtoContract", fields: [openRtoContractId], references: [id], onDelete: Restrict)
+  openReturnRequest SmsReturnRequest? @relation("SmsUnitOpenReturnRequest", fields: [openReturnRequestId], references: [id], onDelete: Restrict)
+  openShowLoan      SmsShowLoan?      @relation("SmsUnitOpenShowLoan", fields: [openShowLoanId], references: [id], onDelete: Restrict)
+
+  shipmentLine   SmsShipmentLine?   @relation("SmsShipmentLineUnit")
+  events         SmsUnitEvent[]
+  orderLines     SmsOrderLine[]     @relation("SmsOrderLineUnit")
+  rtoContracts   SmsRtoContract[]   @relation("SmsRtoContractUnit")
+  returnRequests SmsReturnRequest[] @relation("SmsReturnRequestUnit")
+  showLoans      SmsShowLoan[]      @relation("SmsShowLoanUnit")
+  inspections    SmsInspection[]
+
+  @@index([physicalLocationId, status])
+  @@index([responsibleShowroomId, status])
+  @@index([variantId])
+  @@index([status])
+  @@index([engineNumber])
+  @@index([licensePlate])
+  @@map("sms_units")
+}
+
+// Append-only business history: "what happened to this motorcycle".
+// Rows are never updated or deleted. A wrong entry is corrected by appending
+// another event that points at it (supersedesEventId / voidsEventId); the
+// EFFECTIVE ledger of a unit is the events that nothing supersedes or voids,
+// ordered by seq.
+model SmsUnitEvent {
+  id                String           @id @default(uuid()) @db.Uuid
+  // Insertion order. Events of one unit are appended under the unit row
+  // lock, so seq is strictly increasing per unit.
+  seq               Int              @unique @default(autoincrement()) @map("seq")
+  unitId            String           @map("unit_id") @db.Uuid
+  eventType         SmsUnitEventType @map("event_type")
+  // Business date of the event (may be back-dated for late input) versus
+  // recordedAt, the moment it was typed in.
+  eventDate         DateTime         @map("event_date") @db.Date
+  recordedAt        DateTime         @default(now()) @map("recorded_at")
+  performedByUserId String?          @map("performed_by_user_id") @db.Uuid
+  // The showroom where the event took place, when that matters to the
+  // reducer (receipt, custody, return). Correctable via a superseding event.
+  locationId        String?          @map("location_id") @db.Uuid
+  // Extra reducer inputs for this event type (see unit-state.ts).
+  payload           Json?            @map("payload")
+
+  // Snapshot of the unit state the reducer produced when the event was
+  // recorded. Informational — reports replay the effective ledger instead.
+  statusAfter                SmsUnitStatus @map("status_after")
+  physicalLocationAfterId    String?       @map("physical_location_after_id") @db.Uuid
+  responsibleShowroomAfterId String        @map("responsible_showroom_after_id") @db.Uuid
+
+  // Context links.
+  shipmentLineId  String? @map("shipment_line_id") @db.Uuid
+  orderLineId     String? @map("order_line_id") @db.Uuid
+  rtoContractId   String? @map("rto_contract_id") @db.Uuid
+  returnRequestId String? @map("return_request_id") @db.Uuid
+  showLoanId      String? @map("show_loan_id") @db.Uuid
+  inspectionId    String? @map("inspection_id") @db.Uuid
+
+  // Corrections.
+  supersedesEventId String? @unique @map("supersedes_event_id") @db.Uuid
+  voidsEventId      String? @unique @map("voids_event_id") @db.Uuid
+
+  reason      String? @map("reason")
+  notes       String? @map("notes")
+  attachments Json?   @map("attachments")
+
+  unit          SmsUnit           @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  performedBy   User?             @relation("SmsUnitEventPerformedBy", fields: [performedByUserId], references: [id], onDelete: Restrict)
+  location      Location?         @relation("SmsUnitEventLocation", fields: [locationId], references: [id], onDelete: Restrict)
+  shipmentLine  SmsShipmentLine?  @relation(fields: [shipmentLineId], references: [id], onDelete: Restrict)
+  orderLine     SmsOrderLine?     @relation(fields: [orderLineId], references: [id], onDelete: Restrict)
+  rtoContract   SmsRtoContract?   @relation(fields: [rtoContractId], references: [id], onDelete: Restrict)
+  returnRequest SmsReturnRequest? @relation(fields: [returnRequestId], references: [id], onDelete: Restrict)
+  showLoan      SmsShowLoan?      @relation(fields: [showLoanId], references: [id], onDelete: Restrict)
+  inspection    SmsInspection?    @relation(fields: [inspectionId], references: [id], onDelete: Restrict)
+
+  supersedes   SmsUnitEvent? @relation("SmsUnitEventSupersedes", fields: [supersedesEventId], references: [id], onDelete: Restrict)
+  supersededBy SmsUnitEvent? @relation("SmsUnitEventSupersedes")
+  voids        SmsUnitEvent? @relation("SmsUnitEventVoids", fields: [voidsEventId], references: [id], onDelete: Restrict)
+  voidedBy     SmsUnitEvent? @relation("SmsUnitEventVoids")
+
+  @@index([unitId, seq])
+  @@index([eventDate])
+  @@index([eventType])
+  @@index([orderLineId])
+  @@index([rtoContractId])
+  @@index([returnRequestId])
+  @@map("sms_unit_events")
+}
+
+// ── Outbound: SPK (order) and its per-VIN lines ────────────────────────────
+
+// One SPK. Customer and sales are entered once and shared by every line.
+// spkNumber is typed by the admin from the paper document.
+model SmsOrder {
+  id               String   @id @default(uuid()) @db.Uuid
+  showroomId       String   @map("showroom_id") @db.Uuid
+  spkNumber        String   @map("spk_number")
+  salesUserId      String?  @map("sales_user_id") @db.Uuid
+  customerName     String   @map("customer_name")
+  customerPhone    String?  @map("customer_phone")
+  customerIdNumber String?  @map("customer_id_number")
+  notes            String?  @map("notes")
+  isOpeningBalance Boolean  @default(false) @map("is_opening_balance")
+  createdByUserId  String   @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  showroom  Location       @relation("SmsOrderShowroom", fields: [showroomId], references: [id], onDelete: Restrict)
+  sales     User?          @relation("SmsOrderSales", fields: [salesUserId], references: [id], onDelete: Restrict)
+  createdBy User           @relation("SmsOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  lines     SmsOrderLine[]
+
+  @@unique([showroomId, spkNumber])
+  @@index([salesUserId])
+  @@index([createdAt])
+  @@map("sms_orders")
+}
+
+// One VIN on an SPK. Booking, sale, pickup, cancellation and sale return are
+// all tracked per line, so "1 of 2 picked up" is a count over lines. Who did
+// each step is recorded on the matching SmsUnitEvent.
+model SmsOrderLine {
+  id         String             @id @default(uuid()) @db.Uuid
+  orderId    String             @map("order_id") @db.Uuid
+  unitId     String             @map("unit_id") @db.Uuid
+  status     SmsOrderLineStatus @default(BOOKED) @map("status")
+  bookedAt   DateTime           @map("booked_at")
+  followUpAt DateTime?          @map("follow_up_at")
+
+  cancelledAt  DateTime? @map("cancelled_at")
+  cancelReason String?   @map("cancel_reason")
+
+  soldAt DateTime? @map("sold_at")
+
+  pickedUpAt        DateTime? @map("picked_up_at")
+  receiverName      String?   @map("receiver_name")
+  handoverReference String?   @map("handover_reference")
+
+  rtoHandoverAt DateTime? @map("rto_handover_at")
+
+  // Sale return: physical receipt and the decision are separate steps.
+  returnReceivedAt     DateTime?            @map("return_received_at")
+  returnReason         String?              @map("return_reason")
+  returnCondition      SmsVehicleCondition? @map("return_condition")
+  returnDecision       SmsDecision?         @map("return_decision")
+  returnDecidedAt      DateTime?            @map("return_decided_at")
+  returnDecisionReason String?              @map("return_decision_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  order         SmsOrder         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  unit          SmsUnit          @relation("SmsOrderLineUnit", fields: [unitId], references: [id], onDelete: Restrict)
+  activeForUnit SmsUnit?         @relation("SmsUnitActiveOrderLine")
+  rtoContracts  SmsRtoContract[]
+  events        SmsUnitEvent[]
+
+  @@index([orderId])
+  @@index([unitId])
+  @@index([status])
+  @@map("sms_order_lines")
+}
+
+// ── Rent to own ────────────────────────────────────────────────────────────
+
+// One row per RTO period of a VIN. A second contract on the same VIN is a
+// new row. The contract stays OPEN (closedAt null) after the motorcycle is
+// physically returned, until an admin records the closure in SMS.
+model SmsRtoContract {
+  id               String  @id @default(uuid()) @db.Uuid
+  // Typed by the admin from the contract document.
+  contractNumber   String  @unique @map("contract_number")
+  unitId           String  @map("unit_id") @db.Uuid
+  // Showroom the contract originated from. Never changes, even when the
+  // motorcycle is later returned to and re-offered by another showroom.
+  originShowroomId String  @map("origin_showroom_id") @db.Uuid
+  orderLineId      String? @map("order_line_id") @db.Uuid
+  salesUserId      String? @map("sales_user_id") @db.Uuid
+  customerName     String  @map("customer_name")
+  customerPhone    String? @map("customer_phone")
+  customerIdNumber String? @map("customer_id_number")
+
+  startDate  DateTime  @map("start_date") @db.Date
+  handoverAt DateTime? @map("handover_at")
+
+  returnKind           SmsRtoReturnKind? @map("return_kind")
+  returnedAt           DateTime?         @map("returned_at")
+  receivedAtShowroomId String?           @map("received_at_showroom_id") @db.Uuid
+
+  closedAt       DateTime?      @map("closed_at")
+  closedByUserId String?        @map("closed_by_user_id") @db.Uuid
+  legalReference String?        @map("legal_reference")
+  outcome        SmsRtoOutcome? @map("outcome")
+  notes          String?        @map("notes")
+
+  isOpeningBalance Boolean  @default(false) @map("is_opening_balance")
+  createdByUserId  String   @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  unit               SmsUnit            @relation("SmsRtoContractUnit", fields: [unitId], references: [id], onDelete: Restrict)
+  openForUnit        SmsUnit?           @relation("SmsUnitOpenRtoContract")
+  originShowroom     Location           @relation("SmsRtoContractOriginShowroom", fields: [originShowroomId], references: [id], onDelete: Restrict)
+  receivedAtShowroom Location?          @relation("SmsRtoContractReceivedAtShowroom", fields: [receivedAtShowroomId], references: [id], onDelete: Restrict)
+  orderLine          SmsOrderLine?      @relation(fields: [orderLineId], references: [id], onDelete: Restrict)
+  sales              User?              @relation("SmsRtoContractSales", fields: [salesUserId], references: [id], onDelete: Restrict)
+  closedBy           User?              @relation("SmsRtoContractClosedBy", fields: [closedByUserId], references: [id], onDelete: Restrict)
+  createdBy          User               @relation("SmsRtoContractCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  returnRequests     SmsReturnRequest[]
+  inspections        SmsInspection[]
+  events             SmsUnitEvent[]
+
+  @@index([unitId, closedAt])
+  @@index([originShowroomId])
+  @@index([closedAt])
+  @@map("sms_rto_contracts")
+}
+
+// ── Cross-branch return, with optional custody ("titipan") ─────────────────
+
+// The decision and the physical facts are independent and may happen in
+// either order, so they are stored as separate facts — never as one linear
+// status. The display status is derived.
+model SmsReturnRequest {
+  id                String   @id @default(uuid()) @db.Uuid
+  requestNumber     String   @unique @map("request_number")
+  unitId            String   @map("unit_id") @db.Uuid
+  rtoContractId     String?  @map("rto_contract_id") @db.Uuid
+  // The unit's responsible showroom when the request was made (decides).
+  fromShowroomId    String   @map("from_showroom_id") @db.Uuid
+  // The showroom asking to receive the motorcycle.
+  toShowroomId      String   @map("to_showroom_id") @db.Uuid
+  reason            String   @map("reason")
+  requestedByUserId String   @map("requested_by_user_id") @db.Uuid
+  requestedAt       DateTime @default(now()) @map("requested_at")
+
+  decision        SmsDecision @default(PENDING) @map("decision")
+  decidedByUserId String?     @map("decided_by_user_id") @db.Uuid
+  decidedAt       DateTime?   @map("decided_at")
+  decisionReason  String?     @map("decision_reason")
+
+  // Motorcycle left at toShowroom before the return was officially received.
+  custodyReceivedAt  DateTime? @map("custody_received_at")
+  // Official receipt by toShowroom (requires an approved decision).
+  officialReceivedAt DateTime? @map("official_received_at")
+  // How a rejected request that already held the motorcycle was settled.
+  custodyResolvedAt  DateTime? @map("custody_resolved_at")
+  custodyResolution  String?   @map("custody_resolution")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  unit         SmsUnit         @relation("SmsReturnRequestUnit", fields: [unitId], references: [id], onDelete: Restrict)
+  openForUnit  SmsUnit?        @relation("SmsUnitOpenReturnRequest")
+  rtoContract  SmsRtoContract? @relation(fields: [rtoContractId], references: [id], onDelete: Restrict)
+  fromShowroom Location        @relation("SmsReturnRequestFromShowroom", fields: [fromShowroomId], references: [id], onDelete: Restrict)
+  toShowroom   Location        @relation("SmsReturnRequestToShowroom", fields: [toShowroomId], references: [id], onDelete: Restrict)
+  requestedBy  User            @relation("SmsReturnRequestRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  decidedBy    User?           @relation("SmsReturnRequestDecidedBy", fields: [decidedByUserId], references: [id], onDelete: Restrict)
+  inspections  SmsInspection[]
+  events       SmsUnitEvent[]
+
+  @@index([unitId])
+  @@index([fromShowroomId, decision])
+  @@index([toShowroomId, decision])
+  @@map("sms_return_requests")
+}
+
+// ── Inspection and show-unit outings ───────────────────────────────────────
+
+model SmsInspection {
+  id              String               @id @default(uuid()) @db.Uuid
+  unitId          String               @map("unit_id") @db.Uuid
+  reason          SmsInspectionReason  @map("reason")
+  result          SmsInspectionResult  @default(PENDING) @map("result")
+  condition       SmsVehicleCondition? @map("condition")
+  odometer        Int?                 @map("odometer")
+  findings        String?              @map("findings")
+  notes           String?              @map("notes")
+  photos          Json?                @map("photos")
+  inspectorUserId String?              @map("inspector_user_id") @db.Uuid
+  inspectedAt     DateTime?            @map("inspected_at")
+  rtoContractId   String?              @map("rto_contract_id") @db.Uuid
+  returnRequestId String?              @map("return_request_id") @db.Uuid
+  showLoanId      String?              @map("show_loan_id") @db.Uuid
+  createdByUserId String               @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  unit          SmsUnit           @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  inspector     User?             @relation("SmsInspectionInspector", fields: [inspectorUserId], references: [id], onDelete: Restrict)
+  createdBy     User              @relation("SmsInspectionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  rtoContract   SmsRtoContract?   @relation(fields: [rtoContractId], references: [id], onDelete: Restrict)
+  returnRequest SmsReturnRequest? @relation(fields: [returnRequestId], references: [id], onDelete: Restrict)
+  showLoan      SmsShowLoan?      @relation(fields: [showLoanId], references: [id], onDelete: Restrict)
+  events        SmsUnitEvent[]
+
+  @@index([unitId, createdAt])
+  @@index([result])
+  @@map("sms_inspections")
+}
+
+model SmsShowLoan {
+  id                 String               @id @default(uuid()) @db.Uuid
+  unitId             String               @map("unit_id") @db.Uuid
+  showroomId         String               @map("showroom_id") @db.Uuid
+  eventName          String               @map("event_name")
+  // Free text — event venues are not rows in `locations`.
+  eventLocation      String               @map("event_location")
+  picUserId          String?              @map("pic_user_id") @db.Uuid
+  dispatchedAt       DateTime             @map("dispatched_at")
+  expectedReturnDate DateTime             @map("expected_return_date") @db.Date
+  returnedAt         DateTime?            @map("returned_at")
+  returnCondition    SmsVehicleCondition? @map("return_condition")
+  hasFindings        Boolean              @default(false) @map("has_findings")
+  notes              String?              @map("notes")
+  createdByUserId    String               @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  unit        SmsUnit         @relation("SmsShowLoanUnit", fields: [unitId], references: [id], onDelete: Restrict)
+  openForUnit SmsUnit?        @relation("SmsUnitOpenShowLoan")
+  showroom    Location        @relation("SmsShowLoanShowroom", fields: [showroomId], references: [id], onDelete: Restrict)
+  pic         User?           @relation("SmsShowLoanPic", fields: [picUserId], references: [id], onDelete: Restrict)
+  createdBy   User            @relation("SmsShowLoanCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  inspections SmsInspection[]
+  events      SmsUnitEvent[]
+
+  @@index([unitId])
+  @@index([returnedAt, expectedReturnDate])
+  @@map("sms_show_loans")
+}
+
+// ── Exactly-once recording ─────────────────────────────────────────────────
+
+// The client sends an Idempotency-Key (a UUID minted when the form opens)
+// with every mutating SMS request. The key row is written in the same
+// transaction as the mutation, so a double click or a retry after a dropped
+// connection replays the stored response instead of recording twice.
+model SmsIdempotencyKey {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique @map("key")
+  userId      String   @map("user_id") @db.Uuid
+  operation   String   @map("operation")
+  requestHash String   @map("request_hash")
+  statusCode  Int      @map("status_code")
+  response    Json     @map("response")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("sms_idempotency_keys")
 }

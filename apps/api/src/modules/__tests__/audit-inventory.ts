@@ -583,6 +583,122 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     module: 'settings',
     decision: audited('settings'),
   },
+
+  // ── sms master ───────────────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/master/vehicle-models',
+    module: 'sms-master',
+    decision: audited('sms/master'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/master/vehicle-models/:id',
+    module: 'sms-master',
+    decision: audited('sms/master'),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/master/vehicle-variants',
+    module: 'sms-master',
+    decision: audited('sms/master'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/master/vehicle-variants/:id',
+    module: 'sms-master',
+    decision: audited('sms/master'),
+  },
+
+  // ── sms shipments ─────────────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/shipments/import/inspect',
+    module: 'sms-shipments',
+    decision: audited('sms/shipments'),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/shipments/import/preview',
+    module: 'sms-shipments',
+    decision: audited('sms/shipments'),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/shipments/import/confirm',
+    module: 'sms-shipments',
+    decision: audited('sms/shipments'),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/shipments/:id/receive',
+    module: 'sms-shipments',
+    decision: audited('sms/shipments'),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/shipments/:id/findings',
+    module: 'sms-shipments',
+    decision: audited('sms/shipments'),
+  },
+
+  // ── sms units ─────────────────────────────────────────────────────────────────
+  {
+    method: 'PUT',
+    path: '/api/sms/units/:id/details',
+    module: 'sms-units',
+    decision: audited('sms/units'),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/units/:id/resolve-identity',
+    module: 'sms-units',
+    decision: audited('sms/units'),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/units/:id/release',
+    module: 'sms-units',
+    decision: audited('sms/units'),
+  },
+
+  // ── sms inspections ──────────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/inspections',
+    module: 'sms-inspections',
+    decision: audited('sms/inspections'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/inspections/:id/result',
+    module: 'sms-inspections',
+    decision: audited('sms/inspections'),
+  },
+
+  // ── sms opening-balance ───────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/opening-balance/inspect',
+    module: 'sms-opening-balance',
+    decision: skipped(
+      'Read-only spreadsheet analysis — detects sheets, header row and suggested column mapping. No DB writes.',
+    ),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/opening-balance/preview',
+    module: 'sms-opening-balance',
+    decision: skipped(
+      'Read-only validation pass against lookup maps. Returns row-level errors and warnings. No DB writes.',
+    ),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/opening-balance/confirm',
+    module: 'sms-opening-balance',
+    decision: audited('sms/opening-balance'),
+  },
 ];
 
 /**
