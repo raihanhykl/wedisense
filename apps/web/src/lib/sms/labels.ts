@@ -93,6 +93,26 @@ export function unitEventLabel(eventType: string): string {
   return UNIT_EVENT_LABEL[eventType] ?? eventType;
 }
 
+// ── Order line status ─────────────────────────────────────────────────
+
+export const ORDER_LINE_STATUS_LABEL: Record<string, string> = {
+  BOOKED: "Booked",
+  SOLD: "Sold",
+  PICKED_UP: "Picked up",
+  CANCELLED: "Cancelled",
+};
+
+export const ORDER_LINE_STATUS_STYLE: Record<string, string> = {
+  BOOKED: "bg-amber-100 text-amber-800",
+  SOLD: "bg-orange-100 text-orange-800",
+  PICKED_UP: "bg-slate-100 text-slate-700",
+  CANCELLED: "bg-red-100 text-red-700",
+};
+
+export function orderLineStatusLabel(status: string): string {
+  return ORDER_LINE_STATUS_LABEL[status] ?? status;
+}
+
 export const INSPECTION_REASON_LABEL: Record<string, string> = {
   RECEIPT_DAMAGE: "Damage on receipt",
   IDENTITY_MISMATCH: "Identity mismatch",
@@ -168,6 +188,30 @@ export function formatBusinessDate(value: string | null | undefined): string {
 /** Today's date in WIB as `YYYY-MM-DD`, for date inputs. */
 export function todayInputValue(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(new Date());
+}
+
+/**
+ * The current WIB wall-clock time as `YYYY-MM-DDTHH:mm`, for
+ * `datetime-local` inputs. Built in WIB (not the browser's zone) so the
+ * default matches what the admin reads on the showroom clock.
+ */
+export function nowDateTimeInputValue(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+/** A `YYYY-MM-DDTHH:mm` value typed in WIB (UTC+7, no DST) → ISO 8601 UTC. */
+export function wibDateTimeInputToIso(value: string): string {
+  return new Date(`${value}:00+07:00`).toISOString();
 }
 
 export interface VariantLabelParts {

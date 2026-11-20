@@ -30,6 +30,8 @@ export interface DashboardTotals {
   custody: number;
   identityMismatch: number;
   outside: number;
+  /** Subset of outside: units currently dispatched to show events. */
+  showUnit: number;
   expected: number;
 }
 
@@ -80,10 +82,44 @@ export interface IdentityMismatchTask {
   variantLabel: string;
 }
 
+// ── Stage 3 task types ───────────────────────────────────────────────────────
+
+export interface StaleBookingTask {
+  id: string;
+  orderId: string;
+  spk: string;
+  vin: string;
+  salesName: string | null;
+  bookedAt: string;
+  followUpAt: string | null;
+  daysSinceBooking: number;
+}
+
+export interface AwaitingPickupTask {
+  id: string;
+  orderId: string;
+  spk: string;
+  vin: string;
+  soldAt: string | null;
+  daysWaiting: number;
+}
+
+export interface OverdueShowUnitTask {
+  loanId: string;
+  vin: string;
+  eventName: string;
+  pic: { id: string; name: string } | null;
+  expectedReturnDate: string;
+  daysOverdue: number;
+}
+
 export interface DashboardTasks {
   openShipments: { data: OpenShipmentTask[]; total: number };
   inspections: { data: InspectionTask[]; total: number };
   identityMismatches: { data: IdentityMismatchTask[]; total: number };
+  staleBookings: { data: StaleBookingTask[]; total: number };
+  awaitingPickup: { data: AwaitingPickupTask[]; total: number };
+  overdueShowUnits: { data: OverdueShowUnitTask[]; total: number };
 }
 
 // ── Units ──────────────────────────────────────────────────────────────
@@ -131,6 +167,27 @@ export interface UnitEventTimeline {
   isVoided: boolean;
 }
 
+export interface UnitActiveOrderLine {
+  id: string;
+  orderId: string;
+  spkNumber: string;
+  status: string;
+  salesName: string | null;
+  createdByName: string | null;
+  bookedAt: string;
+  followUpAt: string | null;
+}
+
+export interface UnitOpenShowLoan {
+  id: string;
+  eventName: string;
+  eventLocation: string;
+  picName: string | null;
+  dispatchedAt: string;
+  expectedReturnDate: string;
+  overdue: boolean;
+}
+
 export interface UnitDetail {
   id: string;
   vin: string;
@@ -157,6 +214,10 @@ export interface UnitDetail {
   timeline: UnitEventTimeline[];
   availableActions: string[];
   releaseBlockers: string[];
+  /** Current booking / SPK line, or null when not booked/sold. */
+  activeOrderLine: UnitActiveOrderLine | null;
+  /** Open show loan, or null when not currently on loan to an event. */
+  openShowLoan: UnitOpenShowLoan | null;
 }
 
 export type UnitSearchResult =

@@ -68,6 +68,18 @@ const stockNavItems: NavItem[] = [
   { label: "Shipments", href: "/admin/sms/shipments", permission: STOCK_VIEW, matchPrefix: true },
   { label: "Inspections", href: "/admin/sms/inspections", permission: STOCK_VIEW, matchPrefix: true },
   {
+    label: "Orders (SPK)",
+    href: "/admin/sms/orders",
+    permission: "sms-orders:manage",
+    matchPrefix: true,
+  },
+  {
+    label: "Show units",
+    href: "/admin/sms/show-units",
+    permission: "sms-show-units:manage",
+    matchPrefix: true,
+  },
+  {
     label: "Opening Balance",
     href: "/admin/sms/opening-balance",
     permission: "sms-receiving:manage",

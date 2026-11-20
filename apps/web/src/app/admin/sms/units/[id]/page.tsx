@@ -23,7 +23,10 @@ import { ReleaseDialog } from "@/components/sms/release-dialog";
 import { InspectionDialog } from "@/components/sms/inspection-dialog";
 import { ResolveIdentityDialog } from "@/components/sms/resolve-identity-dialog";
 import { EditDetailsDialog } from "@/components/sms/edit-details-dialog";
+import { DispatchShowUnitDialog } from "@/components/sms/show-units/dispatch-show-unit-dialog";
+import { ReturnShowUnitDialog } from "@/components/sms/show-units/return-show-unit-dialog";
 import { useShowroom } from "@/components/sms/showroom-context";
+import { orderLineStatusLabel } from "@/lib/sms/labels";
 import type { UnitDetail, UnitEventTimeline, UnitInspectionSummary } from "@/lib/sms/types";
 
 type DialogKind =
@@ -32,6 +35,8 @@ type DialogKind =
   | "inspection-result"
   | "resolve-identity"
   | "edit-details"
+  | "dispatch-show"
+  | "return-show"
   | null;
 
 // ── Copy button ────────────────────────────────────────────────────────
@@ -349,6 +354,35 @@ export default function UnitDetailPage() {
               Edit details
             </button>
           )}
+          {unit.availableActions.includes("BOOK") && (
+            <Link
+              href={`/admin/sms/orders/new?unitId=${unit.id}`}
+              data-tour="sms-unit-book"
+              className="inline-flex items-center rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
+            >
+              Book
+            </Link>
+          )}
+          {unit.availableActions.includes("DISPATCH_SHOW") && (
+            <button
+              type="button"
+              onClick={() => setDialog("dispatch-show")}
+              data-tour="sms-unit-send-to-show"
+              className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
+            >
+              Send to show
+            </button>
+          )}
+          {unit.availableActions.includes("RETURN_SHOW") && (
+            <button
+              type="button"
+              onClick={() => setDialog("return-show")}
+              data-tour="sms-unit-record-show-return"
+              className="rounded-md border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-medium text-cyan-800 hover:bg-cyan-100"
+            >
+              Record show return
+            </button>
+          )}
         </div>
       )}
 
@@ -397,6 +431,83 @@ export default function UnitDetailPage() {
           )}
         </SectionCard>
       </div>
+
+      {/* Active order line */}
+      {unit.activeOrderLine && (
+        <div className="mt-4">
+          <SectionCard title="Current booking">
+            <div className="divide-y">
+              <DetailRow
+                label="SPK"
+                value={
+                  <Link
+                    href={`/admin/sms/orders/${unit.activeOrderLine.orderId}`}
+                    className="font-mono font-semibold text-primary hover:underline"
+                  >
+                    {unit.activeOrderLine.spkNumber}
+                  </Link>
+                }
+              />
+              <DetailRow label="Line status" value={orderLineStatusLabel(unit.activeOrderLine.status)} />
+              {unit.activeOrderLine.salesName && (
+                <DetailRow label="Sales" value={unit.activeOrderLine.salesName} />
+              )}
+              {unit.activeOrderLine.createdByName && (
+                <DetailRow label="Recorded by" value={unit.activeOrderLine.createdByName} />
+              )}
+              <DetailRow label="Booked" value={formatDate(unit.activeOrderLine.bookedAt)} />
+              {unit.activeOrderLine.followUpAt && (
+                <DetailRow
+                  label="Follow up"
+                  value={
+                    <span
+                      className={
+                        new Date(unit.activeOrderLine.followUpAt) < new Date()
+                          ? "font-medium text-amber-700"
+                          : ""
+                      }
+                    >
+                      {formatDate(unit.activeOrderLine.followUpAt)}
+                      {new Date(unit.activeOrderLine.followUpAt) < new Date() && (
+                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs">
+                          Due
+                        </span>
+                      )}
+                    </span>
+                  }
+                />
+              )}
+            </div>
+          </SectionCard>
+        </div>
+      )}
+
+      {/* Open show loan */}
+      {unit.openShowLoan && (
+        <div className="mt-4">
+          <SectionCard title="Out at event">
+            <div className="divide-y">
+              <DetailRow label="Event" value={unit.openShowLoan.eventName} />
+              <DetailRow label="Location" value={unit.openShowLoan.eventLocation} />
+              <DetailRow label="PIC" value={unit.openShowLoan.picName ?? "—"} />
+              <DetailRow label="Dispatched" value={formatDateTime(unit.openShowLoan.dispatchedAt)} />
+              <DetailRow
+                label="Planned return"
+                value={
+                  <span className={unit.openShowLoan.overdue ? "text-destructive font-semibold" : ""}>
+                    {formatDate(unit.openShowLoan.expectedReturnDate)}
+                    {unit.openShowLoan.overdue && (
+                      <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+                        Overdue
+                      </span>
+                    )}
+                  </span>
+                }
+              />
+            </div>
+          </SectionCard>
+        </div>
+      )}
 
       {/* Inspections */}
       {unit.inspections.length > 0 && (
@@ -467,6 +578,22 @@ export default function UnitDetailPage() {
           currentLicensePlate={unit.licensePlate}
           currentEngineNumber={unit.engineNumber}
           currentNotes={unit.notes}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {dialog === "dispatch-show" && (
+        <DispatchShowUnitDialog
+          unitId={unit.id}
+          unitVin={unit.vin}
+          onClose={() => setDialog(null)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
+      {dialog === "return-show" && unit.openShowLoan && (
+        <ReturnShowUnitDialog
+          loanId={unit.openShowLoan.id}
+          unitVin={unit.vin}
           onClose={() => setDialog(null)}
           onSuccess={handleActionSuccess}
         />

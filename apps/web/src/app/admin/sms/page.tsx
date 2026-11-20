@@ -12,6 +12,9 @@ import type {
   DashboardTasks,
   DashboardVariantRow,
   UnitSearchResult,
+  StaleBookingTask,
+  AwaitingPickupTask,
+  OverdueShowUnitTask,
 } from "@/lib/sms/types";
 
 // ── Stat tile ─────────────────────────────────────────────────────────
@@ -182,7 +185,10 @@ export default function SmsHomePage() {
     tasks &&
     tasks.openShipments.total === 0 &&
     tasks.inspections.total === 0 &&
-    tasks.identityMismatches.total === 0;
+    tasks.identityMismatches.total === 0 &&
+    tasks.staleBookings.total === 0 &&
+    tasks.awaitingPickup.total === 0 &&
+    tasks.overdueShowUnits.total === 0;
 
   return (
     <div className="p-4 md:p-6" data-tour="sms-dashboard">
@@ -288,6 +294,11 @@ export default function SmsHomePage() {
               label="Outside (RTO + events)"
               value={totals.outside}
               href={`/admin/sms/units?view=outside&showroomId=${showroom.id}`}
+            />
+            <StatTile
+              label="Out on show"
+              value={totals.showUnit}
+              href={`/admin/sms/show-units?showroomId=${showroom.id}`}
             />
             <StatTile
               label="Expected (not arrived)"
@@ -501,6 +512,97 @@ export default function SmsHomePage() {
                         {item.vin}
                       </Link>
                       <span className="ml-2 text-xs text-muted-foreground">{item.variantLabel}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Stale bookings */}
+            {tasks && tasks.staleBookings.total > 0 && (
+              <div className="rounded-lg border bg-card p-4" data-tour="sms-dashboard-follow-up">
+                <h3 className="mb-3 text-sm font-semibold">
+                  Stale bookings ({tasks.staleBookings.total})
+                </h3>
+                <div className="space-y-2">
+                  {tasks.staleBookings.data.map((item: StaleBookingTask) => (
+                    <div key={item.id} className="flex items-center justify-between gap-4 text-sm">
+                      <div>
+                        <Link
+                          href={`/admin/sms/orders/${item.orderId}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {item.spk}
+                        </Link>
+                        <span className="ml-2 font-mono text-xs">{item.vin}</span>
+                        {item.salesName && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {item.salesName}
+                          </span>
+                        )}
+                      </div>
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">
+                        {item.daysSinceBooking}d ago
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Awaiting pickup */}
+            {tasks && tasks.awaitingPickup.total > 0 && (
+              <div className="rounded-lg border bg-card p-4">
+                <h3 className="mb-3 text-sm font-semibold">
+                  Sold · awaiting pickup ({tasks.awaitingPickup.total})
+                </h3>
+                <div className="space-y-2">
+                  {tasks.awaitingPickup.data.map((item: AwaitingPickupTask) => (
+                    <div key={item.id} className="flex items-center justify-between gap-4 text-sm">
+                      <div>
+                        <Link
+                          href={`/admin/sms/orders/${item.orderId}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {item.spk}
+                        </Link>
+                        <span className="ml-2 font-mono text-xs">{item.vin}</span>
+                      </div>
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">
+                        {item.daysWaiting}d waiting
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Overdue show units */}
+            {tasks && tasks.overdueShowUnits.total > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                <h3 className="mb-3 text-sm font-semibold text-red-900">
+                  Overdue show units ({tasks.overdueShowUnits.total})
+                </h3>
+                <div className="space-y-2">
+                  {tasks.overdueShowUnits.data.map((item: OverdueShowUnitTask) => (
+                    <div key={item.loanId} className="flex items-center justify-between gap-4 text-sm">
+                      <div>
+                        <Link
+                          href={`/admin/sms/show-units`}
+                          className="font-mono font-medium text-primary hover:underline"
+                        >
+                          {item.vin}
+                        </Link>
+                        <span className="ml-2 text-xs text-muted-foreground">{item.eventName}</span>
+                        {item.pic && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            PIC: {item.pic.name}
+                          </span>
+                        )}
+                      </div>
+                      <span className="whitespace-nowrap text-xs font-medium text-red-700">
+                        {item.daysOverdue}d overdue
+                      </span>
                     </div>
                   ))}
                 </div>
