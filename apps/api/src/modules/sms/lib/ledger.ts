@@ -238,6 +238,24 @@ export async function recordUnitEvent(
   );
   if (!result.ok) throw invalidTransition(result.reason, unit);
 
+  // A movement cannot be dated before the unit's last effective movement —
+  // otherwise the timeline (and any replay by date) runs backwards. Late
+  // input is fine as long as it stays after what is already recorded.
+  const previous = await tx.smsUnitEvent.findFirst({
+    where: { unitId: unit.id, supersededBy: null, voidedBy: null },
+    orderBy: { seq: 'desc' },
+    select: { eventDate: true },
+  });
+  if (previous && input.eventDate.getTime() < previous.eventDate.getTime()) {
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    throw new AppError(
+      422,
+      'SMS_EVENT_BEFORE_PREVIOUS',
+      `This date (${fmt(input.eventDate)}) is before the unit's last recorded movement on ${fmt(previous.eventDate)}.`,
+      [{ unitId: unit.id, vin: unit.vin, previousEventDate: fmt(previous.eventDate) }],
+    );
+  }
+
   const event = await tx.smsUnitEvent.create({ data: eventData(unit.id, input, result.state) });
   const updated = await tx.smsUnit.update({
     where: { id: unit.id },
@@ -318,15 +336,19 @@ export async function loadEffectiveEvents(
 
 const BUSINESS_TIME_ZONE = process.env['JOB_TIMEZONE'] ?? 'Asia/Jakarta';
 
-/** Today's calendar date in the business time zone, as a UTC-midnight Date. */
-export function businessToday(now: Date = new Date()): Date {
-  const isoDate = new Intl.DateTimeFormat('en-CA', {
+/** Calendar date of `moment` in the business time zone, as `YYYY-MM-DD`. */
+export function businessDateString(moment: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
     timeZone: BUSINESS_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(now);
-  return new Date(`${isoDate}T00:00:00.000Z`);
+  }).format(moment);
+}
+
+/** Today's calendar date in the business time zone, as a UTC-midnight Date. */
+export function businessToday(now: Date = new Date()): Date {
+  return new Date(`${businessDateString(now)}T00:00:00.000Z`);
 }
 
 /**

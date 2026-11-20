@@ -699,6 +699,58 @@ export const MUTATING_ENDPOINTS: MutatingEndpoint[] = [
     module: 'sms-opening-balance',
     decision: audited('sms/opening-balance'),
   },
+
+  // ── sms show-loans ────────────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/show-loans',
+    module: 'sms-show-loans',
+    decision: audited('sms/show-loans'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/show-loans/:id/return',
+    module: 'sms-show-loans',
+    decision: audited('sms/show-loans'),
+  },
+
+  // ── sms orders ────────────────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    path: '/api/sms/orders',
+    module: 'sms-orders',
+    decision: audited('sms/orders'),
+  },
+  {
+    method: 'POST',
+    path: '/api/sms/orders/:id/lines',
+    module: 'sms-orders',
+    decision: audited('sms/orders'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/orders/:oid/lines/:lid/cancel',
+    module: 'sms-orders',
+    decision: audited('sms/orders'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/orders/:oid/lines/:lid/follow-up',
+    module: 'sms-orders',
+    decision: audited('sms/orders'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/orders/:oid/record-sale',
+    module: 'sms-orders',
+    decision: audited('sms/orders'),
+  },
+  {
+    method: 'PUT',
+    path: '/api/sms/orders/:oid/lines/:lid/confirm-pickup',
+    module: 'sms-orders',
+    decision: audited('sms/orders'),
+  },
 ];
 
 /**

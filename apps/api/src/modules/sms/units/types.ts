@@ -1,4 +1,11 @@
-import type { SmsUnitStatus, SmsUnitEventType, SmsInspectionReason, SmsInspectionResult, SmsVehicleCondition } from '@prisma/client';
+import type {
+  SmsUnitStatus,
+  SmsUnitEventType,
+  SmsInspectionReason,
+  SmsInspectionResult,
+  SmsVehicleCondition,
+  SmsOrderLineStatus,
+} from '@prisma/client';
 
 export interface UnitLocationRef {
   id: string;
@@ -60,6 +67,29 @@ export interface UnitEventTimeline {
   isVoided: boolean;
 }
 
+/** Active order line data included in the VIN card. */
+export interface UnitActiveOrderLine {
+  id: string;
+  orderId: string;
+  spkNumber: string;
+  status: SmsOrderLineStatus;
+  salesName: string | null;
+  createdByName: string | null;
+  bookedAt: Date;
+  followUpAt: Date | null;
+}
+
+/** Open show loan data included in the VIN card. */
+export interface UnitOpenShowLoan {
+  id: string;
+  eventName: string;
+  eventLocation: string;
+  picName: string | null;
+  dispatchedAt: Date;
+  expectedReturnDate: Date;
+  overdue: boolean;
+}
+
 /** Full VIN card returned by GET /units/:id. */
 export interface UnitDetail {
   id: string;
@@ -87,6 +117,10 @@ export interface UnitDetail {
   timeline: UnitEventTimeline[];
   availableActions: string[];
   releaseBlockers: string[];
+  /** Current booking / SPK line, or null when the unit is not booked/sold. */
+  activeOrderLine: UnitActiveOrderLine | null;
+  /** Open show loan, or null when the unit is not currently on loan to an event. */
+  openShowLoan: UnitOpenShowLoan | null;
 }
 
 /** Search result — either a registered unit or an expected (pending) VIN. */

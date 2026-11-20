@@ -20,6 +20,9 @@ vi.mock('./repository.js', () => ({
   getOpenShipments: vi.fn(),
   getInspectionUnits: vi.fn(),
   getIdentityMismatchUnits: vi.fn(),
+  getStaleBookings: vi.fn(),
+  getAwaitingPickup: vi.fn(),
+  getOverdueShowUnits: vi.fn(),
 }));
 
 import * as dashboardRepo from './repository.js';
@@ -33,6 +36,9 @@ const mockAggregateTotals = dashboardRepo.aggregateTotals as ReturnType<typeof v
 const mockGetOpenShipments = dashboardRepo.getOpenShipments as ReturnType<typeof vi.fn>;
 const mockGetInspectionUnits = dashboardRepo.getInspectionUnits as ReturnType<typeof vi.fn>;
 const mockGetIdentityMismatchUnits = dashboardRepo.getIdentityMismatchUnits as ReturnType<typeof vi.fn>;
+const mockGetStaleBookings = dashboardRepo.getStaleBookings as ReturnType<typeof vi.fn>;
+const mockGetAwaitingPickup = dashboardRepo.getAwaitingPickup as ReturnType<typeof vi.fn>;
+const mockGetOverdueShowUnits = dashboardRepo.getOverdueShowUnits as ReturnType<typeof vi.fn>;
 
 const SHOWROOM_A = 'showroom-a';
 
@@ -94,6 +100,7 @@ describe('getDashboardSummary', () => {
         custody: 0,
         identityMismatch: 0,
         outside: 2,
+        showUnit: 1,
       },
     ];
     const totals = {
@@ -105,6 +112,7 @@ describe('getDashboardSummary', () => {
       custody: 0,
       identityMismatch: 0,
       outside: 2,
+      showUnit: 1,
       expected: 4,
     };
 
@@ -126,7 +134,7 @@ describe('getDashboardSummary', () => {
     mockCountExpected.mockResolvedValue(0);
     mockAggregateTotals.mockReturnValue({
       physical: 0, ready: 0, booked: 0, soldPendingPickup: 0,
-      inspection: 0, custody: 0, identityMismatch: 0, outside: 0, expected: 0,
+      inspection: 0, custody: 0, identityMismatch: 0, outside: 0, showUnit: 0, expected: 0,
     });
 
     await expect(
@@ -158,9 +166,62 @@ describe('getDashboardTasks', () => {
       total: 1,
     });
 
+    mockGetStaleBookings.mockResolvedValue({ data: [], total: 0 });
+    mockGetAwaitingPickup.mockResolvedValue({ data: [], total: 0 });
+    mockGetOverdueShowUnits.mockResolvedValue({ data: [], total: 0 });
+
     const tasks = await dashboardService.getDashboardTasks(SHOWROOM_A, showroomWithView);
     expect(tasks.openShipments.total).toBe(1);
     expect(tasks.inspections.total).toBe(1);
     expect(tasks.identityMismatches.total).toBe(1);
+    expect(tasks.staleBookings.total).toBe(0);
+    expect(tasks.awaitingPickup.total).toBe(0);
+    expect(tasks.overdueShowUnits.total).toBe(0);
+  });
+
+  it('returns stale bookings and awaiting pickup tasks', async () => {
+    mockGetOpenShipments.mockResolvedValue({ data: [], total: 0 });
+    mockGetInspectionUnits.mockResolvedValue({ data: [], total: 0 });
+    mockGetIdentityMismatchUnits.mockResolvedValue({ data: [], total: 0 });
+
+    const staleBooking = {
+      id: 'ol-1',
+      orderId: 'o-1',
+      spk: 'SPK-001',
+      vin: 'VIN001',
+      salesName: 'Sales A',
+      bookedAt: new Date('2026-11-10T00:00:00Z'),
+      followUpAt: new Date('2026-11-15T00:00:00Z'),
+      daysSinceBooking: 10,
+    };
+    mockGetStaleBookings.mockResolvedValue({ data: [staleBooking], total: 1 });
+
+    const awaitingPickupItem = {
+      id: 'ol-2',
+      orderId: 'o-2',
+      spk: 'SPK-002',
+      vin: 'VIN002',
+      soldAt: new Date('2026-11-18T00:00:00Z'),
+      daysWaiting: 2,
+    };
+    mockGetAwaitingPickup.mockResolvedValue({ data: [awaitingPickupItem], total: 1 });
+
+    const overdueShowUnit = {
+      loanId: 'sl-1',
+      vin: 'VIN003',
+      eventName: 'Jakarta Fair',
+      pic: { id: 'pic-1', name: 'PIC Name' },
+      expectedReturnDate: new Date('2026-11-19T00:00:00Z'),
+      daysOverdue: 1,
+    };
+    mockGetOverdueShowUnits.mockResolvedValue({ data: [overdueShowUnit], total: 1 });
+
+    const tasks = await dashboardService.getDashboardTasks(SHOWROOM_A, showroomWithView);
+    expect(tasks.staleBookings.total).toBe(1);
+    expect(tasks.staleBookings.data[0]?.spk).toBe('SPK-001');
+    expect(tasks.awaitingPickup.total).toBe(1);
+    expect(tasks.awaitingPickup.data[0]?.vin).toBe('VIN002');
+    expect(tasks.overdueShowUnits.total).toBe(1);
+    expect(tasks.overdueShowUnits.data[0]?.daysOverdue).toBe(1);
   });
 });

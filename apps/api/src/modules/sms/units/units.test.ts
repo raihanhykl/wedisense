@@ -206,6 +206,7 @@ describe('computeAvailableActions', () => {
     activeOrderLineId: null,
     openRtoContractId: null,
     openReturnRequestId: null,
+    openShowLoanId: null,
   };
 
   it('RELEASE available when INSPECTION, INSPECTIONS_MANAGE, no commitments, latest passed', () => {

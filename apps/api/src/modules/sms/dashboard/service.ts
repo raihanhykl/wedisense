@@ -36,11 +36,30 @@ export async function getDashboardTasks(
 ): Promise<DashboardTasks> {
   assertCan(access, SMS_PERMISSIONS.STOCK_VIEW, showroomId);
 
-  const [openShipments, inspections, identityMismatches] = await Promise.all([
+  const now = new Date();
+
+  const [
+    openShipments,
+    inspections,
+    identityMismatches,
+    staleBookings,
+    awaitingPickup,
+    overdueShowUnits,
+  ] = await Promise.all([
     dashboardRepo.getOpenShipments(showroomId),
     dashboardRepo.getInspectionUnits(showroomId),
     dashboardRepo.getIdentityMismatchUnits(showroomId),
+    dashboardRepo.getStaleBookings(showroomId, now),
+    dashboardRepo.getAwaitingPickup(showroomId, now),
+    dashboardRepo.getOverdueShowUnits(showroomId, now),
   ]);
 
-  return { openShipments, inspections, identityMismatches };
+  return {
+    openShipments,
+    inspections,
+    identityMismatches,
+    staleBookings,
+    awaitingPickup,
+    overdueShowUnits,
+  };
 }

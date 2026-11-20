@@ -92,6 +92,7 @@ export async function getUnit(id: string, access: SmsAccess) {
       activeOrderLineId: raw.activeOrderLineId,
       openRtoContractId: raw.openRtoContractId,
       openReturnRequestId: raw.openReturnRequestId,
+      openShowLoanId: raw.openShowLoanId ?? null,
     },
     latestInspection: latestInspection ? { result: latestInspection.result } : null,
     permissionsAtRelevantLocation: permsAtRelevant,
