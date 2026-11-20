@@ -397,7 +397,9 @@ export type NotificationType =
   | "REPORT_READY"
   | "PRINT_READY"
   | "IMPORT_COMPLETE"
-  | "TOUR_UPDATED";
+  | "TOUR_UPDATED"
+  | "SMS_RETURN_REQUESTED"
+  | "SMS_RETURN_DECIDED";
 
 export interface NotificationItem {
   id: string;

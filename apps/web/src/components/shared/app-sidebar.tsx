@@ -80,6 +80,12 @@ const stockNavItems: NavItem[] = [
     matchPrefix: true,
   },
   {
+    label: "Returns",
+    href: "/admin/sms/returns",
+    permission: "sms-returns:request",
+    matchPrefix: true,
+  },
+  {
     label: "Opening Balance",
     href: "/admin/sms/opening-balance",
     permission: "sms-receiving:manage",

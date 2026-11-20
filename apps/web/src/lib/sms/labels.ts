@@ -99,19 +99,36 @@ export const ORDER_LINE_STATUS_LABEL: Record<string, string> = {
   BOOKED: "Booked",
   SOLD: "Sold",
   PICKED_UP: "Picked up",
+  RTO_HANDED_OVER: "Handed over (RTO)",
   CANCELLED: "Cancelled",
+  RETURNED: "Returned",
 };
 
 export const ORDER_LINE_STATUS_STYLE: Record<string, string> = {
   BOOKED: "bg-amber-100 text-amber-800",
   SOLD: "bg-orange-100 text-orange-800",
   PICKED_UP: "bg-slate-100 text-slate-700",
+  RTO_HANDED_OVER: "bg-blue-100 text-blue-800",
   CANCELLED: "bg-red-100 text-red-700",
+  RETURNED: "bg-emerald-100 text-emerald-800",
 };
 
 export function orderLineStatusLabel(status: string): string {
   return ORDER_LINE_STATUS_LABEL[status] ?? status;
 }
+
+// ── RTO labels ────────────────────────────────────────────────────────
+
+export const RTO_RETURN_KIND_LABEL: Record<string, string> = {
+  RETURNED_BY_CUSTOMER: "Returned by customer",
+  REPOSSESSED: "Repossessed",
+};
+
+export const RTO_OUTCOME_LABEL: Record<string, string> = {
+  RETURNED: "Returned",
+  REPOSSESSED: "Repossessed",
+  OWNERSHIP_TRANSFERRED: "Ownership transferred",
+};
 
 export const INSPECTION_REASON_LABEL: Record<string, string> = {
   RECEIPT_DAMAGE: "Damage on receipt",
@@ -128,6 +145,8 @@ export const INSPECTION_RESULT_LABEL: Record<string, string> = {
   PASSED: "Passed",
   FAILED: "Failed",
 };
+
+export type VehicleCondition = "NEW" | "GOOD" | "FAIR" | "POOR" | "DAMAGED";
 
 export const VEHICLE_CONDITION_LABEL: Record<string, string> = {
   NEW: "New",
